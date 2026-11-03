@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -132,6 +133,131 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+		},
+		DB:      vuln.NewDB(),
+		Log:     history.Open(""),
+		Out:     &out,
+		Err:     &errOut,
+		Now:     func() time.Time { return clock },
+		Skipped: map[string]string{"go": "no Go binary directory", "uv": "uv not on PATH"},
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	}
+	if code := Main(env, []string{"check", "--json"}); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	var r Report
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out.String())
+	}
+	if got := r.Skipped; len(got) != 2 || got["uv"] != "uv not on PATH" {
+		t.Errorf("JSON skipped %v, want both managers named", got)
+	}
+	if r.Complete {
+		t.Error("a scan that skipped two managers must not call itself complete")
+	}
+
+	out.Reset()
+	Main(env, []string{"check"})
+	text := out.String()
+	if !strings.Contains(text, "2 managers left out: go (no Go binary directory), uv (uv not on PATH)") {
+		t.Errorf("plain report hides what was left out:\n%s", text)
+	}
+	if !strings.Contains(text, "safe for what was read: part of the machine could not be checked") {
+		t.Errorf("plain verdict claims more than it read:\n%s", text)
+	}
+
+	// A source that failed leaves a hole just as wide as a skipped manager.
+	env.Skipped = nil
+	env.Scan = func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		return nil, nil, errors.New("osv is down")
+	}
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	var partial Report
+	if err := json.Unmarshal(out.Bytes(), &partial); err != nil {
+		t.Fatal(err)
+	}
+	if partial.Safe && partial.Complete {
+		t.Error("a scan whose security lookup failed must not call itself complete")
+	}
+
+	env.Scan = func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		return map[string][]string{}, map[string]vuln.Advisory{}, nil
+	}
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	var full Report
+	if err := json.Unmarshal(out.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if !full.Complete {
+		t.Error("a scan that skipped nothing and failed at nothing must call itself complete")
+	}
+}
+
+func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
+	var out, errOut bytes.Buffer
+	partial := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+		},
+		DB:      vuln.NewDB(),
+		Log:     history.Open(""),
+		Out:     &out,
+		Err:     &errOut,
+		Now:     func() time.Time { return clock },
+		Skipped: map[string]string{"uv": "uv not on PATH"},
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	}
+	tests := []struct {
+		id   string
+		env  Env
+		args []string
+		code int
+		err  string
+	}{
+		{"a partial scan still passes without the flag", partial, []string{"check"}, ExitOK, ""},
+		{"a partial scan fails with the flag, and says why", partial, []string{"check", "--require-complete"}, ExitIncomplete, "scan was not complete: uv (uv not on PATH)"},
+		{"a required source that was skipped fails", partial, []string{"check", "--require", "uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
+		{"a required source that was read passes", partial, []string{"check", "--require", "pipx"}, ExitOK, ""},
+		{"a manager this machine lacks is fine unless required", partial, []string{"check", "--require", "pipx,uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
+		{"an unknown source in the list is a usage error", partial, []string{"check", "--require", "npmm"}, ExitUsage, "unknown source in --require: npmm"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			out.Reset()
+			errOut.Reset()
+			if code := Main(tt.env, tt.args); code != tt.code {
+				t.Errorf("exit %d, want %d", code, tt.code)
+			}
+			if got := strings.TrimSpace(errOut.String()); got != tt.err {
+				t.Errorf("stderr %q, want %q", got, tt.err)
+			}
+		})
+	}
+
+	full := partial
+	full.Skipped = nil
+	out.Reset()
+	errOut.Reset()
+	if code := Main(full, []string{"check", "--require-complete"}); code != ExitOK {
+		t.Errorf("a full scan with the flag exited %d, want %d: %s", code, ExitOK, errOut.String())
+	}
+}
+
 func TestCheckUsesTheCache(t *testing.T) {
 	db := vuln.NewDB()
 	first := kho(t, nil, nil, db, "check", "--json")
@@ -139,6 +265,79 @@ func TestCheckUsesTheCache(t *testing.T) {
 	refreshed := kho(t, nil, nil, db, "check", "--json", "--refresh")
 	if first.scanned == 0 || second.scanned != 0 || refreshed.scanned != first.scanned {
 		t.Errorf("scanned %d, then %d from a fresh cache, then %d on --refresh", first.scanned, second.scanned, refreshed.scanned)
+	}
+}
+
+func TestCheckAsksAgainWhenTheSkillAuditFailed(t *testing.T) {
+	const key = "someone/skills/pathmaker"
+	want := vuln.SkillAudit{Gen: "safe", Socket: "low", Snyk: "low"}
+	db := vuln.NewDB()
+	calls := 0
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
+		},
+		DB:  db,
+		Log: history.Open(""),
+		Out: &out, Err: &errOut,
+		Now: func() time.Time { return clock },
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("skills.sh is down")
+			}
+			return map[string]vuln.SkillAudit{key: want}, nil
+		},
+	}
+	tests := []struct {
+		id    string
+		check func(t *testing.T, r Report, code int)
+	}{
+		{"a failed audit is reported and leaves the skill stale", func(t *testing.T, r Report, code int) {
+			if code != ExitOK || r.Errors["security"] != "skills.sh is down" || r.Complete {
+				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
+			}
+			if calls != 1 {
+				t.Errorf("asked skills.sh %d times, want 1", calls)
+			}
+			if at, ok := db.AuditedAt[key]; ok {
+				t.Errorf("a failed audit marked the skill fresh at %v", at)
+			}
+			if _, ok := db.Audits[key]; ok {
+				t.Errorf("a failed audit stored %+v", db.Audits[key])
+			}
+		}},
+		{"the next scan asks skills.sh again and caches what it got", func(t *testing.T, r Report, code int) {
+			if code != ExitOK || r.Errors["security"] != "" || !r.Complete {
+				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
+			}
+			if calls != 2 {
+				t.Errorf("asked skills.sh %d times, want 2", calls)
+			}
+			if at := db.AuditedAt[key]; !at.Equal(clock) {
+				t.Errorf("audited at %v, want %v", at, clock)
+			}
+			if got := db.Audits[key]; got != want {
+				t.Errorf("audit %+v, want %+v", got, want)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			out.Reset()
+			errOut.Reset()
+			code := Main(env, []string{"check", "--json"})
+			var r Report
+			if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, out.String())
+			}
+			tt.check(t, r, code)
+		})
 	}
 }
 

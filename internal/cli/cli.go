@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"slices"
 	"strings"
@@ -24,10 +25,11 @@ import (
 
 // Exit codes. An agent can branch on them without parsing the output.
 const (
-	ExitOK     = 0
-	ExitError  = 1
-	ExitUsage  = 2
-	ExitAtRisk = 3
+	ExitOK         = 0
+	ExitError      = 1
+	ExitUsage      = 2
+	ExitAtRisk     = 3
+	ExitIncomplete = 4
 )
 
 // Env is everything the commands touch, so tests can swap the machine out.
@@ -45,13 +47,17 @@ type Env struct {
 	// Run runs an install. It gets the command as built by the provider and
 	// returns its combined output.
 	Run func(*exec.Cmd) (string, error)
+	// Skipped names the providers this machine is not set up for, with what
+	// was looked for. main fills it from provider.Missing.
+	Skipped map[string]string
 }
 
 const Usage = `kho - one place for every package manager on your machine
 
 usage:
   kho                                  open the TUI
-  kho check [--json] [--refresh]       am I safe? inventory plus known advisories
+  kho check [--json] [--refresh] [--require-complete] [--require uv,npm]
+                                       am I safe? inventory plus known advisories
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
                                        upgrade or downgrade; without --yes it only
@@ -61,7 +67,7 @@ usage:
   kho list                             every package as JSON
   kho version                          print the version
 
-exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk
+exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan
 `
 
 func Main(env Env, args []string) int {
@@ -146,7 +152,6 @@ func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]st
 func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool) error {
 	var queries []vuln.Query
 	bySource := map[string][]string{}
-	var audited []string
 	for _, p := range pkgs {
 		if q, ok := provider.Query(p); ok {
 			queries = append(queries, q)
@@ -156,7 +161,6 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 			k := p.Repo + "/" + p.Name
 			if t, ok := env.DB.AuditedAt[k]; refresh || !ok || env.Now().Sub(t) > vuln.MaxAge {
 				bySource[p.Repo] = append(bySource[p.Repo], p.Name)
-				audited = append(audited, k)
 			}
 		}
 	}
@@ -180,12 +184,11 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 		audits, err := env.Audits(ctx, bySource)
 		if err != nil {
 			errs = append(errs, err)
-		}
-		for _, k := range audited {
-			env.DB.AuditedAt[k] = env.Now()
-		}
-		for k, a := range audits {
-			env.DB.Audits[k] = a
+		} else {
+			for k, a := range audits {
+				env.DB.Audits[k] = a
+				env.DB.AuditedAt[k] = env.Now()
+			}
 		}
 	}
 	if env.DBPath != "" {
@@ -245,7 +248,9 @@ type Summary struct {
 // Report is what `kho check --json` prints. Safe is false when an installed
 // package has a known advisory or a skill failed an audit. Advisories in
 // dependencies are listed for review but don't decide Safe, since OSV
-// matches them by module and the vulnerable code may never run.
+// matches them by module and the vulnerable code may never run. Safe speaks
+// only for what was checked: Skipped names the managers this machine does not
+// have, so a reader can see what the verdict does not cover.
 type Report struct {
 	Kho            string            `json:"kho"`
 	CheckedAt      time.Time         `json:"checkedAt"`
@@ -256,6 +261,8 @@ type Report struct {
 	RiskySkills    []RiskySkill      `json:"riskySkills"`
 	Outdated       []Outdated        `json:"outdated"`
 	NotCovered     []string          `json:"notCovered"`
+	Skipped        map[string]string `json:"skipped,omitempty"`
+	Complete       bool              `json:"complete"`
 	Errors         map[string]string `json:"errors,omitempty"`
 }
 
@@ -302,7 +309,7 @@ func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
 }
 
 func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
-	r := Report{Kho: env.Version, CheckedAt: env.Now(), Errors: errs,
+	r := Report{Kho: env.Version, CheckedAt: env.Now(), Errors: errs, Skipped: env.Skipped,
 		Vulnerable: []Finding{}, VulnerableDeps: []Finding{}, RiskySkills: []RiskySkill{}, Outdated: []Outdated{}, NotCovered: []string{}}
 	covered := map[string]bool{}
 	for _, p := range pkgs {
@@ -342,6 +349,9 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 	r.NotCovered = slices.DeleteFunc(r.NotCovered, func(s string) bool { return covered[s] })
 	r.Summary.Vulnerable, r.Summary.RiskySkills = len(r.Vulnerable), len(r.RiskySkills)
 	r.Safe = len(r.Vulnerable) == 0 && len(r.RiskySkills) == 0
+	// Complete is false when a manager was skipped or a source failed, so a
+	// script can tell a full scan from one that only read part of the machine.
+	r.Complete = len(r.Skipped) == 0 && len(r.Errors) == 0
 	return r
 }
 
@@ -355,7 +365,17 @@ func (env Env) check(args []string) int {
 	fs := env.flags("check")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	refresh := fs.Bool("refresh", false, "ask OSV and skills.sh again, skipping the cache")
+	// A script that branches on the exit code cannot tell a clean scan from a
+	// partial one, so it can name the managers it depends on, or ask for a full
+	// scan, and get a failure when that did not happen.
+	requireComplete := fs.Bool("require-complete", false, "fail when a manager or source could not be read")
+	require := fs.String("require", "", "comma separated sources that must be readable, like uv,npm")
 	if _, err := parse(fs, args); err != nil {
+		return ExitUsage
+	}
+	required, unknown := splitSources(*require)
+	if len(unknown) > 0 {
+		fmt.Fprintf(env.Err, "unknown source in --require: %s\n", strings.Join(unknown, ", "))
 		return ExitUsage
 	}
 	ctx := context.Background()
@@ -369,10 +389,73 @@ func (env Env) check(args []string) int {
 	} else {
 		env.printReport(r)
 	}
+	missingRequired := unreadable(r, required)
+	partial := len(missingRequired) > 0 || (*requireComplete && !r.Complete)
+	if partial {
+		// Say what was not read even when the scan is also at risk, so a partial
+		// answer never looks like a complete one.
+		if len(missingRequired) > 0 {
+			fmt.Fprintf(env.Err, "scan was not complete for %s\n", strings.Join(missingRequired, ", "))
+		} else {
+			fmt.Fprintf(env.Err, "scan was not complete: %s\n", whyIncomplete(r))
+		}
+	}
 	if !r.Safe {
 		return ExitAtRisk
 	}
+	if partial {
+		return ExitIncomplete
+	}
 	return ExitOK
+}
+
+// splitSources reads the --require list and returns the names kho does not know,
+// so a typo fails loudly instead of passing as "nothing to check".
+func splitSources(list string) (known, unknown []string) {
+	sources := map[string]bool{}
+	for _, p := range provider.All() {
+		sources[p.Name()] = true
+	}
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if sources[name] {
+			known = append(known, name)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	return known, unknown
+}
+
+// unreadable names the required sources this scan could not read, with why.
+func unreadable(r Report, required []string) []string {
+	var missing []string
+	for _, name := range required {
+		if why, ok := r.Skipped[name]; ok {
+			missing = append(missing, name+" ("+why+")")
+		} else if err, ok := r.Errors[name]; ok {
+			missing = append(missing, name+" failed: "+err)
+		}
+	}
+	return missing
+}
+
+// whyIncomplete names what stopped a scan from reading the whole machine.
+func whyIncomplete(r Report) string {
+	var reasons []string
+	for _, src := range slices.Sorted(maps.Keys(r.Skipped)) {
+		reasons = append(reasons, src+" ("+r.Skipped[src]+")")
+	}
+	for _, src := range slices.Sorted(maps.Keys(r.Errors)) {
+		reasons = append(reasons, src+" failed: "+r.Errors[src])
+	}
+	if len(reasons) == 0 {
+		return "nothing to read"
+	}
+	return strings.Join(reasons, ", ")
 }
 
 func (env Env) printReport(r Report) {
@@ -380,6 +463,9 @@ func (env Env) printReport(r Report) {
 	verdict := "✓ safe: no known advisories affect what's installed"
 	if !r.Safe {
 		verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package") + ", " + plural(r.Summary.RiskySkills, "risky skill")
+	}
+	if r.Safe && !r.Complete {
+		verdict = "✓ safe for what was read: part of the machine could not be checked"
 	}
 	fmt.Fprintf(w, "%s\n%d packages · %d outdated · %d pinned · %d with vulnerable dependencies\n",
 		verdict, r.Summary.Packages, r.Summary.Outdated, r.Summary.Pinned, r.Summary.WithVulnerableDeps)
@@ -397,6 +483,14 @@ func (env Env) printReport(r Report) {
 	}
 	if len(r.NotCovered) > 0 {
 		fmt.Fprintf(w, "\nnot covered by OSV: %s\n", strings.Join(r.NotCovered, ", "))
+	}
+	if len(r.Skipped) > 0 {
+		var skipped []string
+		for src, why := range r.Skipped {
+			skipped = append(skipped, src+" ("+why+")")
+		}
+		slices.Sort(skipped)
+		fmt.Fprintf(w, "\nnot checked, %s left out: %s\n", plural(len(skipped), "manager"), strings.Join(skipped, ", "))
 	}
 	for src, err := range r.Errors {
 		fmt.Fprintf(w, "error from %s: %s\n", src, err)
