@@ -1,0 +1,50 @@
+name: release
+
+# Every push to main updates one release PR, written by release-please from the
+# Conventional Commits since the last tag. Merging that PR tags the release,
+# and the goreleaser job then builds the binaries and updates the Homebrew cask.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          # GitHub won't let the default token open PRs on a push run, and PRs it
+          # opens wouldn't trigger CI. A fine-grained PAT with Contents and Pull
+          # requests read and write, stored as RELEASE_PLEASE_TOKEN, does both.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  goreleaser:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A fine-grained PAT with Contents read and write on vuon9/homebrew-tap.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

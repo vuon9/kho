@@ -1,0 +1,52 @@
+version: 2
+
+project_name: kho
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    flags:
+      - -trimpath
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+# release-please writes the changelog and the release; goreleaser only adds
+# the binaries to it.
+changelog:
+  disable: true
+
+release:
+  mode: keep-existing
+
+homebrew_casks:
+  - name: kho
+    binaries: [kho]
+    directory: Casks
+    homepage: https://github.com/vuon9/kho
+    description: "One place for every package manager on your machine, with security checks"
+    repository:
+      owner: vuon9
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_msg_template: "kho {{ .Tag }}"
+    hooks:
+      post:
+        # The binary isn't notarized, so drop the quarantine flag macOS adds
+        # to downloads, or Gatekeeper refuses to run it.
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/kho"]
+          end

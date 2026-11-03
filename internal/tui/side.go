@@ -1,0 +1,677 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/vuln"
+)
+
+// line is one row of sidebar text. A row with a url opens it when clicked.
+// A labeled row wraps its value under the value, not under the label, and a
+// list row is never wrapped so each entry stays one row.
+type line struct {
+	text   string
+	url    string
+	label  string
+	nowrap bool
+}
+
+func field(label, value, url string) line {
+	return line{label: label, text: value, url: url}
+}
+
+func row(text string) line {
+	return line{text: text, nowrap: true}
+}
+
+// wrapLines folds every line to width, so nothing in the sidebar is cut off.
+func wrapLines(lines []line, width int) []line {
+	var out []line
+	for _, l := range lines {
+		if l.label != "" {
+			labelW := max(10, len(l.label)+1)
+			for i, v := range strings.Split(ansi.Wrap(l.text, max(width-1-labelW, 8), ""), "\n") {
+				head := strings.Repeat(" ", labelW)
+				if i == 0 {
+					head = faint().Render(pad(l.label, labelW))
+				}
+				out = append(out, line{text: " " + head + v, url: l.url, nowrap: true})
+			}
+			continue
+		}
+		if l.nowrap || lipgloss.Width(l.text) <= width {
+			out = append(out, l)
+			continue
+		}
+		for i, v := range strings.Split(ansi.Wrap(l.text, width-1, ""), "\n") {
+			if i > 0 {
+				v = " " + v
+			}
+			out = append(out, line{text: v, url: l.url, nowrap: true})
+		}
+	}
+	return out
+}
+
+func plain(texts ...string) []line {
+	var out []line
+	for _, t := range texts {
+		out = append(out, line{text: t})
+	}
+	return out
+}
+
+var shortTabNames = map[int]string{tabInfo: "Info", tabVersions: "Ver", tabSecurity: "Sec", tabSkill: "Skill", tabReadme: "Read", tabLinks: "Links"}
+
+func tabLabel(name string, active bool) string {
+	if active {
+		return pillOn(name, th.accent, th.pillFg)
+	}
+	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(name)
+}
+
+// tabLabels names the tabs in full, or shortened when the full names don't
+// fit across the sidebar.
+func (m model) tabLabels() []string {
+	build := func(names map[int]string) []string {
+		var labels []string
+		for _, t := range m.tabs() {
+			labels = append(labels, tabLabel(names[t], t == m.activeTab()))
+		}
+		return labels
+	}
+	labels := build(tabNames)
+	if lipgloss.Width(strings.Join(labels, " ")) > m.layout().sideW-6 {
+		labels = build(shortTabNames)
+	}
+	return labels
+}
+
+func (m model) tabBar() string {
+	return strings.Join(m.tabLabels(), " ")
+}
+
+// hasBottom says whether the active tab splits the sidebar. Long reads, like
+// a README, use the whole height instead.
+func (m model) hasBottom() bool {
+	p, ok := m.current()
+	if !ok {
+		return false
+	}
+	switch m.activeTab() {
+	case tabReadme:
+		return false
+	case tabSecurity:
+		return p.Source != "skills"
+	}
+	return true
+}
+
+// sideListLen is the length of the active tab's list, or -1 for tabs that
+// show text rather than a list.
+func (m model) sideListLen() int {
+	p, ok := m.current()
+	if !ok {
+		return -1
+	}
+	switch m.activeTab() {
+	case tabVersions:
+		return len(m.currentVersions())
+	case tabSecurity:
+		if p.Source == "skills" {
+			return -1
+		}
+		return len(m.securityEntries())
+	case tabLinks:
+		return len(skillLinks(p))
+	}
+	return -1
+}
+
+// topView and bottomView are the sidebar halves as drawn: wrapped to width,
+// except list rows.
+func (m model) topView(inner int) []line {
+	return wrapLines(m.topLines(inner), inner)
+}
+
+func (m model) bottomView(inner int) []line {
+	return wrapLines(m.bottomLines(inner), inner)
+}
+
+func (m model) sideBox(w, h int, focused bool) string {
+	l := m.layout()
+	inner := w - 2
+	e := edge(focused)
+	top := e.Render("╭─") + " " + m.tabBar() + " "
+	top += e.Render(strings.Repeat("─", max(w-1-lipgloss.Width(top), 0)) + "╮")
+	out := []string{top}
+	row := func(s string) string { return e.Render("│") + pad(s, inner) + e.Render("│") }
+
+	tops := m.topView(inner)
+	list := m.sideListLen() >= 0
+	for i := range l.topRows {
+		idx := m.sideOffset + i
+		switch {
+		case list && i == 0 && len(tops) > 0:
+			idx = 0
+		case list:
+			idx = m.sideOffset + i
+		}
+		text := ""
+		if idx < len(tops) {
+			text = tops[idx].text
+		}
+		if from, to, ok := m.sel.span(areaTop, idx, inner); ok && !list {
+			text = highlight(text, from, to)
+		}
+		if list && i > 0 && idx-1 == m.sideCursor && idx < len(tops) {
+			text = selected(text, inner, focused && m.sidePart == 0)
+		}
+		out = append(out, row(text))
+	}
+	if m.hasBottom() {
+		title := m.bottomTitle()
+		active := focused && m.sidePart == 1
+		div := e.Render("├─ ") + boxTitle(title, active) + " "
+		out = append(out, div+e.Render(strings.Repeat("─", max(w-1-lipgloss.Width(div), 0))+"┤"))
+		bottoms := m.bottomView(inner)
+		for i := range l.bottomRows {
+			text := ""
+			j := m.bodyOffset + i
+			if j < len(bottoms) {
+				text = bottoms[j].text
+			}
+			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
+				text = highlight(text, from, to)
+			}
+			out = append(out, row(text))
+		}
+	}
+	out = append(out, e.Render("╰"+strings.Repeat("─", inner)+"╯"))
+	return strings.Join(out, "\n")
+}
+
+func (m model) topLines(inner int) []line {
+	p, ok := m.current()
+	if !ok {
+		return plain("", faint().Render(" pick a package to see it here"))
+	}
+	switch m.activeTab() {
+	case tabVersions:
+		return m.versionLines(p, inner)
+	case tabSecurity:
+		if p.Source == "skills" {
+			return m.auditLines(p)
+		}
+		return m.securityLines(p, inner)
+	case tabSkill:
+		return m.skillMetaLines(p)
+	case tabReadme:
+		return m.readmeLines(p, inner)
+	case tabLinks:
+		return m.linkLines(p)
+	}
+	return m.infoLines(p)
+}
+
+func (m model) bottomTitle() string {
+	p, _ := m.current()
+	switch m.activeTab() {
+	case tabVersions:
+		if r, ok := at(m.currentVersions(), m.sideCursor); ok {
+			return "📜 Changelog · " + r.Version
+		}
+		return "📜 Changelog"
+	case tabSecurity:
+		if e, ok := at(m.securityEntries(), m.sideCursor); ok {
+			return "🛡 " + e.adv.ID
+		}
+		return "🛡 Advisory"
+	case tabSkill:
+		return "📄 SKILL.md"
+	case tabLinks:
+		if l, ok := at(skillLinks(p), m.sideCursor); ok {
+			return "🔗 " + l.Agent
+		}
+		return "🔗 Link"
+	}
+	if p.Source == "skills" {
+		linked := 0
+		for _, l := range skillLinks(p) {
+			if l.Kind == "link" || l.Kind == "copy" || l.Shared || l.Kind == "shared" {
+				linked++
+			}
+		}
+		return fmt.Sprintf("🔗 Seen by %d agents", linked)
+	}
+	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+		return fmt.Sprintf("🔗 Dependencies · %d", len(d.val))
+	}
+	return "🔗 Dependencies"
+}
+
+func (m model) bottomLines(inner int) []line {
+	p, _ := m.current()
+	switch m.activeTab() {
+	case tabVersions:
+		return m.changelogLines(p, inner)
+	case tabSecurity:
+		return m.advisoryLines(p, inner)
+	case tabSkill:
+		d := m.docs[pkgKey(p)]
+		switch {
+		case d == nil || !d.done:
+			return plain(faint().Render(" loading…"))
+		case d.err != nil:
+			return plain(red().Render(" " + d.err.Error()))
+		}
+		return plain(m.md.render(d.val.Body, inner)...)
+	case tabLinks:
+		return m.linkDetail(p)
+	}
+	if p.Source == "skills" {
+		return m.linkLines(p)
+	}
+	return m.depLines(p, inner)
+}
+
+func (m model) infoLines(p provider.Package) []line {
+	lines := plain(" "+icon(provider.ProviderOf(p))+" "+accent().Render(p.Name)+faint().Render(" · "+p.Source), "")
+	add := func(label, value, url string) {
+		if value == "" {
+			return
+		}
+		if url != "" {
+			value = link(url).Render(value)
+		}
+		lines = append(lines, field(label, value, url))
+	}
+	add("about", p.Desc, "")
+	version := p.Version
+	if p.Latest != "" && p.Latest != p.Version {
+		version += " → " + green().Render(p.Latest)
+	}
+	add("version", version, "")
+	if len(p.Versions) > 1 {
+		add("installed", strings.Join(p.Versions, ", "), "")
+	}
+	add("security", m.securitySummary(p), "")
+	add("from", p.Origin, "")
+	if home := homeURL(p); home != "" {
+		add("home", home, home)
+	}
+	if p.Repo != "" && "https://github.com/"+p.Repo != homeURL(p) {
+		add("repo", "github.com/"+p.Repo, "https://github.com/"+p.Repo)
+	}
+	if p.Source == "skills" {
+		add("path", tilde(provider.RealPath(p)), "")
+	} else {
+		add("path", p.Path, "")
+	}
+	if p.Source == "skills" {
+		add("agents", strings.Join(p.Agents, ", "), "")
+	}
+	add("note", p.Note, "")
+	if p.Dependency {
+		add("note", "installed as a dependency", "")
+	}
+	if err := m.errs[provider.ProviderOf(p)]; err != nil {
+		add("error", red().Render(err.Error()), "")
+	}
+	return lines
+}
+
+func (m model) securitySummary(p provider.Package) string {
+	if p.Source == "skills" {
+		a, ok := m.audit(p)
+		if !ok {
+			return faint().Render("no skills.sh audit")
+		}
+		return verdictPill(vuln.Verdict(a.Worst())) + faint().Render(" worst of 3 audits on skills.sh")
+	}
+	q, ok := provider.Query(p)
+	if !ok {
+		return faint().Render("not covered: OSV has no data for " + p.Source)
+	}
+	if _, checked := m.db.Checked[q.Key()]; !checked {
+		return faint().Render("not checked yet")
+	}
+	advs := m.vulns[pkgKey(p)]
+	deps := len(m.depVulns[pkgKey(p)])
+	var parts []string
+	switch {
+	case len(advs) > 0:
+		parts = append(parts, red().Render(fmt.Sprintf("⚠ %d known in %s", len(advs), p.Version)))
+		if fix := fixFor(advs, p.Version); fix != "" {
+			parts = append(parts, green().Render("fixed in "+fix))
+		}
+	default:
+		parts = append(parts, green().Render("✓ no known advisories"))
+	}
+	if deps > 0 {
+		parts = append(parts, orange().Render(fmt.Sprintf("◆ %d in deps", deps)))
+	}
+	return strings.Join(parts, faint().Render(" · "))
+}
+
+// fixFor is the lowest version that fixes every advisory, or "" when one of
+// them has no fix yet.
+func fixFor(advs []vuln.Advisory, version string) string {
+	best := ""
+	for _, a := range advs {
+		f := a.FixedAfter(version)
+		if f == "" {
+			return ""
+		}
+		if vuln.Compare(f, best) > 0 {
+			best = f
+		}
+	}
+	return best
+}
+
+func (m model) depLines(p provider.Package, inner int) []line {
+	d := m.deps[pkgKey(p)]
+	switch {
+	case d == nil || !d.done:
+		return plain(faint().Render(" loading…"))
+	case d.err != nil:
+		return plain(red().Render(" " + d.err.Error()))
+	case len(d.val) == 0:
+		return plain(faint().Render(" no dependencies"))
+	}
+	flagged := map[string][]string{}
+	for _, da := range m.depVulns[pkgKey(p)] {
+		flagged[da.dep.Name] = append(flagged[da.dep.Name], da.adv.ID)
+	}
+	nameW := max(inner-24, 12)
+	var lines []line
+	for _, dep := range d.val {
+		mark := faint().Render("·")
+		if dep.Direct {
+			mark = accent().Render("•")
+		}
+		text := fmt.Sprintf(" %s %s %s", mark, pad(dep.Name, nameW), faint().Render(dep.Version))
+		if ids := flagged[dep.Name]; len(ids) > 0 {
+			text = fmt.Sprintf(" %s %s %s %s", red().Render("⚠"), pad(dep.Name, nameW), dep.Version, red().Render(fmt.Sprintf("%d vuln", len(ids))))
+		}
+		lines = append(lines, row(text))
+	}
+	return lines
+}
+
+func (m model) versionLines(p provider.Package, inner int) []line {
+	v := m.versions[pkgKey(p)]
+	switch {
+	case v == nil || !v.done:
+		return plain(faint().Render(" " + spinner[m.frame%len(spinner)] + " loading versions…"))
+	case v.err != nil:
+		return plain(red().Render(" " + v.err.Error()))
+	case len(v.val) == 0:
+		return plain(faint().Render(" no versions published"))
+	}
+	eco, name := provider.Ecosystem(p), provider.OSVName(p)
+	known := m.db.Known(eco, name)
+	history := eco != "" && m.db.HistoryFresh(eco, name, now())
+	verW := max(min(inner-36, 22), 10)
+	lines := plain("  " + faint().Bold(true).Render(pad("VERSION", verW)+" "+pad("DATE", 10)+" NOTES  SECURITY"))
+	for _, r := range v.val {
+		date := ""
+		if !r.Date.IsZero() {
+			date = r.Date.Format("2006-01-02")
+		}
+		notes := "      "
+		if strings.TrimSpace(r.Notes) != "" {
+			notes = cyan().Render("≡ yes ")
+		}
+		var tags []string
+		affected := 0
+		for _, a := range known {
+			if a.Affects(r.Version) {
+				affected++
+			}
+		}
+		switch {
+		case affected > 0:
+			tags = append(tags, red().Render(fmt.Sprintf("⚠ %d", affected)))
+		case history && vuln.Compare(r.Version, p.Version) > 0:
+			tags = append(tags, green().Render("✓ safe"))
+		}
+		if provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
+			tags = append(tags, pill("installed", th.green))
+		}
+		lines = append(lines, row("  "+pad(r.Version, verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
+	}
+	return lines
+}
+
+func (m model) changelogLines(p provider.Package, inner int) []line {
+	r, ok := at(m.currentVersions(), m.sideCursor)
+	if !ok {
+		return nil
+	}
+	var lines []line
+	eco, name := provider.Ecosystem(p), provider.OSVName(p)
+	for _, a := range m.db.Known(eco, name) {
+		if a.Affects(r.Version) {
+			lines = append(lines, line{text: " " + severityPill(a.Severity) + " " + red().Render(a.ID) + " " + faint().Render(a.Summary), url: a.URL()})
+		}
+	}
+	if len(lines) > 0 {
+		lines = append(lines, line{})
+	}
+	switch {
+	case strings.TrimSpace(r.Notes) != "":
+		lines = append(lines, plain(m.md.render(r.Notes, inner)...)...)
+	case r.URL != "":
+		lines = append(lines,
+			line{text: " " + yellow().Render("No changelog found for "+r.Version+".")},
+			line{},
+			line{text: " Open the release page in your browser?"},
+			line{text: " " + link(r.URL).Render(r.URL), url: r.URL},
+			line{text: " " + accent().Render("y") + faint().Render(" open the page  ") + accent().Render("↑↓") + faint().Render(" another version")},
+		)
+	default:
+		lines = append(lines, line{text: faint().Render(" No changelog or release page found for " + r.Version + ".")})
+	}
+	return lines
+}
+
+type securityEntry struct {
+	adv vuln.Advisory
+	dep string
+}
+
+func (m model) securityEntries() []securityEntry {
+	p, ok := m.current()
+	if !ok {
+		return nil
+	}
+	var es []securityEntry
+	for _, a := range m.vulns[pkgKey(p)] {
+		es = append(es, securityEntry{adv: a})
+	}
+	for _, da := range m.depVulns[pkgKey(p)] {
+		es = append(es, securityEntry{adv: da.adv, dep: da.dep.Name + "@" + da.dep.Version})
+	}
+	return es
+}
+
+func (m model) securityLines(p provider.Package, inner int) []line {
+	q, ok := provider.Query(p)
+	if !ok {
+		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
+	}
+	es := m.securityEntries()
+	if len(es) == 0 {
+		if _, checked := m.db.Checked[q.Key()]; !checked {
+			return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+		}
+		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+" on osv.dev"))
+	}
+	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
+	for _, e := range es {
+		fix := red().Render("no fix yet")
+		version := p.Version
+		if e.dep != "" {
+			_, version, _ = strings.Cut(e.dep, "@")
+		}
+		if f := e.adv.FixedAfter(version); f != "" {
+			fix = green().Render("≥ " + f)
+		}
+		text := "  " + severityPill(e.adv.Severity) + " " + pad(e.adv.ID, 20) + " " + fix
+		if e.dep != "" {
+			text += faint().Render(" via " + e.dep)
+		}
+		lines = append(lines, row(text))
+	}
+	return lines
+}
+
+func (m model) advisoryLines(p provider.Package, inner int) []line {
+	e, ok := at(m.securityEntries(), m.sideCursor)
+	if !ok {
+		return nil
+	}
+	a := e.adv
+	version := p.Version
+	if e.dep != "" {
+		_, version, _ = strings.Cut(e.dep, "@")
+	}
+	lines := plain(" " + severityPill(a.Severity) + " " + bold().Render(ansi.Truncate(a.Summary, inner-10, "…")))
+	lines = append(lines, line{})
+	if e.dep != "" {
+		lines = append(lines, field("through", e.dep, ""))
+	}
+	fix := red().Render("no fix published yet")
+	if f := a.FixedAfter(version); f != "" {
+		fix = green().Render(f)
+		if p.Latest != "" && e.dep == "" {
+			if a.Affects(p.Latest) {
+				fix += red().Render(" · latest " + p.Latest + " is still affected")
+			} else {
+				fix += faint().Render(" · latest " + p.Latest + " is clear")
+			}
+		}
+	}
+	lines = append(lines, field("affects", version, ""), field("fixed in", fix, ""))
+	if !a.Published.IsZero() {
+		lines = append(lines, field("published", a.Published.Format("2006-01-02"), ""))
+	}
+	if len(a.Aliases) > 0 {
+		lines = append(lines, field("aliases", strings.Join(a.Aliases, ", "), ""))
+	}
+	lines = append(lines, field("details", link(a.URL()).Render(a.URL()), a.URL()), line{})
+	return append(lines, plain(m.md.render(a.Details, inner)...)...)
+}
+
+func (m model) auditLines(p provider.Package) []line {
+	if p.Repo == "" {
+		return plain("", faint().Render(" 🛡  skills.sh audits only cover skills"), faint().Render("    installed from GitHub."))
+	}
+	page := vuln.SkillPage(p.Repo, p.Name)
+	a, ok := m.audit(p)
+	if !ok {
+		return []line{{}, {text: faint().Render(" No audit found on skills.sh yet.")}, {text: " " + link(page).Render(page), url: page}}
+	}
+	alerts := fmt.Sprintf("%d alerts", a.SocketAlerts)
+	if a.SocketAlerts == 1 {
+		alerts = "1 alert"
+	}
+	lines := []line{
+		{text: " " + accent().Render("🛡 Security audits") + faint().Render(" from skills.sh")},
+		{},
+		{text: " " + pad("Gen Agent Trust Hub", 22) + verdictPill(vuln.Verdict(a.Gen)) + faint().Render(" "+a.Gen)},
+		{text: " " + pad("Socket", 22) + verdictPill(vuln.Verdict(a.Socket)) + faint().Render(" "+alerts)},
+		{text: " " + pad("Snyk", 22) + verdictPill(vuln.Verdict(a.Snyk)) + faint().Render(" "+a.Snyk)},
+		{},
+	}
+	if !a.Analyzed.IsZero() {
+		lines = append(lines, field("analyzed", a.Analyzed.Format("2006-01-02"), ""))
+	}
+	return append(lines, field("report", link(page).Render(page), page))
+}
+
+func (m model) skillMetaLines(p provider.Package) []line {
+	d := m.docs[pkgKey(p)]
+	switch {
+	case d == nil || !d.done:
+		return plain(faint().Render(" loading…"))
+	case d.err != nil:
+		return plain(red().Render(" " + d.err.Error()))
+	}
+	lines := plain(" " + icon("skills") + " " + accent().Render(p.Name))
+	lines = append(lines, line{})
+	for _, kv := range d.val.Meta {
+		if kv[1] != "" {
+			lines = append(lines, field(kv[0], kv[1], ""))
+		}
+	}
+	return append(lines, field("files", strings.Join(d.val.Files, "  "), ""))
+}
+
+func (m model) readmeLines(p provider.Package, inner int) []line {
+	d := m.docs[pkgKey(p)]
+	switch {
+	case d == nil || !d.done:
+		return plain(faint().Render(" loading…"))
+	case d.err != nil:
+		return plain(red().Render(" " + d.err.Error()))
+	case d.val.Readme == "":
+		lines := plain("", faint().Render(" 📭 This skill has no README.md."))
+		if p.Repo != "" {
+			u := "https://github.com/" + p.Repo
+			lines = append(lines, line{text: faint().Render(" The repo may have one: ") + link(u).Render(u), url: u})
+		}
+		return lines
+	}
+	return plain(m.md.render(d.val.Readme, inner)...)
+}
+
+func linkState(l provider.SkillLink) string {
+	switch {
+	case l.Kind == "link":
+		return green().Render("🔗 linked")
+	case l.Kind == "copy":
+		return cyan().Render("📁 copy")
+	case l.Kind == "shared", l.Shared:
+		return faint().Render("≈ shared")
+	}
+	return faint().Render("· none")
+}
+
+func (m model) linkLines(p provider.Package) []line {
+	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 10)+" "+pad("STATE", 11)+" PATH"))}
+	for _, l := range skillLinks(p) {
+		lines = append(lines, row("  "+pad(l.Agent, 10)+" "+pad(linkState(l), 11)+" "+faint().Render(tilde(l.Path))))
+	}
+	return lines
+}
+
+func (m model) linkDetail(p provider.Package) []line {
+	l, ok := at(skillLinks(p), m.sideCursor)
+	if !ok {
+		return nil
+	}
+	lines := []line{field("path", tilde(l.Path), ""), field("skill", tilde(provider.RealPath(p)), ""), {}}
+	switch l.Kind {
+	case "link":
+		lines = append(lines, field("points to", tilde(l.Target), ""), line{},
+			line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
+	case "copy":
+		lines = append(lines, line{text: faint().Render(" A copied folder, not a link. kho won't delete it.")})
+	case "shared":
+		lines = append(lines, line{text: faint().Render(" " + l.Agent + " reads ~/.agents/skills directly, so it always sees this skill.")})
+	default:
+		if l.Shared {
+			lines = append(lines, line{text: faint().Render(" " + l.Agent + " already sees it through ~/.agents/skills.")})
+		}
+		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+l.Agent+"'s own folder.")})
+	}
+	return lines
+}
