@@ -160,12 +160,29 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 	if got := r.Skipped; len(got) != 2 || got["uv"] != "uv not on PATH" {
 		t.Errorf("JSON skipped %v, want both managers named", got)
 	}
+	if r.Complete {
+		t.Error("a scan that skipped two managers must not call itself complete")
+	}
 
 	out.Reset()
 	Main(env, []string{"check"})
 	text := out.String()
 	if !strings.Contains(text, "2 managers left out: go (no Go binary directory), uv (uv not on PATH)") {
 		t.Errorf("plain report hides what was left out:\n%s", text)
+	}
+	if !strings.Contains(text, "safe for what was read: 2 managers could not be checked") {
+		t.Errorf("plain verdict claims more than it read:\n%s", text)
+	}
+
+	env.Skipped = nil
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	var full Report
+	if err := json.Unmarshal(out.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if !full.Complete {
+		t.Error("a scan that skipped nothing must call itself complete")
 	}
 }
 
