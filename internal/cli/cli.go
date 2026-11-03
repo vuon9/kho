@@ -99,7 +99,7 @@ func (env Env) flags(name string) *flag.FlagSet {
 }
 
 // parse accepts flags before or after the arguments, as in
-// `kho install pipx/black@latest --yes`, which Go's flag package alone stops
+// `kho install pipx/ruff@latest --yes`, which Go's flag package alone stops
 // reading at the first argument.
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var rest []string
@@ -414,7 +414,7 @@ func plural(n int, thing string) string {
 func find(pkgs []provider.Package, ref string) (provider.Package, error) {
 	source, name, ok := strings.Cut(ref, "/")
 	if !ok {
-		return provider.Package{}, fmt.Errorf("%q is not source/name, like pipx/black", ref)
+		return provider.Package{}, fmt.Errorf("%q is not source/name, like pipx/ruff", ref)
 	}
 	for _, p := range pkgs {
 		if p.Source == source && p.Name == name {

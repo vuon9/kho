@@ -31,7 +31,7 @@ Lead with the verdict in one line. Then list each vulnerable package: name, inst
 For detail on one package:
 
 ```bash
-kho show pipx/black --json
+kho show pipx/bramble --json
 ```
 
 ## Change
@@ -40,12 +40,12 @@ Only on the user's go-ahead, one package at a time.
 
 1. Dry run. It prints the exact command and changes nothing.
    ```bash
-   kho install pipx/black@26.10.1
+   kho install pipx/bramble@26.10.1
    ```
 2. Show the user that command and the version change. Get a yes for this package.
 3. Run it.
    ```bash
-   kho install pipx/black@26.10.1 --yes --json
+   kho install pipx/bramble@26.10.1 --yes --json
    ```
 4. Verify with `kho check --json`, and show what ran with `kho history --changes --json -n 5`.
 
