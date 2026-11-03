@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"slices"
 	"strings"
@@ -24,10 +25,11 @@ import (
 
 // Exit codes. An agent can branch on them without parsing the output.
 const (
-	ExitOK     = 0
-	ExitError  = 1
-	ExitUsage  = 2
-	ExitAtRisk = 3
+	ExitOK         = 0
+	ExitError      = 1
+	ExitUsage      = 2
+	ExitAtRisk     = 3
+	ExitIncomplete = 4
 )
 
 // Env is everything the commands touch, so tests can swap the machine out.
@@ -54,7 +56,8 @@ const Usage = `kho - one place for every package manager on your machine
 
 usage:
   kho                                  open the TUI
-  kho check [--json] [--refresh]       am I safe? inventory plus known advisories
+  kho check [--json] [--refresh] [--require-complete]
+                                       am I safe? inventory plus known advisories
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
                                        upgrade or downgrade; without --yes it only
@@ -64,7 +67,7 @@ usage:
   kho list                             every package as JSON
   kho version                          print the version
 
-exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk
+exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan
 `
 
 func Main(env Env, args []string) int {
@@ -362,6 +365,9 @@ func (env Env) check(args []string) int {
 	fs := env.flags("check")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	refresh := fs.Bool("refresh", false, "ask OSV and skills.sh again, skipping the cache")
+	// A script that branches on the exit code cannot tell a clean scan from a
+	// partial one, so it can ask for a full one and get a failure when it is not.
+	requireComplete := fs.Bool("require-complete", false, "fail when a manager or source could not be read")
 	if _, err := parse(fs, args); err != nil {
 		return ExitUsage
 	}
@@ -379,7 +385,26 @@ func (env Env) check(args []string) int {
 	if !r.Safe {
 		return ExitAtRisk
 	}
+	if *requireComplete && !r.Complete {
+		fmt.Fprintf(env.Err, "scan was not complete: %s\n", whyIncomplete(r))
+		return ExitIncomplete
+	}
 	return ExitOK
+}
+
+// whyIncomplete names what stopped a scan from reading the whole machine.
+func whyIncomplete(r Report) string {
+	var reasons []string
+	for _, src := range slices.Sorted(maps.Keys(r.Skipped)) {
+		reasons = append(reasons, src+" ("+r.Skipped[src]+")")
+	}
+	for _, src := range slices.Sorted(maps.Keys(r.Errors)) {
+		reasons = append(reasons, src+" failed: "+r.Errors[src])
+	}
+	if len(reasons) == 0 {
+		return "nothing to read"
+	}
+	return strings.Join(reasons, ", ")
 }
 
 func (env Env) printReport(r Report) {

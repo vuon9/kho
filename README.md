@@ -69,7 +69,7 @@ npx skills add vuon9/kho --skill use-kho
 
 Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
 
-Scripts can call the same commands: `kho check --json` exits 0 when safe and 3 when at risk, and `kho help` lists the rest.
+Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when `--require-complete` was asked for and a package manager or source could not be read. `kho help` lists the rest.
 
 ## What leaves your machine
 

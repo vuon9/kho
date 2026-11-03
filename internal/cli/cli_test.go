@@ -204,6 +204,56 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 	}
 }
 
+func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
+	var out, errOut bytes.Buffer
+	partial := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+		},
+		DB:      vuln.NewDB(),
+		Log:     history.Open(""),
+		Out:     &out,
+		Err:     &errOut,
+		Now:     func() time.Time { return clock },
+		Skipped: map[string]string{"uv": "uv not on PATH"},
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	}
+	tests := []struct {
+		id   string
+		env  Env
+		args []string
+		code int
+		err  string
+	}{
+		{"a partial scan still passes without the flag", partial, []string{"check"}, ExitOK, ""},
+		{"a partial scan fails with the flag, and says why", partial, []string{"check", "--require-complete"}, ExitIncomplete, "scan was not complete: uv (uv not on PATH)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			out.Reset()
+			errOut.Reset()
+			if code := Main(tt.env, tt.args); code != tt.code {
+				t.Errorf("exit %d, want %d", code, tt.code)
+			}
+			if got := strings.TrimSpace(errOut.String()); got != tt.err {
+				t.Errorf("stderr %q, want %q", got, tt.err)
+			}
+		})
+	}
+
+	full := partial
+	full.Skipped = nil
+	out.Reset()
+	errOut.Reset()
+	if code := Main(full, []string{"check", "--require-complete"}); code != ExitOK {
+		t.Errorf("a full scan with the flag exited %d, want %d: %s", code, ExitOK, errOut.String())
+	}
+}
+
 func TestCheckUsesTheCache(t *testing.T) {
 	db := vuln.NewDB()
 	first := kho(t, nil, nil, db, "check", "--json")

@@ -13,6 +13,7 @@ If `kho` is missing, ask before installing it: `brew install vuon9/tap/kho` or `
 
 ```bash
 kho check --json            # exit 0 safe, 3 at risk, 1 error
+kho check --json --require-complete  # exit 4 when a manager or source was not read
 kho check --json --refresh  # skip the 12-hour cache, ask OSV and skills.sh again
 ```
 
