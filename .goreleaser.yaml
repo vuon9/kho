@@ -39,7 +39,7 @@ homebrew_casks:
     description: "One place for every package manager on your machine, with security checks"
     repository:
       owner: vuon9
-      name: homebrew-tap
+      name: tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     commit_msg_template: "kho {{ .Tag }}"
     hooks:

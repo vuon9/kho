@@ -33,6 +33,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 ## Install
 
 ```bash
+brew trust vuon9/tap          # Homebrew 7 loads no cask from an untrusted tap
 brew install --cask vuon9/tap/kho
 ```
 
