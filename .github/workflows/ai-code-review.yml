@@ -21,7 +21,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.6
+    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.7
     with:
       mode: pr
     secrets:
@@ -34,7 +34,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.6
+    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.7
     with:
       mode: comment
     secrets:
