@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/vuon9/kho/compare/v0.1.1...v0.1.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **check:** name the managers a scan could not read ([#6](https://github.com/vuon9/kho/issues/6)) ([8f26ce7](https://github.com/vuon9/kho/commit/8f26ce7494168c1c4b5f985cf695124796a92a73))
+
 ## [0.1.1](https://github.com/vuon9/kho/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
