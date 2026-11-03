@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -35,7 +36,7 @@ func wrapLines(lines []line, width int) []line {
 	for _, l := range lines {
 		if l.label != "" {
 			labelW := max(10, len(l.label)+1)
-			for i, v := range strings.Split(ansi.Wrap(l.text, max(width-1-labelW, 8), ""), "\n") {
+			for i, v := range wrapStyled(l.text, max(width-1-labelW, 8)) {
 				head := strings.Repeat(" ", labelW)
 				if i == 0 {
 					head = faint().Render(pad(l.label, labelW))
@@ -48,7 +49,7 @@ func wrapLines(lines []line, width int) []line {
 			out = append(out, l)
 			continue
 		}
-		for i, v := range strings.Split(ansi.Wrap(l.text, width-1, ""), "\n") {
+		for i, v := range wrapStyled(l.text, width-1) {
 			if i > 0 {
 				v = " " + v
 			}
@@ -56,6 +57,41 @@ func wrapLines(lines []line, width int) []line {
 		}
 	}
 	return out
+}
+
+var escapes = regexp.MustCompile("\x1b\\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\\\)|\x1b\\[([0-9;:]*)m")
+
+// wrapStyled wraps styled text and makes each line stand alone. A link or
+// style still open where a line breaks is closed there and opened again on
+// the next line; left open, it runs on into the panels beside the sidebar,
+// which terminals draw as a dotted line across the screen.
+func wrapStyled(text string, width int) []string {
+	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
+	link, style := "", ""
+	for i, l := range lines {
+		l = link + style + l
+		for _, m := range escapes.FindAllStringSubmatch(l, -1) {
+			switch {
+			case strings.HasPrefix(m[0], "\x1b]8;"):
+				link = m[0]
+				if m[1] == "" {
+					link = ""
+				}
+			case m[2] == "" || m[2] == "0":
+				style = ""
+			default:
+				style += m[0]
+			}
+		}
+		if link != "" {
+			l += ansi.ResetHyperlink()
+		}
+		if style != "" {
+			l += ansi.ResetStyle
+		}
+		lines[i] = l
+	}
+	return lines
 }
 
 func plain(texts ...string) []line {

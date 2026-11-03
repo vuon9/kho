@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,7 @@ func fakes(t *testing.T) []provider.Provider {
 			{Source: "brew", Name: "cobalt", Version: "1.18.4", Latest: "1.18.6", Outdated: true, Dependency: true},
 			{Source: "brew", Name: "gust", Version: "1.27.1", Latest: "1.27.2", Outdated: true, Pinned: true},
 		}, versions: map[string][]provider.Release{"anvil": {
-			{Version: "v0.2.94", Notes: "Fixes the thing", URL: "https://github.com/example/anvil/releases/tag/v0.2.94"},
+			{Version: "v0.2.94", Notes: "Fixes the thing. See [the full list of changes in this release](https://example.com/anvil/releases/v0.2.94/changes-in-detail).", URL: "https://github.com/example/anvil/releases/tag/v0.2.94"},
 			{Version: "v0.2.89", URL: "https://github.com/example/anvil/releases/tag/v0.2.89"},
 			{Version: "v0.2.1"},
 		}}},
@@ -645,3 +646,37 @@ func TestThemes(t *testing.T) {
 }
 
 func key(k string) tea.Msg { return tea.KeyPressMsg{Code: rune(k[0]), Text: k} }
+
+// A link left open at the end of a line runs into the next screen row, which
+// terminals draw as a dotted underline across every panel.
+func TestLinksCloseOnTheirLine(t *testing.T) {
+	osc8 := regexp.MustCompile("\x1b\\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\\\)")
+	tests := []struct {
+		id   string
+		keys []string
+	}{
+		{"skill audit report link", []string{"G", "a"}},
+		{"homepage on Info", nil},
+		{"release page of a version", []string{"l", "v", "j"}},
+		{"advisory link", []string{"/", "b", "r", "a", "m", "enter", "a"}},
+		{"README repo link", []string{"G", "4"}},
+		{"markdown link in a changelog", []string{"v"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), tt.keys...)
+			for _, width := range []int{110, 160, 220} {
+				m = update(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
+				for i, line := range strings.Split(m.View().Content, "\n") {
+					open := false
+					for _, match := range osc8.FindAllStringSubmatch(line, -1) {
+						open = match[1] != ""
+					}
+					if open {
+						t.Errorf("at %d wide, line %d leaves a link open: %q", width, i, ansi.Strip(line))
+					}
+				}
+			}
+		})
+	}
+}
