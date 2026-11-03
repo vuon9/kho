@@ -457,3 +457,18 @@ func TestRunIsRecorded(t *testing.T) {
 		t.Errorf("recorded %q", got)
 	}
 }
+
+// A provider this machine lacks must be named by Missing, never dropped: a
+// silent skip reads as "nothing installed" and hides whatever it would hold.
+func TestMissingNamesEveryProviderThatIsNotSetUp(t *testing.T) {
+	missing := Missing()
+	for _, p := range All() {
+		reason, named := missing[p.Name()]
+		if available := p.Available(); available == named {
+			t.Errorf("%s: Available is %v but Missing says %v", p.Name(), available, named)
+		}
+		if named && reason == "" {
+			t.Errorf("%s is named without a reason", p.Name())
+		}
+	}
+}

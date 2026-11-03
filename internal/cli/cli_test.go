@@ -132,6 +132,43 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+		},
+		DB:      vuln.NewDB(),
+		Log:     history.Open(""),
+		Out:     &out,
+		Err:     &errOut,
+		Now:     func() time.Time { return clock },
+		Skipped: map[string]string{"go": "no Go binary directory", "uv": "uv not on PATH"},
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	}
+	if code := Main(env, []string{"check", "--json"}); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	var r Report
+	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out.String())
+	}
+	if got := r.Skipped; len(got) != 2 || got["uv"] != "uv not on PATH" {
+		t.Errorf("JSON skipped %v, want both managers named", got)
+	}
+
+	out.Reset()
+	Main(env, []string{"check"})
+	text := out.String()
+	if !strings.Contains(text, "2 managers left out: go (no Go binary directory), uv (uv not on PATH)") {
+		t.Errorf("plain report hides what was left out:\n%s", text)
+	}
+}
+
 func TestCheckUsesTheCache(t *testing.T) {
 	db := vuln.NewDB()
 	first := kho(t, nil, nil, db, "check", "--json")

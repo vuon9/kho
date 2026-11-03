@@ -45,6 +45,9 @@ type Env struct {
 	// Run runs an install. It gets the command as built by the provider and
 	// returns its combined output.
 	Run func(*exec.Cmd) (string, error)
+	// Skipped names the providers this machine is not set up for, with what
+	// was looked for. main fills it from provider.Missing.
+	Skipped map[string]string
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -245,7 +248,9 @@ type Summary struct {
 // Report is what `kho check --json` prints. Safe is false when an installed
 // package has a known advisory or a skill failed an audit. Advisories in
 // dependencies are listed for review but don't decide Safe, since OSV
-// matches them by module and the vulnerable code may never run.
+// matches them by module and the vulnerable code may never run. Safe speaks
+// only for what was checked: Skipped names the managers this machine does not
+// have, so a reader can see what the verdict does not cover.
 type Report struct {
 	Kho            string            `json:"kho"`
 	CheckedAt      time.Time         `json:"checkedAt"`
@@ -256,6 +261,7 @@ type Report struct {
 	RiskySkills    []RiskySkill      `json:"riskySkills"`
 	Outdated       []Outdated        `json:"outdated"`
 	NotCovered     []string          `json:"notCovered"`
+	Skipped        map[string]string `json:"skipped,omitempty"`
 	Errors         map[string]string `json:"errors,omitempty"`
 }
 
@@ -302,7 +308,7 @@ func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
 }
 
 func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
-	r := Report{Kho: env.Version, CheckedAt: env.Now(), Errors: errs,
+	r := Report{Kho: env.Version, CheckedAt: env.Now(), Errors: errs, Skipped: env.Skipped,
 		Vulnerable: []Finding{}, VulnerableDeps: []Finding{}, RiskySkills: []RiskySkill{}, Outdated: []Outdated{}, NotCovered: []string{}}
 	covered := map[string]bool{}
 	for _, p := range pkgs {
@@ -397,6 +403,14 @@ func (env Env) printReport(r Report) {
 	}
 	if len(r.NotCovered) > 0 {
 		fmt.Fprintf(w, "\nnot covered by OSV: %s\n", strings.Join(r.NotCovered, ", "))
+	}
+	if len(r.Skipped) > 0 {
+		var skipped []string
+		for src, why := range r.Skipped {
+			skipped = append(skipped, src+" ("+why+")")
+		}
+		slices.Sort(skipped)
+		fmt.Fprintf(w, "\nnot checked, %s left out: %s\n", plural(len(skipped), "manager"), strings.Join(skipped, ", "))
 	}
 	for src, err := range r.Errors {
 		fmt.Fprintf(w, "error from %s: %s\n", src, err)
