@@ -122,11 +122,14 @@ func (Skills) List(context.Context) ([]Package, error) {
 	return scanSkills(home, lock)
 }
 
-func dirNames(dir string) map[string]bool {
+// skillNames lists the skills in dir. As in the skills CLI, an entry is a
+// skill only when it holds a SKILL.md, so a link whose skill was removed, or a
+// category folder of bundled skills, is not one.
+func skillNames(dir string) map[string]bool {
 	names := map[string]bool{}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), ".") {
+		if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil && !strings.HasPrefix(e.Name(), ".") {
 			names[e.Name()] = true
 		}
 	}
@@ -135,7 +138,7 @@ func dirNames(dir string) map[string]bool {
 
 func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 	shared := filepath.Join(home, ".agents", "skills")
-	canonical := dirNames(shared)
+	canonical := skillNames(shared)
 	var agents []skillAgent
 	own := map[string]map[string]bool{}
 	for _, a := range skillAgents {
@@ -144,7 +147,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 		}
 		agents = append(agents, a)
 		if d := a.dir(home); d != "" {
-			own[a.Name] = dirNames(d)
+			own[a.Name] = skillNames(d)
 		}
 	}
 

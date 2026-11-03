@@ -202,11 +202,23 @@ func TestScanSkills(t *testing.T) {
 			}
 		}
 	}
-	mkdirs(
+	skills := func(paths ...string) {
+		mkdirs(paths...)
+		for _, p := range paths {
+			os.WriteFile(filepath.Join(home, p, "SKILL.md"), []byte("---\nname: x\n---\n"), 0o644)
+		}
+	}
+	skills(
 		".agents/skills/tracked", ".agents/skills/untracked", ".agents/skills/claude-off",
 		".claude/skills/tracked", ".claude/skills/untracked", ".claude/skills/agent-only",
-		".cursor/skills/cursor-only", ".cursor/skills/agent-only", ".pi/agent",
+		".cursor/skills/cursor-only", ".cursor/skills/agent-only",
 	)
+	mkdirs(".pi/agent")
+	// Not skills: a link left behind after its skill was removed, and a
+	// category folder like the ones Hermes keeps its bundled skills in.
+	os.Symlink("../../.agents/skills/removed", filepath.Join(home, ".cursor/skills/removed"))
+	skills(".claude/skills/notes/obsidian")
+	os.WriteFile(filepath.Join(home, ".claude/skills/notes/DESCRIPTION.md"), nil, 0o644)
 	lock := map[string]lockEntry{
 		"tracked":    {Source: "someone/skills", SourceType: "github", SkillFolderHash: "cd509ae729c86487d352e17a26651217a4c25711"},
 		"claude-off": {Source: "someone/skills", SourceType: "github", Ref: "v1.3.1", SkillFolderHash: "8295b8e10d4cdb6cce772a56dda7b7c37075074d"},
