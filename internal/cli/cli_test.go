@@ -231,6 +231,10 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 	}{
 		{"a partial scan still passes without the flag", partial, []string{"check"}, ExitOK, ""},
 		{"a partial scan fails with the flag, and says why", partial, []string{"check", "--require-complete"}, ExitIncomplete, "scan was not complete: uv (uv not on PATH)"},
+		{"a required source that was skipped fails", partial, []string{"check", "--require", "uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
+		{"a required source that was read passes", partial, []string{"check", "--require", "pipx"}, ExitOK, ""},
+		{"a manager this machine lacks is fine unless required", partial, []string{"check", "--require", "pipx,uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
+		{"an unknown source in the list is a usage error", partial, []string{"check", "--require", "npmm"}, ExitUsage, "unknown source in --require: npmm"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

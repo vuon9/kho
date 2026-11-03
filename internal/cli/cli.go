@@ -56,7 +56,7 @@ const Usage = `kho - one place for every package manager on your machine
 
 usage:
   kho                                  open the TUI
-  kho check [--json] [--refresh] [--require-complete]
+  kho check [--json] [--refresh] [--require-complete] [--require uv,npm]
                                        am I safe? inventory plus known advisories
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
@@ -366,9 +366,16 @@ func (env Env) check(args []string) int {
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	refresh := fs.Bool("refresh", false, "ask OSV and skills.sh again, skipping the cache")
 	// A script that branches on the exit code cannot tell a clean scan from a
-	// partial one, so it can ask for a full one and get a failure when it is not.
+	// partial one, so it can name the managers it depends on, or ask for a full
+	// scan, and get a failure when that did not happen.
 	requireComplete := fs.Bool("require-complete", false, "fail when a manager or source could not be read")
+	require := fs.String("require", "", "comma separated sources that must be readable, like uv,npm")
 	if _, err := parse(fs, args); err != nil {
+		return ExitUsage
+	}
+	required, unknown := splitSources(*require)
+	if len(unknown) > 0 {
+		fmt.Fprintf(env.Err, "unknown source in --require: %s\n", strings.Join(unknown, ", "))
 		return ExitUsage
 	}
 	ctx := context.Background()
@@ -382,14 +389,58 @@ func (env Env) check(args []string) int {
 	} else {
 		env.printReport(r)
 	}
+	missingRequired := unreadable(r, required)
+	partial := len(missingRequired) > 0 || (*requireComplete && !r.Complete)
+	if partial {
+		// Say what was not read even when the scan is also at risk, so a partial
+		// answer never looks like a complete one.
+		if len(missingRequired) > 0 {
+			fmt.Fprintf(env.Err, "scan was not complete for %s\n", strings.Join(missingRequired, ", "))
+		} else {
+			fmt.Fprintf(env.Err, "scan was not complete: %s\n", whyIncomplete(r))
+		}
+	}
 	if !r.Safe {
 		return ExitAtRisk
 	}
-	if *requireComplete && !r.Complete {
-		fmt.Fprintf(env.Err, "scan was not complete: %s\n", whyIncomplete(r))
+	if partial {
 		return ExitIncomplete
 	}
 	return ExitOK
+}
+
+// splitSources reads the --require list and returns the names kho does not know,
+// so a typo fails loudly instead of passing as "nothing to check".
+func splitSources(list string) (known, unknown []string) {
+	sources := map[string]bool{}
+	for _, p := range provider.All() {
+		sources[p.Name()] = true
+	}
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if sources[name] {
+			known = append(known, name)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	return known, unknown
+}
+
+// unreadable names the required sources this scan could not read, with why.
+func unreadable(r Report, required []string) []string {
+	var missing []string
+	for _, name := range required {
+		if why, ok := r.Skipped[name]; ok {
+			missing = append(missing, name+" ("+why+")")
+		} else if err, ok := r.Errors[name]; ok {
+			missing = append(missing, name+" failed: "+err)
+		}
+	}
+	return missing
 }
 
 // whyIncomplete names what stopped a scan from reading the whole machine.
