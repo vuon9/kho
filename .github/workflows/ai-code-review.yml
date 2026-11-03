@@ -40,3 +40,49 @@ jobs:
     secrets:
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  # Temporary: tells us whether the runner can reach DeepSeek at all, and how
+  # long one tiny completion takes. Remove once the review completes.
+  diag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Reach the API
+        shell: bash
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -uo pipefail
+          echo "key present: $([ -n "${DEEPSEEK_API_KEY:-}" ] && echo yes || echo no)"
+          curl -sS -m 30 -o /tmp/models.json -w "http %{http_code} in %{time_total}s\n" \
+            -H "Authorization: Bearer $DEEPSEEK_API_KEY" https://api.deepseek.com/models || echo "curl failed: $?"
+          head -c 400 /tmp/models.json; echo
+
+      - name: One tiny completion
+        shell: bash
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -uo pipefail
+          start=$(date +%s)
+          curl -sS -m 60 https://api.deepseek.com/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+            -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"Reply with OK"}],"max_tokens":10}' \
+            | head -c 500; echo
+          echo "took $(( $(date +%s) - start ))s"
+
+      - name: opencode one shot
+        shell: bash
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -uo pipefail
+          npm install -g --prefix "$HOME/.oc" --no-audit --no-fund opencode-ai@1.18.35 >/dev/null 2>&1
+          export PATH="$HOME/.oc/bin:$PATH"
+          echo "opencode $(opencode --version)"
+          start=$(date +%s)
+          timeout 240 opencode run -m deepseek/deepseek-flash "Reply with exactly: OK" 2>&1 | tail -20
+          echo "exit $? after $(( $(date +%s) - start ))s"
+
