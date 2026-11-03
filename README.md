@@ -59,29 +59,41 @@ Run `kho`. Press `?` at any time for every key.
 | `t` | next theme |
 | `w` `c` | open the homepage, copy the text you're reading |
 
-## For agents and scripts
+## For agents
 
-```bash
-kho check --json            # exit 0 safe, 3 at risk, 1 error
-kho show pipx/bramble --json  # one package with every advisory
-kho install pipx/bramble@26.10.1          # dry run: prints the command
-kho install pipx/bramble@26.10.1 --yes    # runs it, and records it
-kho history --changes --json
-```
-
-`kho check --json` returns a `safe` verdict, each vulnerable package with its advisories, the version that fixes them and a ready `fix` command, vulnerable dependencies, risky skills, and which sources weren't covered. `kho install` only moves an installed package to a version its registry publishes, refuses pinned packages, and does nothing without `--yes`.
-
-Give your agent the skill:
+Give your agent the `use-kho` skill:
 
 ```bash
 npx skills add vuon9/kho --skill use-kho
 ```
 
+Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
+
+Scripts can call the same commands: `kho check --json` exits 0 when safe and 3 when at risk, and `kho help` lists the rest.
+
 ## What leaves your machine
 
-kho is read-only until you confirm a change. To check versions and security it sends package names and versions to OSV, PyPI, the npm registry and the Go module proxy, repository names to GitHub, and skill names to skills.sh. It uses your GitHub token (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`) only for GitHub's API and never stores or prints it.
+kho changes nothing until you confirm. To check versions and security it asks the services below about the packages you have, so each one learns those package names and sees your IP address, as it would when your package managers check for updates. Nothing else is sent: no analytics, no paths, no file contents.
 
-It keeps a security cache in your user cache folder (`kho/security.json`) and a command history in `~/.local/state/kho/history.jsonl`.
+| Where | What it learns | Asked by |
+|---|---|---|
+| OSV (`api.osv.dev`) | names and versions of npm, PyPI and Go packages, and of their dependencies | kho |
+| PyPI (`pypi.org`) | names of pipx and uv packages | kho |
+| Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries | kho |
+| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes | kho |
+| skills.sh | skill names and their repositories | kho |
+| npm registry | names of global npm packages | `npm outdated`, `npm view` |
+| mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |
+
+Homebrew answers from its local copy of its package list. When you confirm an install, the package manager downloads it as it always does.
+
+kho uses your GitHub token (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`) only for GitHub's API, which allows 60 requests an hour without one. It keeps the token in memory and never stores or prints it.
+
+On disk, kho keeps:
+
+- a security cache, reused for 12 hours: `kho/security.json` in your user cache folder (`~/Library/Caches` on macOS)
+- the last 500 commands it ran: `~/.local/state/kho/history.jsonl`
+- your theme: `theme`, next to the history
 
 ## Contributing
 
