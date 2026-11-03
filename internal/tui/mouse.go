@@ -91,6 +91,12 @@ func (m model) helpRect() (x, y, w, h int) {
 	return (m.width - w) / 2, (m.height - h) / 2, w, h
 }
 
+// helpHidden is how many lines of help don't fit on the screen.
+func (m model) helpHidden() int {
+	_, _, _, h := m.helpRect()
+	return len(helpLines()) - (h - 2)
+}
+
 func (m *model) click(x, y int) tea.Cmd {
 	if m.help {
 		m.help = false
@@ -234,6 +240,7 @@ func (m model) columnAt(x int) int {
 
 func (m *model) wheel(x, y, delta int) {
 	if m.help {
+		m.helpTop += delta
 		return
 	}
 	if m.showHistory {

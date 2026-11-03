@@ -680,3 +680,47 @@ func TestLinksCloseOnTheirLine(t *testing.T) {
 		})
 	}
 }
+
+func TestHelp(t *testing.T) {
+	first, last := "show or hide these keys", "scroll whatever is under the pointer"
+	wheel := tea.MouseWheelMsg{X: 80, Y: 20, Button: tea.MouseWheelDown}
+	tests := []struct {
+		id           string
+		height       int
+		msgs         []tea.Msg
+		top          int
+		shows, hides string
+		hint         bool
+	}{
+		{"a short screen starts at the top", 40, []tea.Msg{key("?")}, 0, first, last, true},
+		{"j scrolls to the last key", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("j")}, 4, last, first, true},
+		{"scrolling stops at the last key", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j")}, 4, last, first, true},
+		{"k scrolls back up", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("k")}, 2, "", first, true},
+		{"the wheel scrolls it", 40, []tea.Msg{key("?"), wheel, wheel}, 2, "", first, true},
+		{"it opens at the top again", 40, []tea.Msg{key("?"), key("j"), key("j"), key("?"), key("?")}, 0, first, last, true},
+		{"a tall screen shows every key", 50, []tea.Msg{key("?"), key("j")}, 0, first + "|" + last, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := update(t, loaded(t), tea.WindowSizeMsg{Width: 160, Height: tt.height})
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			s := screen(m)
+			if m.helpTop != tt.top {
+				t.Errorf("top %d, want %d", m.helpTop, tt.top)
+			}
+			for _, want := range strings.Split(tt.shows, "|") {
+				if want != "" && !strings.Contains(s, want) {
+					t.Errorf("help lacks %q:\n%s", want, s)
+				}
+			}
+			if tt.hides != "" && strings.Contains(s, tt.hides) {
+				t.Errorf("help shows %q, which should be scrolled out of view", tt.hides)
+			}
+			if strings.Contains(s, "↑↓ scroll") != tt.hint {
+				t.Errorf("scroll hint shown is %v, want %v", !tt.hint, tt.hint)
+			}
+		})
+	}
+}

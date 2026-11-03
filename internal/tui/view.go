@@ -41,7 +41,7 @@ func (m model) View() tea.View {
 	switch {
 	case m.help:
 		x, y, w, h := m.helpRect()
-		screen = overlay(screen, box("⌨ Keys", helpLines(), w, h, true), x, y, w)
+		screen = overlay(screen, box("⌨ Keys", helpLines()[m.helpTop:], w, h, true), x, y, w)
 	case m.confirm != nil:
 		x, y, w, h := m.confirmRect()
 		var lines []string
@@ -172,6 +172,8 @@ func keys(pairs ...string) string {
 func (m model) footer() string {
 	var line string
 	switch {
+	case m.help && m.helpHidden() > 0:
+		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
 	case m.help:
 		line = keys("?", "close", "esc", "close")
 	case m.confirm != nil && m.confirm.run != nil:

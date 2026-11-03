@@ -155,6 +155,7 @@ type model struct {
 	filtering bool
 	showDeps  bool
 	help      bool
+	helpTop   int
 	confirm   *confirm
 	sel       *textSel
 	railW     int
@@ -540,8 +541,13 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if m.help {
-		if key == "?" || key == "esc" || key == "q" || key == "enter" {
+		switch key {
+		case "?", "esc", "q", "enter":
 			m.help = false
+		case "up", "k":
+			m.helpTop--
+		case "down", "j":
+			m.helpTop++
 		}
 		return nil, false
 	}
@@ -569,7 +575,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "q":
 		return nil, true
 	case "?":
-		m.help = true
+		m.help, m.helpTop = true, 0
 	case "H":
 		m.showHistory = true
 	case "t":
@@ -843,6 +849,7 @@ func (m *model) clamp() {
 		m.sideOffset = max(m.sideOffset, 0)
 	}
 	m.bodyOffset = max(m.bodyOffset, 0)
+	m.helpTop = max(min(m.helpTop, m.helpHidden()), 0)
 }
 
 // at is s[i], or false when i is out of range.
