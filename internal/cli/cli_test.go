@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -170,11 +171,28 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 	if !strings.Contains(text, "2 managers left out: go (no Go binary directory), uv (uv not on PATH)") {
 		t.Errorf("plain report hides what was left out:\n%s", text)
 	}
-	if !strings.Contains(text, "safe for what was read: 2 managers could not be checked") {
+	if !strings.Contains(text, "safe for what was read: part of the machine could not be checked") {
 		t.Errorf("plain verdict claims more than it read:\n%s", text)
 	}
 
+	// A source that failed leaves a hole just as wide as a skipped manager.
 	env.Skipped = nil
+	env.Scan = func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		return nil, nil, errors.New("osv is down")
+	}
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	var partial Report
+	if err := json.Unmarshal(out.Bytes(), &partial); err != nil {
+		t.Fatal(err)
+	}
+	if partial.Safe && partial.Complete {
+		t.Error("a scan whose security lookup failed must not call itself complete")
+	}
+
+	env.Scan = func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		return map[string][]string{}, map[string]vuln.Advisory{}, nil
+	}
 	out.Reset()
 	Main(env, []string{"check", "--json"})
 	var full Report
@@ -182,7 +200,7 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !full.Complete {
-		t.Error("a scan that skipped nothing must call itself complete")
+		t.Error("a scan that skipped nothing and failed at nothing must call itself complete")
 	}
 }
 

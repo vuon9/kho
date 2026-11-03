@@ -349,9 +349,9 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 	r.NotCovered = slices.DeleteFunc(r.NotCovered, func(s string) bool { return covered[s] })
 	r.Summary.Vulnerable, r.Summary.RiskySkills = len(r.Vulnerable), len(r.RiskySkills)
 	r.Safe = len(r.Vulnerable) == 0 && len(r.RiskySkills) == 0
-	// Complete is false when a manager was skipped, so a script can tell a full
-	// scan from one that only read part of the machine.
-	r.Complete = len(r.Skipped) == 0
+	// Complete is false when a manager was skipped or a source failed, so a
+	// script can tell a full scan from one that only read part of the machine.
+	r.Complete = len(r.Skipped) == 0 && len(r.Errors) == 0
 	return r
 }
 
@@ -392,7 +392,7 @@ func (env Env) printReport(r Report) {
 		verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package") + ", " + plural(r.Summary.RiskySkills, "risky skill")
 	}
 	if r.Safe && !r.Complete {
-		verdict = "✓ safe for what was read: " + plural(len(r.Skipped), "manager") + " could not be checked"
+		verdict = "✓ safe for what was read: part of the machine could not be checked"
 	}
 	fmt.Fprintf(w, "%s\n%d packages · %d outdated · %d pinned · %d with vulnerable dependencies\n",
 		verdict, r.Summary.Packages, r.Summary.Outdated, r.Summary.Pinned, r.Summary.WithVulnerableDeps)
