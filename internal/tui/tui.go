@@ -157,6 +157,10 @@ type model struct {
 	help      bool
 	helpTop   int
 	confirm   *confirm
+	inst      *installing
+	depCursor int
+	depPop    *depPopup
+	allAgents bool
 	sel       *textSel
 	railW     int
 	sideW     int
@@ -259,7 +263,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0
+	return len(m.busy) > 0 || m.scanning > 0 || m.inst != nil && m.inst.done == nil
 }
 
 // startTicking runs the spinner while something is loading.
@@ -351,7 +355,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.save()
 		m.reindex()
+	case installStartedMsg:
+		m.inst = msg.installing
+		cmds = append(cmds, m.inst.next(), m.startTicking())
+	case outputMsg:
+		m.inst.lines = append(m.inst.lines, string(msg))
+		if over := len(m.inst.lines) - 500; over > 0 {
+			m.inst.lines = m.inst.lines[over:]
+		}
+		cmds = append(cmds, m.inst.next())
 	case installedMsg:
+		// A rerun in the terminal comes back after its popup has closed.
+		if m.inst != nil {
+			m.inst.done, m.inst.end = &msg, now()
+		}
 		m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		if msg.err != nil {
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
@@ -551,6 +568,37 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, false
 	}
+	if in := m.inst; in != nil {
+		switch {
+		case in.done == nil:
+		case key == "enter" || key == "esc" || key == "q":
+			m.inst = nil
+		case key == "t" && in.done.err != nil:
+			m.inst = nil
+			done := *in.done
+			return runExec(&terminalRun{cmd: exec.Command(in.args[0], in.args[1:]...), log: m.log}, func(err error) tea.Msg {
+				done.err = err
+				return done
+			}), false
+		}
+		return nil, false
+	}
+	if pop := m.depPop; pop != nil {
+		switch key {
+		case "esc", "enter", "q":
+			m.depPop, m.sel = nil, nil
+		case "up", "k":
+			pop.top--
+		case "down", "j":
+			pop.top++
+		case "c":
+			if m.sel != nil {
+				return m.copy(m.selectedText()), false
+			}
+			return m.copyArea(), false
+		}
+		return nil, false
+	}
 	if c := m.confirm; c != nil {
 		switch key {
 		case "y", "enter":
@@ -578,6 +626,10 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.help, m.helpTop = true, 0
 	case "H":
 		m.showHistory = true
+	case "A":
+		if m.activeTab() == tabLinks {
+			m.allAgents, m.sideCursor, m.sideOffset = !m.allAgents, 0, 0
+		}
 	case "t":
 		m.setTheme(themeIndex() + 1)
 	case "T":
@@ -677,7 +729,7 @@ func (m *model) setTheme(i int) {
 func (m *model) setTab(t int) {
 	if t != m.activeTab() {
 		m.tab, m.sel = t, nil
-		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset = 0, 0, 0, 0
+		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset, m.depCursor = 0, 0, 0, 0, 0
 	}
 }
 
@@ -728,13 +780,17 @@ func (m *model) moveSide(key string, step int) {
 		default:
 			m.sidePart = 1
 		}
+	case key == "enter" && m.depList() != nil:
+		m.openDep(m.depCursor)
 	case key == "enter":
 		m.sidePart = 0
 	case key == "home" || key == "g":
-		m.sideCursor, m.sideOffset, m.bodyOffset = 0, 0, 0
+		m.sideCursor, m.sideOffset, m.bodyOffset, m.depCursor = 0, 0, 0, 0
 	case list && m.sidePart == 0:
 		m.sideCursor += step
 		m.bodyOffset = 0
+	case m.depList() != nil:
+		m.depCursor += step
 	case m.hasBottom():
 		m.bodyOffset += step
 	default:
@@ -840,7 +896,7 @@ func (m *model) clamp() {
 	m.offset = scroll(m.offset, m.cursor, l.rows)
 	if p, ok := m.current(); ok && pkgKey(p) != m.selected {
 		m.selected, m.sel = pkgKey(p), nil
-		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset = 0, 0, 0, 0
+		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset, m.depCursor = 0, 0, 0, 0, 0
 	}
 	if n := m.sideListLen(); n >= 0 {
 		m.sideCursor = max(min(m.sideCursor, n-1), 0)
@@ -850,6 +906,14 @@ func (m *model) clamp() {
 	}
 	m.bodyOffset = max(m.bodyOffset, 0)
 	m.helpTop = max(min(m.helpTop, m.helpHidden()), 0)
+	if deps := m.depList(); deps != nil {
+		m.depCursor = max(min(m.depCursor, len(deps)-1), 0)
+		m.bodyOffset = scroll(m.bodyOffset, m.depCursor, l.bottomRows)
+	}
+	if m.depPop != nil {
+		_, _, _, h := m.depRect()
+		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-(h-3)), 0)
+	}
 }
 
 // at is s[i], or false when i is out of range.

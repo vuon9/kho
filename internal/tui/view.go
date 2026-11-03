@@ -37,21 +37,65 @@ func (m model) View() tea.View {
 			m.sideBox(l.sideW, l.bodyH, m.focus == focusSide),
 		)
 	}
-	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + ansi.Truncate(m.footer(), m.width, "…")
+	rule := edge(false).Render(strings.Repeat("─", m.width))
+	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + rule + "\n" + ansi.Truncate(m.footer(), m.width, "…")
 	switch {
 	case m.help:
 		x, y, w, h := m.helpRect()
-		screen = overlay(screen, box("⌨ Keys", helpLines()[m.helpTop:], w, h, true), x, y, w)
+		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], w, h), x, y, w)
+	case m.inst != nil:
+		x, y, w, h := m.installRect()
+		screen = overlay(screen, popupBox(m.inst.title, m.installLines(h-3), w, h), x, y, w)
+	case m.depPop != nil:
+		x, y, w, h := m.depRect()
+		view := m.depPopView()
+		var lines []string
+		for i := m.depPop.top; i < min(len(view), m.depPop.top+h-3); i++ {
+			text := view[i].text
+			if from, to, ok := m.sel.span(areaPopup, i, w-2); ok {
+				text = highlight(text, from, to)
+			}
+			lines = append(lines, text)
+		}
+		screen = overlay(screen, popupBox(m.depPopTitle(), lines, w, h), x, y, w)
 	case m.confirm != nil:
 		x, y, w, h := m.confirmRect()
 		var lines []string
 		for _, l := range m.confirm.lines {
 			lines = append(lines, " "+l)
 		}
-		screen = overlay(screen, box(m.confirm.title, lines, w, h, true), x, y, w)
+		screen = overlay(screen, popupBox(m.confirm.title, lines, w, h), x, y, w)
 	}
 	v.SetContent(screen)
 	return v
+}
+
+// installLines fills the install popup: the command, as much of its output
+// as fits, and how it is going.
+func (m model) installLines(rows int) []string {
+	in := m.inst
+	end := in.end
+	if in.done == nil {
+		end = now()
+	}
+	took := end.Sub(in.start).Round(time.Second).String()
+	status := accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
+	switch {
+	case in.done == nil:
+	case in.done.err != nil:
+		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
+	default:
+		status = green().Render("✓ done") + faint().Render(" in "+took)
+	}
+	lines := []string{faint().Render(" runs  ") + strings.Join(in.args, " "), ""}
+	room := max(rows-len(lines)-2, 0)
+	for _, l := range in.lines[max(len(in.lines)-room, 0):] {
+		lines = append(lines, " "+l)
+	}
+	for len(lines) < rows-1 {
+		lines = append(lines, "")
+	}
+	return append(lines, " "+status)
 }
 
 // actionable is a package an upgrade would move: outdated and not pinned.
@@ -176,6 +220,14 @@ func (m model) footer() string {
 		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
 	case m.help:
 		line = keys("?", "close", "esc", "close")
+	case m.inst != nil && m.inst.done == nil:
+		line = faint().Render("running, the keys come back once it's done")
+	case m.inst != nil && m.inst.done.err != nil:
+		line = keys("t", "run it in the terminal", "enter", "close")
+	case m.inst != nil:
+		line = keys("enter", "close")
+	case m.depPop != nil:
+		line = keys("↑↓", "scroll", "drag", "select and copy", "c", "copy all", "esc", "close")
 	case m.confirm != nil && m.confirm.run != nil:
 		line = keys("y", "yes", "n", "no")
 	case m.confirm != nil:
@@ -190,10 +242,14 @@ func (m model) footer() string {
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
 	case m.activeTab() == tabVersions:
 		line = keys("↑↓", "version", "enter", "install it", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help")
+	case m.activeTab() == tabLinks && m.allAgents:
+		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "installed only", "[ ]", "tabs", "?", "help")
 	case m.activeTab() == tabLinks:
-		line = keys("↑↓", "agent", "enter", "link or unlink", "[ ]", "tabs", "?", "help")
+		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "all agents", "[ ]", "tabs", "?", "help")
 	case m.sideListLen() >= 0 && m.sidePart == 0:
 		line = keys("↑↓", "select", "enter", "read", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
+	case m.depList() != nil:
+		line = keys("↑↓", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
 	default:
 		line = keys("↑↓", "scroll", "J K", "scroll detail", "esc", "back", "[ ]", "tabs", "w", "home", "?", "help")
 	}
@@ -372,7 +428,15 @@ func overlay(screen, boxed string, x, y, w int) string {
 	for i, pl := range strings.Split(boxed, "\n") {
 		if y+i < len(lines) {
 			base := lines[y+i]
-			lines[y+i] = ansi.Truncate(base, x, "") + ansi.ResetStyle + pl + ansi.ResetStyle + ansi.TruncateLeft(base, x+w, "")
+			// An edge through a wide character drops it on the left and keeps
+			// it whole on the right; a space takes its place either way.
+			left := ansi.Truncate(base, x, "")
+			left += strings.Repeat(" ", x-ansi.StringWidth(left))
+			right := ansi.TruncateLeft(base, x+w, "")
+			if over := ansi.StringWidth(right) - (ansi.StringWidth(base) - x - w); over > 0 {
+				right = strings.Repeat(" ", over) + ansi.TruncateLeft(base, x+w+over, "")
+			}
+			lines[y+i] = left + ansi.ResetStyle + pl + ansi.ResetStyle + right
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -395,6 +459,24 @@ func boxTitle(title string, focused bool) string {
 		return accent().Render(title)
 	}
 	return bold().Foreground(th.muted).Render(title)
+}
+
+// popupBox draws a dialog so it can't be taken for a panel: a heavy border and
+// a filled title bar, which leave h-3 rows for lines.
+func popupBox(title string, lines []string, w, h int) string {
+	e := fg(th.accent)
+	inner := w - 2
+	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, inner))
+	out := []string{e.Render("┏" + strings.Repeat("━", inner) + "┓"), e.Render("┃") + bar + e.Render("┃")}
+	lines = slices.Clone(lines)
+	for len(lines) < h-3 {
+		lines = append(lines, "")
+	}
+	for _, l := range lines[:max(h-3, 0)] {
+		out = append(out, e.Render("┃")+pad(l, inner)+e.Render("┃"))
+	}
+	out = append(out, e.Render("┗"+strings.Repeat("━", inner)+"┛"))
+	return strings.Join(out, "\n")
 }
 
 // box draws a rounded border with the title set into the top edge. A focused

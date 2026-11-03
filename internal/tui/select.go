@@ -12,6 +12,7 @@ import (
 const (
 	areaTop = iota
 	areaBottom
+	areaPopup
 )
 
 type point struct{ line, col int }
@@ -22,6 +23,9 @@ type textSel struct {
 	area     int
 	a, b     point
 	dragging bool
+	// focused is whether the sidebar had focus before the press, so a first
+	// click into it only selects.
+	focused bool
 }
 
 var copyText = tea.SetClipboard
@@ -29,6 +33,14 @@ var copyText = tea.SetClipboard
 // textAt finds the reading area under the mouse, and the line and column in
 // it. List rows are not text to read, so a list half has no area.
 func (m model) textAt(x, y int) (int, point, bool) {
+	if m.depPop != nil {
+		px, py, w, h := m.depRect()
+		col, row := x-px-1, y-py-2
+		if col < 0 || col >= w-2 || row < 0 || row >= h-3 {
+			return 0, point{}, false
+		}
+		return areaPopup, point{m.depPop.top + row, col}, true
+	}
 	l := m.layout()
 	col := x - l.sideX - 1
 	if col < 0 || col >= l.sideW-2 || m.width == 0 {
@@ -46,10 +58,21 @@ func (m model) textAt(x, y int) (int, point, bool) {
 
 func (m model) areaLines(area int) []line {
 	inner := m.layout().sideW - 2
-	if area == areaTop {
+	switch area {
+	case areaPopup:
+		return m.depPopView()
+	case areaTop:
 		return m.topView(inner)
 	}
 	return m.bottomView(inner)
+}
+
+func (m model) areaWidth(area int) int {
+	if area == areaPopup {
+		_, _, w, _ := m.depRect()
+		return w - 2
+	}
+	return m.layout().sideW - 2
 }
 
 // span is the selection's columns on line i of area, if any.
@@ -79,7 +102,7 @@ func highlight(text string, from, to int) string {
 }
 
 func (m model) selectedText() string {
-	width := m.layout().sideW - 2
+	width := m.areaWidth(m.sel.area)
 	var out []string
 	for i, l := range m.areaLines(m.sel.area) {
 		if from, to, ok := m.sel.span(m.sel.area, i, width); ok {
@@ -93,7 +116,10 @@ func (m model) selectedText() string {
 // when the tab has no bottom.
 func (m *model) copyArea() tea.Cmd {
 	area := areaTop
-	if m.hasBottom() {
+	switch {
+	case m.depPop != nil:
+		area = areaPopup
+	case m.hasBottom():
 		area = areaBottom
 	}
 	var out []string
@@ -130,11 +156,16 @@ func (m *model) endSelect(x, y int) tea.Cmd {
 		return nil
 	}
 	m.sel.dragging = false
-	if m.sel.a == m.sel.b {
+	if s := m.sel; s.a == s.b {
 		m.sel = nil
-		focused := m.focus == focusSide
+		if s.area == areaPopup {
+			if l, ok := at(m.depPopView(), s.a.line); ok && l.url != "" {
+				return open(l.url)
+			}
+			return nil
+		}
 		l := m.layout()
-		return m.clickSide(x-l.sideX-1, l.row(y), focused)
+		return m.clickSide(x-l.sideX-1, l.row(y), s.focused)
 	}
 	return m.copy(m.selectedText())
 }

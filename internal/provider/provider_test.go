@@ -163,7 +163,37 @@ func TestParseOutdated(t *testing.T) {
 	}
 }
 
+// clearAgentEnv drops the env settings that move an agent's folders, so a
+// test sees only the home it builds.
+func clearAgentEnv(t *testing.T) {
+	for _, a := range skillAgents {
+		for _, p := range append([]string{a.Dir}, a.Detect...) {
+			if m := envDefault.FindStringSubmatch(p); m != nil {
+				t.Setenv(m[1], "")
+			}
+		}
+	}
+}
+
+func TestExpandPath(t *testing.T) {
+	tests := []struct{ id, path, env, want string }{
+		{"home", "~/.cursor/skills", "", "/h/.cursor/skills"},
+		{"env unset falls back to its default", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "", "/h/.config/goose/skills"},
+		{"env set wins", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "/x", "/x/goose/skills"},
+		{"absolute", "/etc/codex", "", "/etc/codex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", tt.env)
+			if got := expandPath("/h", tt.path); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestScanSkills(t *testing.T) {
+	clearAgentEnv(t)
 	home := t.TempDir()
 	mkdirs := func(paths ...string) {
 		for _, p := range paths {
@@ -175,7 +205,7 @@ func TestScanSkills(t *testing.T) {
 	mkdirs(
 		".agents/skills/tracked", ".agents/skills/untracked", ".agents/skills/claude-off",
 		".claude/skills/tracked", ".claude/skills/untracked", ".claude/skills/agent-only",
-		".pi/agent/skills/pi-only", ".pi/agent/skills/agent-only",
+		".cursor/skills/cursor-only", ".cursor/skills/agent-only", ".pi/agent",
 	)
 	lock := map[string]lockEntry{
 		"tracked":    {Source: "someone/skills", SourceType: "github", SkillFolderHash: "cd509ae729c86487d352e17a26651217a4c25711"},
@@ -187,14 +217,14 @@ func TestScanSkills(t *testing.T) {
 	}
 	shared := filepath.Join(home, ".agents", "skills")
 	want := []Package{
-		{Source: "skills", Name: "agent-only", Version: "-", Path: filepath.Join(home, ".claude/skills/agent-only"), Agents: []string{"claude", "pi"},
-			Note: "only in claude, pi, not managed by the skills CLI"},
+		{Source: "skills", Name: "agent-only", Version: "-", Path: filepath.Join(home, ".claude/skills/agent-only"), Agents: []string{"claude-code", "cursor"},
+			Note: "only in claude-code, cursor, not managed by the skills CLI"},
 		{Source: "skills", Name: "claude-off", Version: "8295b8e", Pinned: true, Origin: "someone/skills", Path: filepath.Join(shared, "claude-off"),
 			Agents: []string{"pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
-		{Source: "skills", Name: "pi-only", Version: "-", Path: filepath.Join(home, ".pi/agent/skills/pi-only"), Agents: []string{"pi"},
-			Note: "only in pi, not managed by the skills CLI"},
-		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude", "pi"}, Repo: "someone/skills"},
-		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude", "pi"},
+		{Source: "skills", Name: "cursor-only", Version: "-", Path: filepath.Join(home, ".cursor/skills/cursor-only"), Agents: []string{"cursor"},
+			Note: "only in cursor, not managed by the skills CLI"},
+		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "pi"}, Repo: "someone/skills"},
+		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "pi"},
 			Note: "no lock entry, the skills CLI can't update it"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -355,16 +385,21 @@ func TestInstallCmd(t *testing.T) {
 }
 
 func TestSkillLinks(t *testing.T) {
+	clearAgentEnv(t)
 	home := t.TempDir()
-	for _, d := range []string{".agents/skills/workflow", ".claude/skills", ".cursor/skills/workflow", ".pi/agent/skills", ".codex"} {
+	for _, d := range []string{".agents/skills/workflow", ".claude/skills", ".cursor/skills/workflow", ".pi/agent", ".codex", ".config/goose"} {
 		os.MkdirAll(filepath.Join(home, d), 0o755)
 	}
 	os.Symlink("../../.agents/skills/workflow", filepath.Join(home, ".claude/skills/workflow"))
 	p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
 	real := RealPath(p)
+	// Agents found through a system path like /Applications vary by machine.
 	kinds := func() map[string]string {
 		got := map[string]string{}
-		for _, l := range skillLinks(home, p) {
+		for _, l := range skillLinks(home, p, false) {
+			if !strings.HasPrefix(l.Path, home) {
+				continue
+			}
 			got[l.Agent] = l.Kind
 			if l.Kind == "link" && l.Target != real {
 				t.Errorf("%s points at %s, want %s", l.Agent, l.Target, real)
@@ -372,28 +407,30 @@ func TestSkillLinks(t *testing.T) {
 		}
 		return got
 	}
-	want := map[string]string{"claude": "link", "codex": "shared", "cursor": "copy", "pi": "missing"}
+	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy", "goose": "missing", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
-	links := skillLinks(home, p)
 	byAgent := map[string]SkillLink{}
-	for _, l := range links {
+	for _, l := range skillLinks(home, p, true) {
 		byAgent[l.Agent] = l
 	}
-	if !byAgent["pi"].Shared || byAgent["claude"].Shared {
-		t.Error("pi reads the shared folder, claude does not")
+	if len(byAgent) != len(skillAgents) || byAgent["amp"].Installed || !byAgent["goose"].Installed || byAgent["goose"].Display != "Goose" {
+		t.Errorf("all agents: %d of %d, amp %+v, goose %+v", len(byAgent), len(skillAgents), byAgent["amp"], byAgent["goose"])
 	}
-	if err := LinkSkill(byAgent["pi"], p); err != nil {
+	if !byAgent["pi"].Shared || byAgent["claude-code"].Shared {
+		t.Error("pi reads the shared folder, claude-code does not")
+	}
+	if err := LinkSkill(byAgent["goose"], p); err != nil {
 		t.Fatal(err)
 	}
-	if err := UnlinkSkill(byAgent["claude"]); err != nil {
+	if err := UnlinkSkill(byAgent["claude-code"]); err != nil {
 		t.Fatal(err)
 	}
 	if err := UnlinkSkill(byAgent["cursor"]); err == nil {
 		t.Error("a copied folder must not be removed")
 	}
-	want = map[string]string{"claude": "missing", "codex": "shared", "cursor": "copy", "pi": "link"}
+	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy", "goose": "link", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Errorf("after toggling got %v, want %v", got, want)
 	}

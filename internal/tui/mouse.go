@@ -51,7 +51,7 @@ func (m model) layout() layout {
 	l.tableW = max(m.width-l.railW-l.sideW, 0)
 	l.tableX, l.sideX = l.railW, l.railW+l.tableW
 	l.top = 1
-	l.bodyH = max(m.height-3, 0)
+	l.bodyH = max(m.height-4, 0)
 	l.rows = max(l.bodyH-5, 0)
 	l.topRows = max(l.bodyH-2, 0)
 	if m.hasBottom() {
@@ -81,25 +81,52 @@ func (m model) confirmRect() (x, y, w, h int) {
 		w = max(w, lipgloss.Width(l)+4)
 	}
 	w = min(w, m.width-8)
-	h = len(m.confirm.lines) + 2
+	h = len(m.confirm.lines) + 3
 	return (m.width - w) / 2, (m.height - h) / 2, w, h
 }
 
 func (m model) helpRect() (x, y, w, h int) {
 	w = min(m.width-8, 96)
-	h = min(len(helpLines())+2, m.height-2)
+	h = min(len(helpLines())+3, m.height-2)
 	return (m.width - w) / 2, (m.height - h) / 2, w, h
 }
 
 // helpHidden is how many lines of help don't fit on the screen.
 func (m model) helpHidden() int {
 	_, _, _, h := m.helpRect()
-	return len(helpLines()) - (h - 2)
+	return len(helpLines()) - (h - 3)
+}
+
+func (m model) installRect() (x, y, w, h int) {
+	w, h = min(m.width-8, 110), min(m.height-4, 24)
+	return (m.width - w) / 2, (m.height - h) / 2, w, h
+}
+
+func (m model) depRect() (x, y, w, h int) {
+	w, h = min(m.width-8, 100), min(m.height-4, 30)
+	return (m.width - w) / 2, (m.height - h) / 2, w, h
 }
 
 func (m *model) click(x, y int) tea.Cmd {
 	if m.help {
 		m.help = false
+		return nil
+	}
+	if m.inst != nil {
+		if m.inst.done != nil {
+			m.inst = nil
+		}
+		return nil
+	}
+	if m.depPop != nil {
+		if area, p, ok := m.textAt(x, y); ok && area == areaPopup {
+			m.startSelect(area, p)
+			return nil
+		}
+		px, py, w, h := m.depRect()
+		if x < px || x >= px+w || y < py || y >= py+h {
+			m.depPop, m.sel = nil, nil
+		}
 		return nil
 	}
 	if m.confirm != nil {
@@ -134,8 +161,10 @@ func (m *model) click(x, y int) tea.Cmd {
 		return nil
 	}
 	if area, p, ok := m.textAt(x, y); ok {
+		focused := m.focus == focusSide
 		m.focus = focusSide
 		m.startSelect(area, p)
+		m.sel.focused = focused
 		return nil
 	}
 	switch {
@@ -204,8 +233,16 @@ func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 		m.sideCursor, m.bodyOffset = i, 0
 	case row > l.topRows && m.hasBottom():
 		m.sidePart = 1
+		i := m.bodyOffset + row - l.topRows - 1
+		if deps := m.depList(); i < len(deps) {
+			if i == m.depCursor && focused {
+				m.openDep(i)
+			}
+			m.depCursor = i
+			return nil
+		}
 		lines := m.bottomView(l.sideW - 2)
-		if i := m.bodyOffset + row - l.topRows - 1; i < len(lines) && lines[i].url != "" {
+		if i < len(lines) && lines[i].url != "" {
 			return open(lines[i].url)
 		}
 	}
@@ -241,6 +278,13 @@ func (m model) columnAt(x int) int {
 func (m *model) wheel(x, y, delta int) {
 	if m.help {
 		m.helpTop += delta
+		return
+	}
+	if m.inst != nil {
+		return
+	}
+	if m.depPop != nil {
+		m.depPop.top += delta
 		return
 	}
 	if m.showHistory {

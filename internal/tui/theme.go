@@ -20,18 +20,18 @@ var hex = lipgloss.Color
 // themes are what t and T cycle through. The first dark one and the first
 // light one are the defaults for a terminal of that kind.
 var themes = []palette{
-	{name: "Lantern", dark: true, accent: hex("#C084FC"), accent2: hex("#F472B6"), cyan: hex("#22D3EE"), green: hex("#4ADE80"), yellow: hex("#FACC15"),
-		orange: hex("#FB923C"), red: hex("#F87171"), muted: hex("#8B8B96"), subtle: hex("#3F3F46"),
-		selBg: hex("#7C3AED"), selFg: hex("#FFFFFF"), dimSelBg: hex("#2E2A3A"), pillFg: hex("#18181B"), markdown: "pink"},
+	{name: "Ocean", dark: true, accent: hex("#60A5FA"), accent2: hex("#A78BFA"), cyan: hex("#22D3EE"), green: hex("#34D399"), yellow: hex("#FBBF24"),
+		orange: hex("#FB923C"), red: hex("#F87171"), muted: hex("#7D8BA3"), subtle: hex("#2B3547"),
+		selBg: hex("#1D4ED8"), selFg: hex("#EFF6FF"), dimSelBg: hex("#1E2638"), pillFg: hex("#0B1220"), markdown: "tokyo-night"},
 	{name: "Paper", accent: hex("#7C3AED"), accent2: hex("#DB2777"), cyan: hex("#0891B2"), green: hex("#16A34A"), yellow: hex("#CA8A04"),
 		orange: hex("#EA580C"), red: hex("#DC2626"), muted: hex("#71717A"), subtle: hex("#D4D4D8"),
 		selBg: hex("#7C3AED"), selFg: hex("#FFFFFF"), dimSelBg: hex("#EDE9FE"), pillFg: hex("#FFFFFF"), markdown: "light"},
 	{name: "Forest", dark: true, accent: hex("#86EFAC"), accent2: hex("#FDE047"), cyan: hex("#5EEAD4"), green: hex("#22C55E"), yellow: hex("#EAB308"),
 		orange: hex("#F97316"), red: hex("#F87171"), muted: hex("#7C8B7F"), subtle: hex("#2F3B33"),
 		selBg: hex("#15803D"), selFg: hex("#F0FDF4"), dimSelBg: hex("#1E2A22"), pillFg: hex("#0B1A10"), markdown: "dark"},
-	{name: "Ocean", dark: true, accent: hex("#60A5FA"), accent2: hex("#A78BFA"), cyan: hex("#22D3EE"), green: hex("#34D399"), yellow: hex("#FBBF24"),
-		orange: hex("#FB923C"), red: hex("#F87171"), muted: hex("#7D8BA3"), subtle: hex("#2B3547"),
-		selBg: hex("#1D4ED8"), selFg: hex("#EFF6FF"), dimSelBg: hex("#1E2638"), pillFg: hex("#0B1220"), markdown: "tokyo-night"},
+	{name: "Lantern", dark: true, accent: hex("#C084FC"), accent2: hex("#F472B6"), cyan: hex("#22D3EE"), green: hex("#4ADE80"), yellow: hex("#FACC15"),
+		orange: hex("#FB923C"), red: hex("#F87171"), muted: hex("#8B8B96"), subtle: hex("#3F3F46"),
+		selBg: hex("#7C3AED"), selFg: hex("#FFFFFF"), dimSelBg: hex("#2E2A3A"), pillFg: hex("#18181B"), markdown: "pink"},
 	{name: "Ember", dark: true, accent: hex("#FB923C"), accent2: hex("#F472B6"), cyan: hex("#67E8F9"), green: hex("#A3E635"), yellow: hex("#FDE047"),
 		orange: hex("#F97316"), red: hex("#EF4444"), muted: hex("#A08C7D"), subtle: hex("#3D2F28"),
 		selBg: hex("#C2410C"), selFg: hex("#FFF7ED"), dimSelBg: hex("#2E221C"), pillFg: hex("#1C1210"), markdown: "dark"},
@@ -114,13 +114,7 @@ func icon(name string) string {
 
 // logo draws "kho" one letter per accent color.
 func logo() string {
-	colors := []color.Color{th.accent, th.accent2, th.cyan}
-	var b strings.Builder
-	b.WriteString("🏮 ")
-	for i, r := range "kho" {
-		b.WriteString(fg(colors[i]).Bold(true).Render(string(r)))
-	}
-	return b.String()
+	return "🏮 " + accent().Render("kho")
 }
 
 var spinner = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}

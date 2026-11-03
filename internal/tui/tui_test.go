@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installedMsg, linkedMsg:
+		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -100,9 +101,17 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 
 var opened, ran, copied, toggled []string
 
+// installScript stands in for the package manager an install runs.
+var installScript string
+
 func loaded(t *testing.T) model {
 	th = themes[0]
 	opened, ran, copied, toggled = nil, nil, nil, nil
+	installScript = "echo fetched"
+	installProcess = func(c *exec.Cmd) *exec.Cmd {
+		ran = append(ran, strings.Join(c.Args, " "))
+		return exec.Command("sh", "-c", installScript)
+	}
 	runExec = func(c tea.ExecCommand, fn tea.ExecCallback) tea.Cmd {
 		return func() tea.Msg {
 			ran = append(ran, strings.Join(c.(*terminalRun).cmd.Args, " "))
@@ -110,12 +119,16 @@ func loaded(t *testing.T) model {
 		}
 	}
 	copyText = func(s string) tea.Cmd { copied = append(copied, s); return nil }
-	skillLinks = func(provider.Package) []provider.SkillLink {
-		return []provider.SkillLink{
-			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: "link", Target: "/h/.agents/skills/pathmaker"},
-			{Agent: "cursor", Path: "/h/.cursor/skills/pathmaker", Kind: "missing"},
-			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: "shared", Shared: true},
+	skillLinks = func(_ provider.Package, all bool) []provider.SkillLink {
+		links := []provider.SkillLink{
+			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: "link", Target: "/h/.agents/skills/pathmaker", Installed: true},
+			{Agent: "cursor", Path: "/h/.cursor/skills/pathmaker", Kind: "missing", Installed: true},
+			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: "shared", Shared: true, Installed: true},
 		}
+		if all {
+			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: "missing"})
+		}
+		return links
 	}
 	linkSkill = func(l provider.SkillLink, _ provider.Package) error {
 		toggled = append(toggled, "link "+l.Agent)
@@ -444,6 +457,7 @@ func TestActions(t *testing.T) {
 		{id: "y links the skill", keys: []string{"G", "5", "l", "j", "enter", "y"}, toggled: []string{"link cursor"}, notice: "linked pathmaker into cursor"},
 		{id: "y unlinks it", keys: []string{"G", "5", "l", "enter", "y"}, toggled: []string{"unlink claude"}, notice: "removed pathmaker from claude"},
 		{id: "a copied or shared agent is never touched", keys: []string{"G", "5", "l", "j", "j", "enter", "y"}},
+		{id: "A lists agents not installed yet, and links one", keys: []string{"G", "5", "A", "l", "j", "j", "j", "enter", "y"}, toggled: []string{"link goose"}, notice: "linked pathmaker into Goose"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -614,7 +628,8 @@ func TestThemes(t *testing.T) {
 	}{
 		{"t picks the next theme", []tea.Msg{key("t")}, "Paper"},
 		{"T goes back round to the last", []tea.Msg{key("T")}, "Ember"},
-		{"t cycles all five", []tea.Msg{key("t"), key("t"), key("t"), key("t"), key("t")}, "Lantern"},
+		{"a dark terminal starts on Ocean", []tea.Msg{tea.BackgroundColorMsg{Color: color.Black}}, "Ocean"},
+		{"t cycles all five", []tea.Msg{key("t"), key("t"), key("t"), key("t"), key("t")}, "Ocean"},
 		{"a light terminal gets Paper", []tea.Msg{white}, "Paper"},
 		{"a picked theme stays on a light terminal", []tea.Msg{key("t"), key("t"), white}, "Forest"},
 	}
@@ -683,6 +698,8 @@ func TestLinksCloseOnTheirLine(t *testing.T) {
 
 func TestHelp(t *testing.T) {
 	first, last := "show or hide these keys", "scroll whatever is under the pointer"
+	// A 40-row screen fits 35 lines of help.
+	end := len(helpLines()) - 35
 	wheel := tea.MouseWheelMsg{X: 80, Y: 20, Button: tea.MouseWheelDown}
 	tests := []struct {
 		id           string
@@ -693,8 +710,8 @@ func TestHelp(t *testing.T) {
 		hint         bool
 	}{
 		{"a short screen starts at the top", 40, []tea.Msg{key("?")}, 0, first, last, true},
-		{"j scrolls to the last key", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("j")}, 4, last, first, true},
-		{"scrolling stops at the last key", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j")}, 4, last, first, true},
+		{"j scrolls to the last key", 40, append([]tea.Msg{key("?")}, slices.Repeat([]tea.Msg{key("j")}, end)...), end, last, first, true},
+		{"scrolling stops at the last key", 40, append([]tea.Msg{key("?")}, slices.Repeat([]tea.Msg{key("j")}, end+3)...), end, last, first, true},
 		{"k scrolls back up", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("k")}, 2, "", first, true},
 		{"the wheel scrolls it", 40, []tea.Msg{key("?"), wheel, wheel}, 2, "", first, true},
 		{"it opens at the top again", 40, []tea.Msg{key("?"), key("j"), key("j"), key("?"), key("?")}, 0, first, last, true},
@@ -722,5 +739,184 @@ func TestHelp(t *testing.T) {
 				t.Errorf("scroll hint shown is %v, want %v", !tt.hint, tt.hint)
 			}
 		})
+	}
+}
+
+func TestInstall(t *testing.T) {
+	upgrade := []string{"l", "v", "enter", "y"}
+	brew := "brew upgrade anvil"
+	tests := []struct {
+		id     string
+		script string
+		keys   []string
+		ran    []string
+		shows  []string
+		hides  string
+		open   bool
+	}{
+		{"output streams into a popup", "echo fetched anvil; echo poured", upgrade, []string{brew},
+			[]string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, "", true},
+		{"a failure says so and offers the terminal", "echo no space left; exit 3", upgrade, []string{brew},
+			[]string{"no space left", "✗ exit status 3", "t run it in the terminal"}, "", true},
+		{"t runs a failed install in the terminal", "exit 3", append(upgrade, "t"), []string{brew, brew}, nil, "✗ exit status 3", false},
+		{"enter closes it once done", "echo fetched", append(upgrade, "enter"), []string{brew}, nil, "fetched", false},
+		{"t does nothing after a success", "echo fetched", append(upgrade, "t"), []string{brew}, []string{"✓ done"}, "", true},
+		{"a progress line keeps its last state", `printf 'step 1\rstep 2\n'`, upgrade, []string{brew}, []string{"step 2"}, "step 1", true},
+		{"colors are dropped", `printf '\033[32mgreen\033[0m\n'`, upgrade, []string{brew}, []string{"green"}, "[32m", true},
+		{"the command can't reach the terminal", `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, upgrade, []string{brew}, []string{"no-tty"}, "has-tty", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			installScript = tt.script
+			m = press(t, m, tt.keys...)
+			s := screen(m)
+			if !reflect.DeepEqual(ran, tt.ran) {
+				t.Errorf("ran %v, want %v", ran, tt.ran)
+			}
+			if (m.inst != nil) != tt.open {
+				t.Errorf("popup open is %v, want %v", m.inst != nil, tt.open)
+			}
+			for _, want := range tt.shows {
+				if !strings.Contains(s, want) {
+					t.Errorf("screen lacks %q:\n%s", want, s)
+				}
+			}
+			if tt.hides != "" && strings.Contains(s, tt.hides) {
+				t.Errorf("screen shows %q:\n%s", tt.hides, s)
+			}
+		})
+	}
+
+	m := loaded(t)
+	installScript = "echo fetched; exit 3"
+	m = press(t, m, upgrade...)
+	if es := m.log.Entries(); len(es) != 1 || es[0].Kind != history.Change || strings.Join(es[0].Command, " ") != brew || es[0].Err != "exit status 3" || !strings.Contains(es[0].Output, "fetched") {
+		t.Errorf("logged %+v", es)
+	}
+}
+
+// A box laid over a line must keep the line's width even when its edge cuts a
+// wide character in half, or everything after it shifts by a column.
+func TestOverlay(t *testing.T) {
+	tests := []struct {
+		id   string
+		base string
+		x, w int
+		want string
+	}{
+		{"left edge through a wide character", "ab✨cdef", 3, 2, "ab XYdef"},
+		{"right edge through a wide character", "ab✨cdef", 1, 2, "aXY cdef"},
+		{"no wide character in the way", "abcdef", 2, 2, "abXYef"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := ansi.Strip(overlay(tt.base, "XY", tt.x, 0, tt.w)); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	m := loaded(t)
+	installScript = "echo fetched"
+	m = press(t, m, "l", "v", "enter", "y")
+	for width := 100; width <= 120; width++ {
+		m = update(t, m, tea.WindowSizeMsg{Width: width, Height: 30})
+		for i, line := range strings.Split(m.View().Content, "\n") {
+			if w := ansi.StringWidth(line); w != width {
+				t.Errorf("at %d wide, line %d is %d wide: %q", width, i, w, ansi.Strip(line))
+			}
+		}
+	}
+}
+
+func TestChrome(t *testing.T) {
+	for _, size := range [][2]int{{100, 30}, {160, 40}, {220, 50}} {
+		m := update(t, loaded(t), tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		raw := strings.Split(m.View().Content, "\n")
+		lines := strings.Split(screen(m), "\n")
+		if len(lines) != size[1] {
+			t.Fatalf("at %v the screen has %d lines", size, len(lines))
+		}
+		if rule := lines[len(lines)-2]; rule != strings.Repeat("─", size[0]) {
+			t.Errorf("at %v the line above the keys is %q", size, rule)
+		}
+		if !strings.Contains(lines[len(lines)-3], "packages") || !strings.Contains(lines[len(lines)-1], "? help") {
+			t.Errorf("at %v the stats and keys are not around the rule:\n%s", size, strings.Join(lines[len(lines)-3:], "\n"))
+		}
+		if !strings.Contains(raw[0], "kho") {
+			t.Errorf("the logo's letters are styled one by one: %q", raw[0])
+		}
+	}
+}
+
+// withDeps adds a go binary whose second dependency has an advisory.
+func withDeps(t *testing.T) model {
+	m := loaded(t)
+	loop := vuln.Advisory{ID: "GO-TEST-0001", Summary: "Header parsing can loop forever", Severity: "HIGH", Package: "example.org/net",
+		Details: "A crafted header makes the parser loop.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "0.52.0"}}}
+	scanOSV = func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		hits := map[string][]string{}
+		for _, q := range qs {
+			hits[q.Key()] = nil
+			if q.Name == loop.Package {
+				hits[q.Key()] = []string{loop.ID}
+			}
+		}
+		return hits, map[string]vuln.Advisory{loop.ID: loop}, nil
+	}
+	tidy := fake{name: "go", pkgs: []provider.Package{{Source: "go", Name: "tidyup", Version: "v1.2.0", Latest: "v1.2.0", Origin: "example.com/tidyup",
+		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.50.0"}}}}}
+	m.providers = append(m.providers, tidy)
+	m = update(t, m, listedMsg{"go", tidy.pkgs, nil})
+	m = update(t, m, checkedMsg{"go", tidy.pkgs, nil})
+	return press(t, m, "/", "t", "i", "d", "y", "enter", "l")
+}
+
+func TestDependencyPopup(t *testing.T) {
+	tests := []struct {
+		id     string
+		keys   []string
+		open   bool
+		shows  []string
+		copied string
+	}{
+		{"enter opens the selected dependency's advisories", []string{"j", "enter"}, true,
+			[]string{"◆ example.org/net v0.50.0", "GO-TEST-0001", "Header parsing can loop forever", "0.52.0", "A crafted header", "c copy all"}, ""},
+		{"a clean dependency says so", []string{"enter"}, true, []string{"No known advisories for example.org/text v0.30.0"}, ""},
+		{"esc closes it", []string{"j", "enter", "esc"}, false, nil, ""},
+		{"c copies all of it", []string{"j", "enter", "c"}, true, nil, "GO-TEST-0001"},
+		{"the Info footer says how to open one", nil, false, []string{"↑↓ dependency", "enter its advisories"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, withDeps(t), tt.keys...)
+			s := screen(m)
+			if (m.depPop != nil) != tt.open {
+				t.Errorf("popup open is %v, want %v:\n%s", m.depPop != nil, tt.open, s)
+			}
+			for _, want := range tt.shows {
+				if !strings.Contains(s, want) {
+					t.Errorf("screen lacks %q:\n%s", want, s)
+				}
+			}
+			if tt.copied != "" && (len(copied) != 1 || !strings.Contains(copied[0], tt.copied)) {
+				t.Errorf("copied %q, want it to hold %q", copied, tt.copied)
+			}
+		})
+	}
+
+	m := press(t, withDeps(t), "j", "enter")
+	x, y, _, _ := m.depRect()
+	first := strings.TrimRight(ansi.Cut(ansi.Strip(m.depPopView()[0].text), 0, 12), " ")
+	m = update(t, m, tea.MouseClickMsg{X: x + 1, Y: y + 2, Button: tea.MouseLeft})
+	m = update(t, m, tea.MouseMotionMsg{X: x + 12, Y: y + 2, Button: tea.MouseLeft})
+	m = update(t, m, tea.MouseReleaseMsg{X: x + 12, Y: y + 2, Button: tea.MouseLeft})
+	if !reflect.DeepEqual(copied, []string{first}) || m.depPop == nil {
+		t.Errorf("a drag in the popup copied %q, want %q, and the popup open", copied, first)
+	}
+	m = update(t, m, tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
+	if m.depPop != nil {
+		t.Error("a click outside the popup should close it")
 	}
 }

@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/history"
 	"github.com/vuon9/kho/internal/provider"
@@ -37,10 +39,11 @@ type linkedMsg struct {
 
 // The actions that change the machine, swapped out in tests.
 var (
-	runExec     = tea.Exec
-	skillLinks  = provider.SkillLinks
-	linkSkill   = provider.LinkSkill
-	unlinkSkill = provider.UnlinkSkill
+	runExec        = tea.Exec
+	installProcess = func(c *exec.Cmd) *exec.Cmd { return c }
+	skillLinks     = provider.SkillLinks
+	linkSkill      = provider.LinkSkill
+	unlinkSkill    = provider.UnlinkSkill
 )
 
 // askInstall offers to move the selected package to the selected version.
@@ -89,39 +92,101 @@ func (m *model) askInstall() {
 		lines = append(lines, green().Render("✓ no known advisories in "+r.Version))
 	}
 	lines = append(lines, faint().Render("runs  ")+strings.Join(cmd.Args, " "), "", accent().Render("y")+faint().Render(" run it   ")+accent().Render("n")+faint().Render(" cancel"))
-	prov := provider.ProviderOf(p)
-	m.confirm = &confirm{title: arrow + " " + verb + " " + p.Name + "?", lines: lines, run: runExec(&terminalRun{cmd: cmd, log: m.log}, func(err error) tea.Msg {
-		return installedMsg{prov, p.Name, r.Version, err}
-	})}
+	title := arrow + " " + verb + " " + p.Name
+	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider.ProviderOf(p), p.Name, r.Version, nil})}
+}
+
+// installing is a package manager running in a popup. Its output, and then
+// its installedMsg, arrive on events.
+type installing struct {
+	title      string
+	args       []string
+	lines      []string
+	start, end time.Time
+	events     chan tea.Msg
+	done       *installedMsg
+}
+
+type installStartedMsg struct{ *installing }
+
+type outputMsg string
+
+func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
+	return func() tea.Msg {
+		in := &installing{title: title, args: cmd.Args, start: now(), events: make(chan tea.Msg, 64)}
+		go in.run(installProcess(cmd), log, done)
+		return installStartedMsg{in}
+	}
+}
+
+func (in *installing) next() tea.Cmd {
+	return func() tea.Msg { return <-in.events }
+}
+
+func (in *installing) run(cmd *exec.Cmd, log *history.Log, done installedMsg) {
+	var output tail
+	start := time.Now()
+	done.err = in.stream(cmd, &output)
+	log.Add(entry(history.Change, in.args, time.Since(start), done.err, output.String()))
+	in.events <- done
+}
+
+// stream runs cmd in a session of its own, with no terminal: a password
+// prompt then fails instead of drawing over kho, and t can rerun it in the
+// terminal. Each line keeps only what follows its last \r, as a progress bar
+// would leave it on screen.
+func (in *installing) stream(cmd *exec.Cmd, output io.Writer) error {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	cmd.Stdout, cmd.Stderr = w, w
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		return err
+	}
+	sc := bufio.NewScanner(io.TeeReader(r, output))
+	sc.Buffer(nil, 1<<20)
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		in.events <- outputMsg(ansi.Strip(line[strings.LastIndex(line, "\r")+1:]))
+	}
+	// A line too long for the scanner stops it; read the rest so the command
+	// never blocks on a full pipe.
+	io.Copy(output, r)
+	return cmd.Wait()
 }
 
 // askLink offers to add or remove the selected agent's link to a skill.
 func (m *model) askLink() {
 	p, ok := m.current()
-	l, ok2 := at(skillLinks(p), m.sideCursor)
+	l, ok2 := at(m.links(p), m.sideCursor)
 	if !ok || !ok2 {
 		return
 	}
 	switch l.Kind {
 	case "missing":
 		target := tilde(provider.RealPath(p))
-		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + l.Agent + "?", lines: []string{
+		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + agentName(l) + "?", lines: []string{
 			"creates  " + tilde(l.Path), "      →  " + target, "",
 			accent().Render("y") + faint().Render(" link it   ") + accent().Render("n") + faint().Render(" cancel"),
 		}, run: m.logged([]string{"ln", "-s", provider.RealPath(p), l.Path}, func() tea.Msg {
-			return linkedMsg{"linked " + p.Name + " into " + l.Agent, linkSkill(l, p)}
+			return linkedMsg{"linked " + p.Name + " into " + agentName(l), linkSkill(l, p)}
 		})}
 	case "link":
-		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + l.Agent + "?", lines: []string{
+		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + agentName(l) + "?", lines: []string{
 			"removes  " + tilde(l.Path), faint().Render("the skill itself stays in ") + tilde(provider.RealPath(p)), "",
 			accent().Render("y") + faint().Render(" remove the link   ") + accent().Render("n") + faint().Render(" cancel"),
 		}, run: m.logged([]string{"rm", l.Path}, func() tea.Msg {
-			return linkedMsg{"removed " + p.Name + " from " + l.Agent, unlinkSkill(l)}
+			return linkedMsg{"removed " + p.Name + " from " + agentName(l), unlinkSkill(l)}
 		})}
 	case "copy":
 		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a copied folder, not a link.", "kho won't delete it."}}
 	default:
-		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{l.Agent + " reads ~/.agents/skills directly,", "so it always sees " + p.Name + "."}}
+		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{agentName(l) + " reads ~/.agents/skills directly,", "so it always sees " + p.Name + "."}}
 	}
 }
 
@@ -166,9 +231,9 @@ func tilde(path string) string {
 	return path
 }
 
-// terminalRun runs a package manager in the terminal kho hands over, shows
-// its output, and waits for enter so the output can be read before kho
-// comes back.
+// terminalRun runs a failed install again in the terminal kho hands over, so
+// the package manager can ask for a password, shows its output, and waits for
+// enter so the output can be read before kho comes back.
 type terminalRun struct {
 	cmd    *exec.Cmd
 	log    *history.Log

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -31,21 +32,48 @@ func (Skills) Available() bool {
 	return err == nil
 }
 
-// skillAgent mirrors the skills CLI's agent table. Shared agents read
-// ~/.agents/skills directly; Dir is the agent's own folder of linked skills.
+//go:generate go run ./genagents v1.7.6
+
+// skillAgent is one agent the skills CLI supports. Dir is its global skills
+// folder, and any Detect path existing means it is installed. Paths start
+// with ~/, a ${VAR:-default} the agent's own env setting overrides, or /.
 type skillAgent struct {
-	Name   string
-	Detect string
-	Dir    string
-	Shared bool
+	Name, Display, Dir string
+	Detect             []string
 }
 
-var skillAgents = []skillAgent{
-	{"claude", ".claude", ".claude/skills", false},
-	{"codex", ".codex", "", true},
-	{"cursor", ".cursor", ".cursor/skills", false},
-	{"opencode", ".config/opencode", ".config/opencode/skills", true},
-	{"pi", ".pi/agent", ".pi/agent/skills", true},
+// dir is the agent's skills folder, or "" when it reads ~/.agents/skills
+// itself and so has no links of its own.
+func (a skillAgent) dir(home string) string {
+	if d := expandPath(home, a.Dir); d != filepath.Join(home, ".agents", "skills") {
+		return d
+	}
+	return ""
+}
+
+func (a skillAgent) installed(home string) bool {
+	for _, p := range a.Detect {
+		if _, err := os.Stat(expandPath(home, p)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+var envDefault = regexp.MustCompile(`^\$\{(\w+):-([^}]*)\}`)
+
+func expandPath(home, p string) string {
+	if m := envDefault.FindStringSubmatch(p); m != nil {
+		base := os.Getenv(m[1])
+		if base == "" {
+			base = expandPath(home, m[2])
+		}
+		return filepath.Join(base, p[len(m[0]):])
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
 }
 
 type lockEntry struct {
@@ -111,12 +139,12 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 	var agents []skillAgent
 	own := map[string]map[string]bool{}
 	for _, a := range skillAgents {
-		if _, err := os.Stat(filepath.Join(home, a.Detect)); err != nil {
+		if !a.installed(home) {
 			continue
 		}
 		agents = append(agents, a)
-		if a.Dir != "" {
-			own[a.Name] = dirNames(filepath.Join(home, a.Dir))
+		if d := a.dir(home); d != "" {
+			own[a.Name] = dirNames(d)
 		}
 	}
 
@@ -138,7 +166,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 			p.Note = "no lock entry, the skills CLI can't update it"
 		}
 		for _, a := range agents {
-			if a.Shared || own[a.Name][name] {
+			if a.dir(home) == "" || own[a.Name][name] {
 				p.Agents = append(p.Agents, a.Name)
 			}
 		}
@@ -151,7 +179,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 		for name := range own[a.Name] {
 			if !canonical[name] {
 				unmanaged[name] = append(unmanaged[name], a.Name)
-				paths[name] = cmp.Or(paths[name], filepath.Join(home, a.Dir, name))
+				paths[name] = cmp.Or(paths[name], filepath.Join(a.dir(home), name))
 			}
 		}
 	}
@@ -336,13 +364,14 @@ func frontMatter(s string) ([][2]string, string) {
 // SkillLink is how one agent sees a skill: through a symlink in its own
 // skills folder, a copied folder, the shared ~/.agents/skills folder, or not.
 type SkillLink struct {
-	Agent  string
-	Path   string
-	Kind   string // "link", "copy", "missing", or "shared" for agents with no folder of their own
-	Target string
-	// Shared is true when the agent also reads ~/.agents/skills, so it sees
-	// the skill there even without a link of its own.
-	Shared bool
+	Agent, Display string
+	Path           string
+	Kind           string // "link", "copy", "missing", or "shared" for agents that read ~/.agents/skills
+	Target         string
+	// Shared is true when the agent reads ~/.agents/skills and the skill is
+	// there, so it sees the skill without a link of its own.
+	Shared    bool
+	Installed bool
 }
 
 // RealPath follows any symlinks to the folder the skill's files live in.
@@ -353,25 +382,29 @@ func RealPath(p Package) string {
 	return p.Path
 }
 
-func SkillLinks(p Package) []SkillLink {
-	return skillLinks(homeDir(), p)
+// SkillLinks says how each installed agent sees the skill, or every agent
+// the skills CLI supports when all is set.
+func SkillLinks(p Package, all bool) []SkillLink {
+	return skillLinks(homeDir(), p, all)
 }
 
-func skillLinks(home string, p Package) []SkillLink {
+func skillLinks(home string, p Package, all bool) []SkillLink {
 	shared := filepath.Join(home, ".agents", "skills", p.Name)
 	_, inShared := os.Stat(shared)
 	var links []SkillLink
 	for _, a := range skillAgents {
-		if _, err := os.Stat(filepath.Join(home, a.Detect)); err != nil {
+		installed := a.installed(home)
+		if !installed && !all {
 			continue
 		}
-		l := SkillLink{Agent: a.Name, Shared: a.Shared && inShared == nil}
-		if a.Dir == "" {
-			l.Path, l.Kind = shared, "shared"
+		l := SkillLink{Agent: a.Name, Display: a.Display, Installed: installed}
+		d := a.dir(home)
+		if d == "" {
+			l.Path, l.Kind, l.Shared = shared, "shared", inShared == nil
 			links = append(links, l)
 			continue
 		}
-		l.Path = filepath.Join(home, a.Dir, p.Name)
+		l.Path = filepath.Join(d, p.Name)
 		info, err := os.Lstat(l.Path)
 		switch {
 		case err != nil:

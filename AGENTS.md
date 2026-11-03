@@ -25,11 +25,14 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 ## Conventions
 
+**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes.
+
 **Providers.** To add one: implement `Provider`, register it in `All()`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
-- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`.
+- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`.
+- Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.
 - Index a cursor through `at(slice, i)`, which is safe for any `i`. `clamp()` runs after every message and pulls the package cursor in first, because the layout depends on it.
 - Sidebar text goes through `wrapLines`: labeled values with `field`, list entries with `row` so they never wrap.

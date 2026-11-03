@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/6b5b1eb1-99fc-4183-a346-be6ce75e551c
 - **Everything in one list.** Packages from every manager in one table, with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
 - **Knows what's unsafe.** Checks packages against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
 - **Reads before you change.** Versions with their release notes, dependencies (flagged when they're vulnerable), and for skills: SKILL.md, the README, and which agents can see the skill.
-- **Changes only on your say-so.** Pick a version to upgrade or downgrade, read the exact command, confirm. Link or unlink a skill for one agent. Every command kho runs is kept in a history you can browse.
+- **Changes only on your say-so.** Pick a version to upgrade or downgrade, read the exact command, confirm, and watch it run in a popup without leaving kho. Link or unlink a skill for any agent the skills CLI supports. Every command kho runs is kept in a history you can browse.
 - **Works for agents too.** `kho check --json` answers "am I safe?" and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
 - **Pleasant to live in.** Mouse and keyboard, resizable panels, selectable text, five themes, a `?` key that lists every shortcut.
 

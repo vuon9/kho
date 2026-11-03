@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"regexp"
 	"strings"
@@ -164,7 +165,7 @@ func (m model) sideListLen() int {
 		}
 		return len(m.securityEntries())
 	case tabLinks:
-		return len(skillLinks(p))
+		return len(m.links(p))
 	}
 	return -1
 }
@@ -215,7 +216,7 @@ func (m model) sideBox(w, h int, focused bool) string {
 		active := focused && m.sidePart == 1
 		div := e.Render("├─ ") + boxTitle(title, active) + " "
 		out = append(out, div+e.Render(strings.Repeat("─", max(w-1-lipgloss.Width(div), 0))+"┤"))
-		bottoms := m.bottomView(inner)
+		bottoms, deps := m.bottomView(inner), m.depList()
 		for i := range l.bottomRows {
 			text := ""
 			j := m.bodyOffset + i
@@ -224,6 +225,9 @@ func (m model) sideBox(w, h int, focused bool) string {
 			}
 			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
 				text = highlight(text, from, to)
+			}
+			if j == m.depCursor && j < len(deps) {
+				text = selected(text, inner, focused)
 			}
 			out = append(out, row(text))
 		}
@@ -271,14 +275,14 @@ func (m model) bottomTitle() string {
 	case tabSkill:
 		return "📄 SKILL.md"
 	case tabLinks:
-		if l, ok := at(skillLinks(p), m.sideCursor); ok {
-			return "🔗 " + l.Agent
+		if l, ok := at(m.links(p), m.sideCursor); ok {
+			return "🔗 " + agentName(l)
 		}
 		return "🔗 Link"
 	}
 	if p.Source == "skills" {
 		linked := 0
-		for _, l := range skillLinks(p) {
+		for _, l := range skillLinks(p, false) {
 			if l.Kind == "link" || l.Kind == "copy" || l.Shared || l.Kind == "shared" {
 				linked++
 			}
@@ -409,6 +413,75 @@ func fixFor(advs []vuln.Advisory, version string) string {
 		}
 	}
 	return best
+}
+
+// depList is the dependencies the Info tab lists for ↑↓ to pick from.
+func (m model) depList() []provider.Dep {
+	p, ok := m.current()
+	if !ok || p.Source == "skills" || m.activeTab() != tabInfo {
+		return nil
+	}
+	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+		return d.val
+	}
+	return nil
+}
+
+// depPopup shows one dependency's advisories over the screen.
+type depPopup struct {
+	dep provider.Dep
+	top int
+}
+
+func (m *model) openDep(i int) {
+	if d, ok := at(m.depList(), i); ok {
+		m.depPop, m.sel = &depPopup{dep: d}, nil
+	}
+}
+
+func (m model) depPopTitle() string {
+	p, _ := m.current()
+	d, n := m.depPop.dep, 0
+	for _, da := range m.depVulns[pkgKey(p)] {
+		if da.dep.Name == d.Name {
+			n++
+		}
+	}
+	title := "◆ " + d.Name + " " + d.Version
+	switch {
+	case n == 1:
+		title += " · 1 advisory"
+	case n > 1:
+		title += fmt.Sprintf(" · %d advisories", n)
+	}
+	return title
+}
+
+// depPopView is the dependency popup's text, wrapped to fit it.
+func (m model) depPopView() []line {
+	_, _, w, _ := m.depRect()
+	inner := w - 2
+	p, _ := m.current()
+	d := m.depPop.dep
+	var lines []line
+	for _, da := range m.depVulns[pkgKey(p)] {
+		if da.dep.Name != d.Name {
+			continue
+		}
+		if len(lines) > 0 {
+			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", inner-2))), line{})
+		}
+		lines = append(lines, row(" "+accent().Render(da.adv.ID)))
+		lines = append(lines, m.advisoryDetail(da.adv, "", d.Version, "", inner)...)
+	}
+	switch {
+	case len(lines) > 0:
+	case provider.Ecosystem(p) == "":
+		lines = plain("", faint().Render(" OSV has no data for "+p.Source+", so kho can't check "+d.Name+"."))
+	default:
+		lines = plain("", green().Render(" ✓ No known advisories for "+d.Name+" "+d.Version))
+	}
+	return wrapLines(lines, inner)
 }
 
 func (m model) depLines(p provider.Package, inner int) []line {
@@ -574,24 +647,31 @@ func (m model) advisoryLines(p provider.Package, inner int) []line {
 	if !ok {
 		return nil
 	}
-	a := e.adv
-	version := p.Version
+	version, latest := p.Version, p.Latest
 	if e.dep != "" {
 		_, version, _ = strings.Cut(e.dep, "@")
+		latest = ""
 	}
+	return m.advisoryDetail(e.adv, e.dep, version, latest, inner)
+}
+
+// advisoryDetail is one advisory as it affects version, reached through a
+// dependency when through is set. A latest version gets a word on whether
+// upgrading to it clears the advisory.
+func (m model) advisoryDetail(a vuln.Advisory, through, version, latest string, inner int) []line {
 	lines := plain(" " + severityPill(a.Severity) + " " + bold().Render(ansi.Truncate(a.Summary, inner-10, "…")))
 	lines = append(lines, line{})
-	if e.dep != "" {
-		lines = append(lines, field("through", e.dep, ""))
+	if through != "" {
+		lines = append(lines, field("through", through, ""))
 	}
 	fix := red().Render("no fix published yet")
 	if f := a.FixedAfter(version); f != "" {
 		fix = green().Render(f)
-		if p.Latest != "" && e.dep == "" {
-			if a.Affects(p.Latest) {
-				fix += red().Render(" · latest " + p.Latest + " is still affected")
+		if latest != "" {
+			if a.Affects(latest) {
+				fix += red().Render(" · latest " + latest + " is still affected")
 			} else {
-				fix += faint().Render(" · latest " + p.Latest + " is clear")
+				fix += faint().Render(" · latest " + latest + " is clear")
 			}
 		}
 	}
@@ -681,19 +761,32 @@ func linkState(l provider.SkillLink) string {
 	return faint().Render("· none")
 }
 
+// links is the agents the Links tab lists: the installed ones, or with A
+// every agent the skills CLI supports.
+func (m model) links(p provider.Package) []provider.SkillLink {
+	return skillLinks(p, m.allAgents)
+}
+
+func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
+
 func (m model) linkLines(p provider.Package) []line {
-	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 10)+" "+pad("STATE", 11)+" PATH"))}
-	for _, l := range skillLinks(p) {
-		lines = append(lines, row("  "+pad(l.Agent, 10)+" "+pad(linkState(l), 11)+" "+faint().Render(tilde(l.Path))))
+	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
+	for _, l := range m.links(p) {
+		state := linkState(l)
+		if !l.Installed && l.Kind == "missing" {
+			state = faint().Render("· not installed")
+		}
+		lines = append(lines, row("  "+pad(agentName(l), 16)+" "+pad(state, 15)+" "+faint().Render(tilde(l.Path))))
 	}
 	return lines
 }
 
 func (m model) linkDetail(p provider.Package) []line {
-	l, ok := at(skillLinks(p), m.sideCursor)
+	l, ok := at(m.links(p), m.sideCursor)
 	if !ok {
 		return nil
 	}
+	name := agentName(l)
 	lines := []line{field("path", tilde(l.Path), ""), field("skill", tilde(provider.RealPath(p)), ""), {}}
 	switch l.Kind {
 	case "link":
@@ -702,12 +795,15 @@ func (m model) linkDetail(p provider.Package) []line {
 	case "copy":
 		lines = append(lines, line{text: faint().Render(" A copied folder, not a link. kho won't delete it.")})
 	case "shared":
-		lines = append(lines, line{text: faint().Render(" " + l.Agent + " reads ~/.agents/skills directly, so it always sees this skill.")})
+		lines = append(lines, line{text: faint().Render(" " + name + " reads ~/.agents/skills directly, so it always sees this skill.")})
 	default:
 		if l.Shared {
-			lines = append(lines, line{text: faint().Render(" " + l.Agent + " already sees it through ~/.agents/skills.")})
+			lines = append(lines, line{text: faint().Render(" " + name + " already sees it through ~/.agents/skills.")})
 		}
-		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+l.Agent+"'s own folder.")})
+		if !l.Installed {
+			lines = append(lines, line{text: faint().Render(" " + name + " isn't installed yet; the link waits for it.")})
+		}
+		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+name+"'s own folder.")})
 	}
 	return lines
 }
