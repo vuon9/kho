@@ -149,7 +149,6 @@ func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]st
 func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool) error {
 	var queries []vuln.Query
 	bySource := map[string][]string{}
-	var audited []string
 	for _, p := range pkgs {
 		if q, ok := provider.Query(p); ok {
 			queries = append(queries, q)
@@ -159,7 +158,6 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 			k := p.Repo + "/" + p.Name
 			if t, ok := env.DB.AuditedAt[k]; refresh || !ok || env.Now().Sub(t) > vuln.MaxAge {
 				bySource[p.Repo] = append(bySource[p.Repo], p.Name)
-				audited = append(audited, k)
 			}
 		}
 	}
@@ -183,12 +181,11 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 		audits, err := env.Audits(ctx, bySource)
 		if err != nil {
 			errs = append(errs, err)
-		}
-		for _, k := range audited {
-			env.DB.AuditedAt[k] = env.Now()
-		}
-		for k, a := range audits {
-			env.DB.Audits[k] = a
+		} else {
+			for k, a := range audits {
+				env.DB.Audits[k] = a
+				env.DB.AuditedAt[k] = env.Now()
+			}
 		}
 	}
 	if env.DBPath != "" {

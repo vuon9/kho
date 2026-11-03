@@ -214,6 +214,79 @@ func TestCheckUsesTheCache(t *testing.T) {
 	}
 }
 
+func TestCheckAsksAgainWhenTheSkillAuditFailed(t *testing.T) {
+	const key = "someone/skills/pathmaker"
+	want := vuln.SkillAudit{Gen: "safe", Socket: "low", Snyk: "low"}
+	db := vuln.NewDB()
+	calls := 0
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{
+			fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
+		},
+		DB:  db,
+		Log: history.Open(""),
+		Out: &out, Err: &errOut,
+		Now: func() time.Time { return clock },
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("skills.sh is down")
+			}
+			return map[string]vuln.SkillAudit{key: want}, nil
+		},
+	}
+	tests := []struct {
+		id    string
+		check func(t *testing.T, r Report, code int)
+	}{
+		{"a failed audit is reported and leaves the skill stale", func(t *testing.T, r Report, code int) {
+			if code != ExitOK || r.Errors["security"] != "skills.sh is down" || r.Complete {
+				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
+			}
+			if calls != 1 {
+				t.Errorf("asked skills.sh %d times, want 1", calls)
+			}
+			if at, ok := db.AuditedAt[key]; ok {
+				t.Errorf("a failed audit marked the skill fresh at %v", at)
+			}
+			if _, ok := db.Audits[key]; ok {
+				t.Errorf("a failed audit stored %+v", db.Audits[key])
+			}
+		}},
+		{"the next scan asks skills.sh again and caches what it got", func(t *testing.T, r Report, code int) {
+			if code != ExitOK || r.Errors["security"] != "" || !r.Complete {
+				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
+			}
+			if calls != 2 {
+				t.Errorf("asked skills.sh %d times, want 2", calls)
+			}
+			if at := db.AuditedAt[key]; !at.Equal(clock) {
+				t.Errorf("audited at %v, want %v", at, clock)
+			}
+			if got := db.Audits[key]; got != want {
+				t.Errorf("audit %+v, want %+v", got, want)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			out.Reset()
+			errOut.Reset()
+			code := Main(env, []string{"check", "--json"})
+			var r Report
+			if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, out.String())
+			}
+			tt.check(t, r, code)
+		})
+	}
+}
+
 func TestCommands(t *testing.T) {
 	tests := []struct {
 		id   string
