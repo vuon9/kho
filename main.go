@@ -47,6 +47,7 @@ func main() {
 	os.Exit(cli.Main(cli.Env{
 		Version:   appVersion(),
 		Providers: provider.Available(),
+		Skipped:   provider.Missing(),
 		DB:        vuln.Load(vuln.Path()),
 		DBPath:    vuln.Path(),
 		Log:       log,

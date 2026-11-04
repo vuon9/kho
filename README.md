@@ -33,6 +33,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 ## Install
 
 ```bash
+brew trust vuon9/tap          # Homebrew 7 loads no cask from an untrusted tap
 brew install --cask vuon9/tap/kho
 ```
 
@@ -69,7 +70,7 @@ npx skills add vuon9/kho --skill use-kho
 
 Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
 
-Scripts can call the same commands: `kho check --json` exits 0 when safe and 3 when at risk, and `kho help` lists the rest.
+Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything at all was skipped. `kho help` lists the rest.
 
 ## What leaves your machine
 

@@ -131,6 +131,30 @@ func TestDB(t *testing.T) {
 	}
 }
 
+func TestSaveLeavesNoHalfWrittenCache(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "kho")
+	path := filepath.Join(dir, "security.json")
+	db := NewDB()
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	q := Query{"npm", "diffkit", "0.23.0"}
+	db.Merge(map[string][]string{q.Key(): {"GHSA-test"}}, map[string]Advisory{"GHSA-test": {ID: "GHSA-test", Package: "diffkit"}}, now)
+	for i := range 3 {
+		if err := db.Save(path); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "security.json" {
+		t.Errorf("kept %d files, want only the cache: %v", len(entries), entries)
+	}
+	if got := Load(path).For(q); len(got) != 1 || got[0].ID != "GHSA-test" {
+		t.Errorf("the saved cache lost its hits: %+v", got)
+	}
+}
+
 func TestOldCacheIsDropped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "security.json")
 	os.WriteFile(path, []byte(`{"checked":{"PyPI/bramble@1.0":"2026-11-03T12:00:00Z"},"hits":{"PyPI/bramble@1.0":["X"]}}`), 0o644)

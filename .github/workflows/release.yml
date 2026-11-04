@@ -46,5 +46,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # A fine-grained PAT with Contents read and write on vuon9/homebrew-tap.
+          # A fine-grained PAT with Contents read and write on vuon9/tap.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
