@@ -131,13 +131,24 @@ type installStartedMsg struct{ *installing }
 type outputMsg []string
 
 // live is the install kho started last. serve stops it if it is still going
-// when kho leaves, even if the screen never heard it started.
-var live atomic.Pointer[installing]
+// when kho leaves, even if the screen never heard it started. Starting one
+// holds the lock, so serve can't miss one on its way, and once kho is
+// leaving none starts.
+var live struct {
+	sync.Mutex
+	in      *installing
+	leaving bool
+}
 
 // startInstall runs cmd in a popup. A command that can't even start leaves
 // nothing to watch or stop, so it comes back as a failed installedMsg.
 func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
 	return func() tea.Msg {
+		live.Lock()
+		defer live.Unlock()
+		if live.leaving {
+			return nil
+		}
 		run := installProcess(cmd)
 		out, err := detach(run)
 		if err != nil {
@@ -147,7 +158,7 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 		}
 		in := &installing{title: title, cmd: cmd, start: now(), pid: run.Process.Pid,
 			changed: make(chan struct{}, 1), logged: make(chan struct{}), over: make(chan installedMsg, 1), cut: make(chan struct{}, 1)}
-		live.Store(in)
+		live.in = in
 		go in.run(run, out, log, done)
 		return installStartedMsg{in}
 	}

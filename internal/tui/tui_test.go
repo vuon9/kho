@@ -137,7 +137,9 @@ func loaded(t *testing.T) model {
 	opened, ran, copied, toggled = nil, nil, nil, nil
 	linkReads, appeared = 0, false
 	installScript, reran = "echo fetched", nil
-	live.Store(nil)
+	live.Lock()
+	live.in, live.leaving = nil, false
+	live.Unlock()
 	installProcess = func(c *exec.Cmd) *exec.Cmd {
 		ran = append(ran, strings.Join(c.Args, " "))
 		return exec.Command("sh", "-c", installScript)
@@ -1575,19 +1577,23 @@ func TestSignal(t *testing.T) {
 		// patience is how long kho waits on an interrupted install before
 		// it kills it; 0 leaves kho through serve, as a hangup does.
 		patience time.Duration
-		said     string
-		logged   []string
-		err      error
+		// late asks for an install once kho has left.
+		late   bool
+		said   string
+		ran    []string
+		logged []string
+		err    error
 	}{
-		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30",
-			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
-		{id: "so does one that comes before the screen heard the install started", script: "echo started; sleep 30", unseen: true,
-			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
+		{id: "an install asked for once kho is leaving never starts", late: true, err: ErrHangup},
+		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30", said: "kho: stopping brew upgrade anvil\n",
+			ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
+		{id: "so does one that comes before the screen heard the install started", script: "echo started; sleep 30", unseen: true, said: "kho: stopping brew upgrade anvil\n",
+			ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
 		{id: "a crash in the screen comes back as an error", crash: true, err: tea.ErrProgramPanic},
 		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
-			logged: []string{"brew upgrade anvil: signal: killed"}},
+			ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: killed"}},
 		{id: "and so is a child out of reach that keeps writing", script: "trap '' INT; echo started; set -m; (while :; do echo tick; sleep 0.3; done) & echo $! > {pids}; set +m; sleep 30",
-			patience: 50 * time.Millisecond, logged: []string{"brew upgrade anvil: signal: killed"}},
+			patience: 50 * time.Millisecond, ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: killed"}},
 		{id: "with nothing running a hangup still says it was one", err: ErrHangup},
 	}
 	for _, tt := range tests {
@@ -1618,14 +1624,19 @@ func TestSignal(t *testing.T) {
 				sigs <- syscall.SIGHUP
 				err = serve(m, sigs, &said, tea.WithInput(nil), tea.WithOutput(io.Discard))
 			}
+			if tt.late {
+				if msg := startInstall("⬆ Upgrade anvil", exec.Command("brew", "upgrade", "anvil"), m.log, installedMsg{"brew", "anvil", "v0.2.94", nil})(); msg != nil {
+					t.Errorf("an install started as kho left: %T", msg)
+				}
+			}
 			var logged []string
 			for _, e := range m.log.Entries() {
 				if e.Kind == history.Change {
 					logged = append(logged, strings.Join(e.Command, " ")+": "+e.Err)
 				}
 			}
-			if said.String() != tt.said || !slices.Equal(logged, tt.logged) || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
-				t.Errorf("said %q, logged %q, err %v, want %q, %q, %v", said.String(), logged, err, tt.said, tt.logged, tt.err)
+			if said.String() != tt.said || !slices.Equal(ran, tt.ran) || !slices.Equal(logged, tt.logged) || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
+				t.Errorf("said %q, ran %q, logged %q, err %v, want %q, %q, %q, %v", said.String(), ran, logged, err, tt.said, tt.ran, tt.logged, tt.err)
 			}
 		})
 	}

@@ -68,7 +68,11 @@ func serve(m tea.Model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.Pro
 	if hung.Load() {
 		err = ErrHangup
 	}
-	if in := live.Load(); in != nil {
+	live.Lock()
+	live.leaving = true
+	in := live.in
+	live.Unlock()
+	if in != nil {
 		select {
 		case <-in.logged:
 		default:
