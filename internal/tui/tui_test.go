@@ -138,7 +138,8 @@ func loaded(t *testing.T) model {
 			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true, Installed: true},
 		}
 		if all {
-			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing})
+			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing},
+				provider.SkillLink{Agent: "cline", Display: "Cline", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true})
 		}
 		if appeared {
 			links = append([]provider.SkillLink{{Agent: "amp", Path: "/h/.config/agents/skills/pathmaker", Kind: provider.LinkMissing, Installed: true}}, links...)
@@ -301,7 +302,7 @@ func TestView(t *testing.T) {
 		{id: "links list every agent", keys: []string{"G", "5"}, want: []string{"AGENT", "claude", "🔗 linked", "cursor", "· none", "codex", "≈ shared"}},
 		{id: "skill info shows who sees it", keys: []string{"G"}, want: []string{"🔗 Seen by 2 agents"}},
 		{id: "and lists installed agents only, even after A on the Links tab", keys: []string{"G", "5", "A", "i"}, want: []string{"🔗 Seen by 2 agents", "claude", "codex"},
-			lacks: []string{"Goose", "not installed"}},
+			lacks: []string{"Goose", "Cline", "not installed"}},
 		{id: "enter on a link asks to remove it", keys: []string{"G", "5", "l", "enter"}, want: []string{"✂ Unlink pathmaker from claude?", "removes  /h/.claude/skills/pathmaker"}},
 		{id: "a shared agent has nothing to link", keys: []string{"G", "5", "l", "j", "j", "enter"}, want: []string{"Nothing to link", "codex reads ~/.agents/skills directly,"}},
 		{id: "? shows every key", keys: []string{"?"}, want: []string{"⌨ Keys", "show or hide these keys", "Sidebar", "check security again"}},
