@@ -242,6 +242,8 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 		{"a required source that was read passes", npm, uvMissing, nil, []string{"--require", "pipx"}, result{ExitOK, "", nil}},
 		{"a manager this machine lacks is fine unless required", npm, uvMissing, nil, []string{"--require", "pipx,uv"},
 			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", nil}},
+		{"cask is read by brew, so requiring it requires brew", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask"},
+			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", nil}},
 		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", nil}},
 		{"an unknown source in the list is a usage error", npm, uvMissing, nil, []string{"--require", "npmm"},
 			result{ExitUsage, "unknown source in --require: npmm", nil}},

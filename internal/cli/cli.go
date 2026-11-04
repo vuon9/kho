@@ -409,15 +409,16 @@ func (env Env) check(args []string) int {
 	return ExitOK
 }
 
-// splitSources reads the --require list and returns the names kho does not know,
-// so a typo fails loudly instead of passing as "nothing to check".
+// splitSources reads the --require list as provider names, so "cask" from the
+// JSON means brew, and returns the names kho does not know, so a typo fails
+// loudly instead of passing as "nothing to check".
 func splitSources(list string) (known, unknown []string) {
 	sources := map[string]bool{}
 	for _, p := range provider.All() {
 		sources[p.Name()] = true
 	}
 	for _, name := range strings.Split(list, ",") {
-		name = strings.TrimSpace(name)
+		name = provider.ProviderOf(provider.Package{Source: strings.TrimSpace(name)})
 		if name == "" {
 			continue
 		}
