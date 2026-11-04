@@ -461,8 +461,9 @@ func skillLinks(home string, p Package, all bool) []SkillLink {
 	return links
 }
 
-// LinkSkill gives an agent its own symlink to the skill, relative like the
-// ones the skills CLI makes.
+// LinkSkill gives an agent its own symlink to the skill's entry, relative
+// like the ones the skills CLI makes, so removing the entry removes the skill
+// for every agent.
 func LinkSkill(l SkillLink, p Package) error {
 	switch {
 	case l.CanLink():
@@ -477,13 +478,13 @@ func LinkSkill(l SkillLink, p Package) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// Both ends resolved, or a symlinked parent like macOS's /var makes the
-	// relative path wrong.
+	// A link is read from the folder it really sits in, so a symlinked parent
+	// would make a path worked out from dir wrong.
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(realDir, RealPath(p))
+	rel, err := filepath.Rel(realDir, p.Path)
 	if err != nil {
 		return err
 	}

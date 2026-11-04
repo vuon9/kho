@@ -203,11 +203,10 @@ func (m *model) askLink() {
 	nothing := func(lines ...string) { m.confirm = &confirm{title: "Nothing to link", lines: lines} }
 	switch {
 	case l.CanLink():
-		target := tilde(provider.RealPath(p))
 		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + name + "?", lines: []string{
-			"creates  " + tilde(l.Path), "      →  " + target, "",
+			"creates  " + tilde(l.Path), "      →  " + tilde(p.Path), "",
 			accent().Render("y") + faint().Render(" link it   ") + accent().Render("n") + faint().Render(" cancel"),
-		}, run: m.logged([]string{"ln", "-s", provider.RealPath(p), l.Path}, func() tea.Msg {
+		}, run: m.logged([]string{"ln", "-s", p.Path, l.Path}, func() tea.Msg {
 			return linkedMsg{"linked " + p.Name + " into " + name, linkSkill(l, p)}
 		})}
 	case l.Kind == provider.LinkSymlink:

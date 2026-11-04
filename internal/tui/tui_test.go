@@ -519,7 +519,7 @@ func TestLinkStates(t *testing.T) {
 			seen:    "🔗 Seen by 0 agents",
 			row:     "Cursor · none /h/.cursor/skills/pathmaker",
 			detail:  []string{"enter links it into Cursor's own folder."},
-			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
+			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {skill}", "", "y link it   n cancel"},
 			toggled: []string{"link cursor"},
 		},
 		{
@@ -576,7 +576,7 @@ func TestLinkStates(t *testing.T) {
 			press(t, m, "y")
 			want := slices.Clone(tt.dialog)
 			for i := range want {
-				want[i] = strings.ReplaceAll(want[i], "{real}", provider.RealPath(p))
+				want[i] = strings.NewReplacer("{real}", provider.RealPath(p), "{skill}", p.Path).Replace(want[i])
 			}
 			if seen != tt.seen || row != tt.row || !slices.Equal(detail, tt.detail) || !slices.Equal(dialog, want) || !slices.Equal(toggled, tt.toggled) {
 				t.Errorf("got  %q\n     %q\n     %q\n     %q\n     %q\nwant %q\n     %q\n     %q\n     %q\n     %q",
