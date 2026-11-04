@@ -5,8 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -416,5 +423,95 @@ func TestInstallIsRecorded(t *testing.T) {
 	}
 	if len(got.log) != 1 || got.log[0].Kind != history.Change || got.log[0].Output != "installed" {
 		t.Errorf("history %+v", got.log)
+	}
+}
+
+// Usage, SKILL.md and AGENTS.md are kept in step with the code by hand, so
+// this reads the commands and exit codes from cli.go, asks each command for
+// its flags, and looks for every one of them in the docs.
+func TestDocsKeepUpWithTheCLI(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	var codes []int
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.ValueSpec:
+			for i, name := range n.Names {
+				if strings.HasPrefix(name.Name, "Exit") {
+					code, _ := strconv.Atoi(n.Values[i].(*ast.BasicLit).Value)
+					codes = append(codes, code)
+				}
+			}
+		case *ast.FuncDecl:
+			return n.Name.Name == "Main"
+		case *ast.CaseClause:
+			for _, e := range n.List {
+				if cmd, _ := strconv.Unquote(e.(*ast.BasicLit).Value); !strings.HasPrefix(cmd, "-") {
+					commands = append(commands, cmd)
+				}
+			}
+		}
+		return true
+	})
+
+	var flags []string
+	for _, cmd := range commands {
+		var out, errOut bytes.Buffer
+		Main(Env{DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut, Now: func() time.Time { return clock }}, []string{cmd, "-h"})
+		for _, m := range regexp.MustCompile(`(?m)^  -(\S+)`).FindAllStringSubmatch(errOut.String(), -1) {
+			if len(m[1]) == 1 {
+				flags = append(flags, "-"+m[1]+" ")
+			} else {
+				flags = append(flags, "--"+m[1])
+			}
+		}
+	}
+	if len(flags) == 0 {
+		t.Fatalf("found no flags in %v", commands)
+	}
+
+	_, exits, _ := strings.Cut(Usage, "exit codes: ")
+	exits, _, _ = strings.Cut(exits, "\n")
+	var listed []int
+	for _, item := range strings.Split(exits, ", ") {
+		code, _ := strconv.Atoi(strings.Fields(item)[0])
+		listed = append(listed, code)
+	}
+	if !reflect.DeepEqual(listed, codes) {
+		t.Errorf("Usage lists exit codes %v, cli.go has %v", listed, codes)
+	}
+
+	skill, err := os.ReadFile("../../skills/use-kho/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, err := os.ReadFile("../../AGENTS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		id   string
+		doc  string
+		want []string
+	}{
+		{"skills/use-kho/SKILL.md", string(skill), append(slices.Clone(flags), exits)},
+		{"Usage", Usage, flags},
+		{"AGENTS.md", string(agents), []string{exits}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var missing []string
+			for _, w := range tt.want {
+				if !strings.Contains(tt.doc, w) {
+					missing = append(missing, strings.TrimSpace(w))
+				}
+			}
+			if len(missing) > 0 {
+				t.Errorf("%s does not mention %q", tt.id, missing)
+			}
+		})
 	}
 }
