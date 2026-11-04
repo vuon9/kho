@@ -1393,13 +1393,13 @@ func TestProgress(t *testing.T) {
 			tm, cmd := m.Update(key("y"))
 			tm, _ = tm.Update(cmd())
 			var states [][]string
-			for {
-				msg := tm.(model).inst.next()()
-				if _, ok := msg.(installedMsg); ok {
-					break
+			for tm.(model).inst.done == nil {
+				tm, _ = tm.Update(tm.(model).inst.next()())
+				// The result brings the last lines too, which may have come
+				// with it.
+				if lines := tm.(model).inst.lines; len(states) == 0 || !slices.Equal(lines, states[len(states)-1]) {
+					states = append(states, slices.Clone(lines))
 				}
-				tm, _ = tm.Update(msg)
-				states = append(states, slices.Clone(tm.(model).inst.lines))
 			}
 			if !reflect.DeepEqual(states, tt.states) {
 				t.Errorf("got  %q\nwant %q", states, tt.states)
@@ -1518,15 +1518,19 @@ func TestQuiet(t *testing.T) {
 func TestSlowScreen(t *testing.T) {
 	tests := []struct {
 		id, script string
-		// draw is how long the screen takes per update.
-		draw time.Duration
+		// draw is how long the screen takes per update. never is a screen
+		// that takes no update until the result.
+		draw  time.Duration
+		never bool
 		// last are the popup's last lines, and logged how the history entry
 		// ends.
 		last   []string
 		logged string
 	}{
-		{"a failing build's last error survives a slow screen", "seq 1 30000; echo LAST LINE; exit 1", time.Millisecond,
-			[]string{"29999", "30000", "LAST LINE"}, "exit status 1: ...29999\n30000\nLAST LINE\n"},
+		{id: "a failing build's last error survives a slow screen", script: "seq 1 30000; echo LAST LINE; exit 1", draw: time.Millisecond,
+			last: []string{"29999", "30000", "LAST LINE"}, logged: "exit status 1: ...29999\n30000\nLAST LINE\n"},
+		{id: "even one that only takes the result", script: "seq 1 30000; echo LAST LINE; exit 1", never: true,
+			last: []string{"29999", "30000", "LAST LINE"}, logged: "exit status 1: ...29999\n30000\nLAST LINE\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1534,12 +1538,14 @@ func TestSlowScreen(t *testing.T) {
 			installScript = tt.script
 			tm, cmd := m.Update(key("y"))
 			tm, _ = tm.Update(cmd())
-			for {
+			if in := tm.(model).inst; tt.never {
+				<-in.logged
+				tm, _ = tm.Update(<-in.over)
+			}
+			for tm.(model).inst.done == nil {
 				msg := tm.(model).inst.next()()
 				time.Sleep(tt.draw)
-				if tm, _ = tm.Update(msg); tm.(model).inst.done != nil {
-					break
-				}
+				tm, _ = tm.Update(msg)
 			}
 			lines := tm.(model).inst.lines
 			lines = lines[max(len(lines)-len(tt.last), 0):]

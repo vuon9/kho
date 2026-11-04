@@ -153,15 +153,10 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 	}
 }
 
-// next waits for new output or the end. New output goes first, so the last
-// lines are on screen before the result.
+// next waits for new output or the result, which brings the last lines on
+// its own.
 func (in *installing) next() tea.Cmd {
 	return func() tea.Msg {
-		select {
-		case <-in.changed:
-			return outputMsg(in.screen())
-		default:
-		}
 		select {
 		case <-in.changed:
 			return outputMsg(in.screen())
@@ -330,7 +325,6 @@ func quiet(read, cut <-chan struct{}, got *counter, grace, limit time.Duration) 
 	}
 }
 
-// counter counts the bytes written to it.
 type counter struct{ atomic.Int64 }
 
 func (c *counter) Write(p []byte) (int, error) {

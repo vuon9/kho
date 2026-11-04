@@ -442,7 +442,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case installedMsg:
 		// A rerun in the terminal comes back after its popup has closed.
 		if m.inst != nil {
-			m.inst.done, m.inst.end = &msg, now()
+			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
 		}
 		m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		if msg.err != nil {
