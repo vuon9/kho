@@ -1509,6 +1509,47 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
+// The Info tab lists the selected package's dependencies, flagging those with
+// advisories.
+func TestDependencyList(t *testing.T) {
+	upgraded := provider.Package{Source: "go", Name: "tidyup", Version: "v1.3.0", Latest: "v1.3.0", Origin: "example.com/tidyup",
+		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.31.0"}}}
+	tests := []struct {
+		id   string
+		msgs []tea.Msg
+		want []string
+	}{
+		{id: "after an install the list is the new version's",
+			msgs: []tea.Msg{installedMsg{"go", "tidyup", "v1.3.0", nil}, listedMsg{"go", []provider.Package{upgraded}, nil}},
+			want: []string{" · example.org/text   v0.31.0"}},
+		{id: "the list flags the dependencies with advisories", want: []string{
+			" · example.org/text   v0.30.0",
+			" ⚠ example.org/net    v0.50.0 1 vuln",
+			" ⚠ example.org/crypto v0.20.0 2 vuln",
+			" · example.org/local  (devel)",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, withDeps(t, ""), pick("tidyup")...)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			var got []string
+			for _, l := range m.bottomView(m.layout().sideW - 2) {
+				got = append(got, strings.Join(strings.Fields(ansi.Strip(l.text)), " "))
+			}
+			want := slices.Clone(tt.want)
+			for i := range want {
+				want[i] = strings.Join(strings.Fields(want[i]), " ")
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("got  %q\nwant %q", got, want)
+			}
+		})
+	}
+}
+
 // With more dependencies than the Info tab's bottom half shows, the keys and
 // the wheel that scroll the detail move through the list.
 func TestDependencyScroll(t *testing.T) {
@@ -1728,7 +1769,7 @@ func TestDependencyPopup(t *testing.T) {
 		{id: "a dependency with no release version can't be checked", keys: pick("tidyup", "j", "j", "j", "enter"),
 			text: []string{"◆ example.org/local (devel)", "", " example.org/local has no release version to check on osv.dev."}},
 		{id: "the advisories are the shown version's, not another version's", keys: pick("tidyup", "j", "enter"),
-			msgs: []tea.Msg{depsMsg{"go\x00tidyup", []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.53.0"}}, nil}},
+			msgs: []tea.Msg{depsMsg{"go\x00tidyup\x00v1.2.0", []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.53.0"}}, nil}},
 			text: []string{"◆ example.org/net v0.53.0", "", " example.org/net isn't checked yet.", " R checks again."}},
 		{id: "OSV has no data for a brew dependency", keys: pick("anvil", "enter"),
 			text: []string{"◆ openssl@4 4.1.0", "", " OSV has no data for brew, so kho can't check openssl@4."}},

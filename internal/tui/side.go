@@ -290,7 +290,7 @@ func (m model) bottomTitle() string {
 		}
 		return fmt.Sprintf("🔗 Seen by %d agents", linked)
 	}
-	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return fmt.Sprintf("🔗 Dependencies · %d", len(d.val))
 	}
 	return "🔗 Dependencies"
@@ -304,7 +304,7 @@ func (m model) bottomLines(inner int) []line {
 	case tabSecurity:
 		return m.advisoryLines(p, inner)
 	case tabSkill:
-		d := m.docs[pkgKey(p)]
+		d := m.docs[cacheKey(p)]
 		switch {
 		case d == nil || !d.done:
 			return plain(faint().Render(" loading…"))
@@ -422,7 +422,7 @@ func (m model) depList() []provider.Dep {
 	if !ok || p.Source == "skills" || m.activeTab() != tabInfo {
 		return nil
 	}
-	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return d.val
 	}
 	return nil
@@ -504,7 +504,7 @@ func (m model) depPopView() []line {
 }
 
 func (m model) depLines(p provider.Package, inner int) []line {
-	d := m.deps[pkgKey(p)]
+	d := m.deps[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))
@@ -530,7 +530,7 @@ func (m model) depLines(p provider.Package, inner int) []line {
 }
 
 func (m model) versionLines(p provider.Package, inner int) []line {
-	v := m.versions[pkgKey(p)]
+	v := m.versions[cacheKey(p)]
 	switch {
 	case v == nil || !v.done:
 		return plain(faint().Render(" " + spinner[m.frame%len(spinner)] + " loading versions…"))
@@ -729,7 +729,7 @@ func (m model) auditLines(p provider.Package) []line {
 }
 
 func (m model) skillMetaLines(p provider.Package) []line {
-	d := m.docs[pkgKey(p)]
+	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))
@@ -747,7 +747,7 @@ func (m model) skillMetaLines(p provider.Package) []line {
 }
 
 func (m model) readmeLines(p provider.Package, inner int) []line {
-	d := m.docs[pkgKey(p)]
+	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))

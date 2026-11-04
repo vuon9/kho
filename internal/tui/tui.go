@@ -285,16 +285,13 @@ func (m *model) reset() {
 	m.reindex()
 }
 
-// relist scans one provider again after kho changed something it manages,
-// and drops what was cached about its packages.
+// relist scans one provider again after kho changed something it manages.
+// What kho loaded about a package is kept by version, so a package the
+// change moved to another version loads afresh once the listing lands.
 func (m *model) relist(name string) tea.Cmd {
 	p := m.provider(name)
 	if p == nil {
 		return nil
-	}
-	for _, pkg := range m.pkgs[name] {
-		delete(m.deps, pkgKey(pkg))
-		delete(m.versions, pkgKey(pkg))
 	}
 	m.busy[name] = "listing"
 	return func() tea.Msg {
@@ -338,6 +335,12 @@ func (m model) provider(name string) provider.Provider {
 
 func pkgKey(p provider.Package) string {
 	return p.Source + "\x00" + p.Name
+}
+
+// cacheKey names what kho loaded about one version of a package: its
+// dependencies, releases and skill files.
+func cacheKey(p provider.Package) string {
+	return pkgKey(p) + "\x00" + p.Version
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -575,7 +578,7 @@ func (m *model) load() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	prov, key := m.provider(provider.ProviderOf(p)), pkgKey(p)
+	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if prov == nil {
 		return nil
 	}
@@ -1065,18 +1068,18 @@ func (m model) activeTab() int {
 
 func (m model) currentDeps() []provider.Dep {
 	p, ok := m.current()
-	if !ok || m.deps[pkgKey(p)] == nil {
+	if !ok || m.deps[cacheKey(p)] == nil {
 		return nil
 	}
-	return m.deps[pkgKey(p)].val
+	return m.deps[cacheKey(p)].val
 }
 
 func (m model) currentVersions() []provider.Release {
 	p, ok := m.current()
-	if !ok || m.versions[pkgKey(p)] == nil {
+	if !ok || m.versions[cacheKey(p)] == nil {
 		return nil
 	}
-	return m.versions[pkgKey(p)].val
+	return m.versions[cacheKey(p)].val
 }
 
 // visible applies the dependency, status and keyword filters.
