@@ -1286,6 +1286,8 @@ func TestStopInstall(t *testing.T) {
 		{"a second ctrl+c kills one that ignores the first", "trap '' INT; echo started; sleep 5; echo finished", 2, "signal: killed"},
 		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; set -m; (sleep 4; echo finished) & echo $! > {pids}; set +m; echo started; sleep 5",
 			2, "signal: killed"},
+		{"and lets go of one that keeps writing after the command is done", "echo started; set -m; (while :; do echo tick; sleep 0.3; done) & echo $! > {pids}",
+			2, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1300,6 +1302,10 @@ func TestStopInstall(t *testing.T) {
 			if s := screen(tm.(model)); !strings.Contains(s, "started") || !strings.Contains(s, "ctrl+c stop it") {
 				t.Fatalf("running popup:\n%s", s)
 			}
+			// A command that has exited is gone once it is reaped.
+			for pid := tm.(model).inst.pid; tt.err == "" && syscall.Kill(pid, 0) == nil; {
+				time.Sleep(10 * time.Millisecond)
+			}
 			for range tt.stops {
 				if tm, cmd = tm.Update(ctrlC); quits(cmd) {
 					t.Fatal("ctrl+c quit while the install ran")
@@ -1309,7 +1315,11 @@ func TestStopInstall(t *testing.T) {
 				t.Errorf("stopping popup:\n%s", s)
 			}
 			m = update(t, tm.(model), tm.(model).inst.next()())
-			if s := screen(m); !strings.Contains(s, "✗ "+tt.err) || strings.Contains(s, "finished") {
+			status := "✗ " + tt.err
+			if tt.err == "" {
+				status = "✓ done"
+			}
+			if s := screen(m); !strings.Contains(s, status) || strings.Contains(s, "finished") {
 				t.Errorf("stopped popup:\n%s", s)
 			}
 			if es := m.log.Entries(); len(es) != 1 || es[0].Kind != history.Change || es[0].Err != tt.err || !strings.Contains(es[0].Output, "started") || strings.Contains(es[0].Output, "finished") {
@@ -1396,6 +1406,56 @@ func TestProgress(t *testing.T) {
 	}
 }
 
+// Once the command has exited, kho reads on until the output ends, goes
+// quiet, has run on too long, or the install is cut short.
+func TestQuiet(t *testing.T) {
+	const grace, limit = 50 * time.Millisecond, 300 * time.Millisecond
+	tests := []struct {
+		id string
+		// ended closes the output, writing keeps bytes coming, and cut cuts
+		// the install short.
+		ended, writing, cut bool
+		// within is how long quiet may take, at least the first and less
+		// than the second.
+		within [2]time.Duration
+	}{
+		{id: "a child that writes on and on is let go at the limit", writing: true, within: [2]time.Duration{limit, 3 * limit}},
+		{id: "and at once when the install is cut short", writing: true, cut: true, within: [2]time.Duration{0, grace}},
+		{id: "output that went quiet is let go after the grace", within: [2]time.Duration{grace, limit}},
+		{id: "output that ended is done at once", ended: true, within: [2]time.Duration{0, grace}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			read, cut, stop := make(chan struct{}), make(chan struct{}, 1), make(chan struct{})
+			defer close(stop)
+			var got counter
+			if tt.ended {
+				close(read)
+			}
+			if tt.cut {
+				cut <- struct{}{}
+			}
+			if tt.writing {
+				go func() {
+					for {
+						select {
+						case <-stop:
+							return
+						case <-time.After(grace / 5):
+							got.Write([]byte("tick\n"))
+						}
+					}
+				}()
+			}
+			start := time.Now()
+			quiet(read, cut, &got, grace, limit)
+			if took := time.Since(start); took < tt.within[0] || took >= tt.within[1] {
+				t.Errorf("took %v, want %v to %v", took, tt.within[0], tt.within[1])
+			}
+		})
+	}
+}
+
 // The screen takes a while to draw each update, but the output is read as
 // fast as the command writes it, so none is lost, on screen or in the
 // history.
@@ -1464,13 +1524,17 @@ func TestSignal(t *testing.T) {
 		{id: "a crash in the screen comes back as an error", crash: true, err: tea.ErrProgramPanic},
 		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
 			logged: []string{"brew upgrade anvil: signal: killed"}},
+		{id: "and so is a child out of reach that keeps writing", script: "trap '' INT; echo started; set -m; (while :; do echo tick; sleep 0.3; done) & echo $! > {pids}; set +m; sleep 30",
+			patience: 50 * time.Millisecond, logged: []string{"brew upgrade anvil: signal: killed"}},
 		{id: "with nothing running a hangup still says it was one", err: ErrHangup},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := loaded(t)
+			pids := filepath.Join(t.TempDir(), "pids")
+			t.Cleanup(func() { reap(pids) })
 			if tt.script != "" {
-				installScript = tt.script
+				installScript = strings.ReplaceAll(tt.script, "{pids}", pids)
 				m = press(t, m, "l", "v", "enter")
 				tm, cmd := m.Update(key("y"))
 				msg := cmd()

@@ -123,6 +123,7 @@ type installing struct {
 	changed chan struct{}
 	logged  chan struct{}
 	over    chan installedMsg
+	cut     chan struct{}
 }
 
 type installStartedMsg struct{ *installing }
@@ -146,7 +147,7 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 			return done
 		}
 		in := &installing{title: title, cmd: cmd, start: now(), pid: run.Process.Pid,
-			changed: make(chan struct{}, 1), logged: make(chan struct{}), over: make(chan installedMsg, 1)}
+			changed: make(chan struct{}, 1), logged: make(chan struct{}), over: make(chan installedMsg, 1), cut: make(chan struct{}, 1)}
 		live.Store(in)
 		go in.run(run, out, log, done)
 		return installStartedMsg{in}
@@ -230,15 +231,20 @@ func again(c *exec.Cmd) *exec.Cmd {
 	return r
 }
 
-// stop interrupts the install and everything it started, or kills them when
-// an interrupt didn't do it.
+// stop interrupts the install and everything it started, or when an
+// interrupt didn't do it, kills them and stops reading what a child out of
+// reach still writes.
 func (in *installing) stop() {
-	sig := syscall.SIGINT
-	if in.stopping {
-		sig = syscall.SIGKILL
+	if !in.stopping {
+		in.stopping = true
+		syscall.Kill(-in.pid, syscall.SIGINT)
+		return
 	}
-	in.stopping = true
-	syscall.Kill(-in.pid, sig)
+	syscall.Kill(-in.pid, syscall.SIGKILL)
+	select {
+	case in.cut <- struct{}{}:
+	default:
+	}
 }
 
 // finish stops an install kho is leaving, and kills it when it is still
@@ -272,9 +278,12 @@ func detach(cmd *exec.Cmd) (*os.File, error) {
 	return r, nil
 }
 
-// outputGrace is how long the output may go quiet after the command exits
-// before kho stops reading it.
-const outputGrace = time.Second
+// After the command exits, kho stops reading its output once it has been
+// quiet for outputGrace, or at the latest after outputLimit.
+const (
+	outputGrace = time.Second
+	outputLimit = 10 * time.Second
+)
 
 // run reads cmd's output while it runs, and sends its installedMsg once it
 // has exited and is logged.
@@ -289,10 +298,11 @@ func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done in
 	}()
 	done.err = cmd.Wait()
 	// A child the command left behind, maybe in a process group of its own
-	// that a stop can't reach, can hold the output open for as long as it
-	// likes. Once it has been quiet for outputGrace, kho closes it, and the
-	// child gets SIGPIPE if it writes again.
-	quiet(read, &got)
+	// that a stop can't reach, can hold the output open, and write to it, for
+	// as long as it likes. kho closes it once it goes quiet, after a while
+	// at the latest, or on a kill, and the child gets SIGPIPE if it writes
+	// again.
+	quiet(read, in.cut, &got, outputGrace, outputLimit)
 	out.Close()
 	<-read
 	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
@@ -300,15 +310,20 @@ func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done in
 	in.over <- done
 }
 
-// quiet waits until the output ends, or until nothing has come on it for
-// outputGrace.
-func quiet(read <-chan struct{}, got *counter) {
+// quiet waits until the output ends, nothing has come on it for grace, limit
+// has passed, or the install is cut short.
+func quiet(read, cut <-chan struct{}, got *counter, grace, limit time.Duration) {
+	end := time.After(limit)
 	for {
 		seen := got.Load()
 		select {
 		case <-read:
 			return
-		case <-time.After(outputGrace):
+		case <-cut:
+			return
+		case <-end:
+			return
+		case <-time.After(grace):
 			if got.Load() == seen {
 				return
 			}
