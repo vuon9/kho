@@ -291,8 +291,6 @@ func (m *model) reset() {
 }
 
 // relist scans one provider again after kho changed something it manages.
-// What kho loaded about a package is kept by version, so a package the
-// change moved to another version loads afresh once the listing lands.
 func (m *model) relist(name string) tea.Cmd {
 	p := m.provider(name)
 	if p == nil {
@@ -302,6 +300,18 @@ func (m *model) relist(name string) tea.Cmd {
 	return func() tea.Msg {
 		pkgs, err := p.List(context.Background())
 		return listedMsg{name, pkgs, err}
+	}
+}
+
+// forget drops the dependencies and releases kho loaded for a provider's
+// packages, which a new listing can change while a package's own version
+// stays: a brew formula's dependencies have versions of their own, and its
+// newest version can move. A load still on its way for an older version
+// lands under that version's key, never on the new one.
+func (m *model) forget(name string) {
+	for _, p := range m.pkgs[name] {
+		delete(m.deps, cacheKey(p))
+		delete(m.versions, cacheKey(p))
 	}
 }
 
@@ -368,6 +378,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tick())
 		}
 	case listedMsg:
+		m.forget(msg.name)
 		m.pkgs[msg.name] = msg.pkgs
 		if msg.name == "skills" {
 			m.linksOf = ""

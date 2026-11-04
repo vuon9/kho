@@ -43,8 +43,14 @@ func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Packag
 	return p, nil
 }
 func (f fake) Deps(_ context.Context, p provider.Package) ([]provider.Dep, error) { return p.Deps, nil }
+
+// Versions lists the releases given for the package, or else only its
+// newest, as Homebrew does for a formula with no repo.
 func (f fake) Versions(_ context.Context, p provider.Package) ([]provider.Release, error) {
-	return f.versions[p.Name], nil
+	if rels, ok := f.versions[p.Name]; ok {
+		return rels, nil
+	}
+	return []provider.Release{{Version: p.Latest}}, nil
 }
 
 var clock = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
@@ -1623,15 +1629,28 @@ func TestSecurityTab(t *testing.T) {
 func TestDependencyList(t *testing.T) {
 	upgraded := provider.Package{Source: "go", Name: "tidyup", Version: "v1.3.0", Latest: "v1.3.0", Origin: "example.com/tidyup",
 		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.31.0"}}}
+	// brew lists again after an install with anvil's openssl@4 moved on,
+	// and gust's newest version too, while their own versions stay.
+	brew := slices.Clone(fakes(t)[0].(fake).pkgs)
+	brew[0].Deps = []provider.Dep{{Name: "openssl@4", Version: "4.2.0", Direct: true}, {Name: "ca-certificates", Version: "2026-10-20"}}
+	brew[2].Latest = "1.27.3"
+	relisted := []tea.Msg{installedMsg{"brew", "openssl@4", "4.2.0", nil}, listedMsg{"brew", brew, nil}}
 	tests := []struct {
 		id   string
+		keys []string
 		msgs []tea.Msg
+		// top reads the top half, as the Versions tab lists them there.
+		top  bool
 		want []string
 	}{
-		{id: "after an install the list is the new version's",
+		{id: "after an install the list is the new version's", keys: pick("tidyup"),
 			msgs: []tea.Msg{installedMsg{"go", "tidyup", "v1.3.0", nil}, listedMsg{"go", []provider.Package{upgraded}, nil}},
 			want: []string{" · example.org/text   v0.31.0"}},
-		{id: "the list flags the dependencies with advisories", want: []string{
+		{id: "and a dependency upgraded on its own shows its new version", keys: pick("anvil"), msgs: relisted,
+			want: []string{" • openssl@4 4.2.0", " · ca-certificates 2026-10-20"}},
+		{id: "a newer version a listing brings is offered", keys: pick("gust", "v"), msgs: relisted, top: true,
+			want: []string{"VERSION DATE NOTES SECURITY", "1.27.3"}},
+		{id: "the list flags the dependencies with advisories", keys: pick("tidyup"), want: []string{
 			" · example.org/text   v0.30.0",
 			" ⚠ example.org/net    v0.50.0 1 vuln",
 			" ⚠ example.org/crypto v0.20.0 2 vuln",
@@ -1640,12 +1659,16 @@ func TestDependencyList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			m := press(t, withDeps(t, ""), pick("tidyup")...)
+			m := press(t, withDeps(t, ""), tt.keys...)
 			for _, msg := range tt.msgs {
 				m = update(t, m, msg)
 			}
+			view := m.bottomView
+			if tt.top {
+				view = m.topView
+			}
 			var got []string
-			for _, l := range m.bottomView(m.layout().sideW - 2) {
+			for _, l := range view(m.layout().sideW - 2) {
 				got = append(got, strings.Join(strings.Fields(ansi.Strip(l.text)), " "))
 			}
 			want := slices.Clone(tt.want)
