@@ -81,6 +81,8 @@ func (m model) installLines(rows int) []string {
 	took := end.Sub(in.start).Round(time.Second).String()
 	status := accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
 	switch {
+	case in.done == nil && in.stopping:
+		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" stopping after "+took)
 	case in.done == nil:
 	case in.done.err != nil:
 		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
@@ -220,8 +222,10 @@ func (m model) footer() string {
 		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
 	case m.help:
 		line = keys("?", "close", "esc", "close")
+	case m.inst.running() && m.inst.stopping:
+		line = keys("ctrl+c", "kill it") + faint().Render("   stopping, the keys come back once it's done")
 	case m.inst != nil && m.inst.done == nil:
-		line = faint().Render("running, the keys come back once it's done")
+		line = keys("ctrl+c", "stop it") + faint().Render("   the other keys come back once it's done")
 	case m.inst != nil && m.inst.done.err != nil:
 		line = keys("t", "run it in the terminal", "enter", "close")
 	case m.inst != nil:

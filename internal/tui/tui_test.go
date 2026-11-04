@@ -796,6 +796,58 @@ func TestInstall(t *testing.T) {
 	}
 }
 
+// Quitting mid-install would cut the package manager off with nothing
+// logged, so ctrl+c stops the install and quits only once it is over.
+func TestStopInstall(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	quits := func(cmd tea.Cmd) bool {
+		if cmd == nil {
+			return false
+		}
+		_, ok := cmd().(tea.QuitMsg)
+		return ok
+	}
+	tests := []struct {
+		id, script string
+		stops      int
+		err        string
+	}{
+		{"ctrl+c interrupts the install", "echo started; sleep 5; echo finished", 1, "signal: interrupt"},
+		{"a second ctrl+c kills one that ignores the first", "trap '' INT; echo started; sleep 5; echo finished", 2, "signal: killed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			installScript = tt.script
+			m = press(t, m, "l", "v", "enter")
+			tm, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+			tm, _ = tm.Update(cmd())
+			tm, _ = tm.Update(tm.(model).inst.next()())
+			if s := screen(tm.(model)); !strings.Contains(s, "started") || !strings.Contains(s, "ctrl+c stop it") {
+				t.Fatalf("running popup:\n%s", s)
+			}
+			for range tt.stops {
+				if tm, cmd = tm.Update(ctrlC); quits(cmd) {
+					t.Fatal("ctrl+c quit while the install ran")
+				}
+			}
+			if s := screen(tm.(model)); !strings.Contains(s, "ctrl+c kill it") {
+				t.Errorf("stopping popup:\n%s", s)
+			}
+			m = update(t, tm.(model), tm.(model).inst.next()())
+			if s := screen(m); !strings.Contains(s, "✗ "+tt.err) || strings.Contains(s, "finished") {
+				t.Errorf("stopped popup:\n%s", s)
+			}
+			if es := m.log.Entries(); len(es) != 1 || es[0].Kind != history.Change || es[0].Err != tt.err || !strings.Contains(es[0].Output, "started") || strings.Contains(es[0].Output, "finished") {
+				t.Errorf("logged %+v", es)
+			}
+			if _, cmd := m.Update(ctrlC); !quits(cmd) {
+				t.Error("ctrl+c should quit once the install is over")
+			}
+		})
+	}
+}
+
 // A box laid over a line must keep the line's width even when its edge cuts a
 // wide character in half, or everything after it shifts by a column.
 func TestOverlay(t *testing.T) {

@@ -105,6 +105,8 @@ type installing struct {
 	start, end time.Time
 	events     chan tea.Msg
 	done       *installedMsg
+	pid        int
+	stopping   bool
 }
 
 type installStartedMsg struct{ *installing }
@@ -114,7 +116,12 @@ type outputMsg string
 func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
 	return func() tea.Msg {
 		in := &installing{title: title, args: cmd.Args, start: now(), events: make(chan tea.Msg, 64)}
-		go in.run(installProcess(cmd), log, done)
+		cmd = installProcess(cmd)
+		out, err := detach(cmd)
+		if err == nil {
+			in.pid = cmd.Process.Pid
+		}
+		go in.run(cmd, out, err, log, done)
 		return installStartedMsg{in}
 	}
 }
@@ -123,32 +130,57 @@ func (in *installing) next() tea.Cmd {
 	return func() tea.Msg { return <-in.events }
 }
 
-func (in *installing) run(cmd *exec.Cmd, log *history.Log, done installedMsg) {
+// running is whether the package manager is still going, so ctrl+c must stop
+// it before kho can quit.
+func (in *installing) running() bool {
+	return in != nil && in.done == nil && in.pid > 0
+}
+
+// stop interrupts the install and everything it started, or kills them when
+// an interrupt didn't do it.
+func (in *installing) stop() {
+	sig := syscall.SIGINT
+	if in.stopping {
+		sig = syscall.SIGKILL
+	}
+	in.stopping = true
+	syscall.Kill(-in.pid, sig)
+}
+
+// detach starts cmd in a session of its own, with no terminal: a password
+// prompt then fails instead of drawing over kho, and t can rerun it in the
+// terminal. Being its own process group, it can be stopped as a whole.
+func detach(cmd *exec.Cmd) (*os.File, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer w.Close()
+	cmd.Stdout, cmd.Stderr = w, w
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		r.Close()
+		return nil, err
+	}
+	return r, nil
+}
+
+func (in *installing) run(cmd *exec.Cmd, out *os.File, err error, log *history.Log, done installedMsg) {
 	var output tail
 	start := time.Now()
-	done.err = in.stream(cmd, &output)
+	if err == nil {
+		err = in.stream(cmd, out, &output)
+	}
+	done.err = err
 	log.Add(entry(history.Change, in.args, time.Since(start), done.err, output.String()))
 	in.events <- done
 }
 
-// stream runs cmd in a session of its own, with no terminal: a password
-// prompt then fails instead of drawing over kho, and t can rerun it in the
-// terminal. Each line keeps only what follows its last \r, as a progress bar
-// would leave it on screen.
-func (in *installing) stream(cmd *exec.Cmd, output io.Writer) error {
-	r, w, err := os.Pipe()
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	cmd.Stdout, cmd.Stderr = w, w
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	err = cmd.Start()
-	w.Close()
-	if err != nil {
-		return err
-	}
-	sc := bufio.NewScanner(io.TeeReader(r, output))
+// stream sends what cmd prints until it exits. Each line keeps only what
+// follows its last \r, as a progress bar would leave it on screen.
+func (in *installing) stream(cmd *exec.Cmd, out *os.File, output io.Writer) error {
+	defer out.Close()
+	sc := bufio.NewScanner(io.TeeReader(out, output))
 	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
@@ -156,7 +188,7 @@ func (in *installing) stream(cmd *exec.Cmd, output io.Writer) error {
 	}
 	// A line too long for the scanner stops it; read the rest so the command
 	// never blocks on a full pipe.
-	io.Copy(output, r)
+	io.Copy(output, out)
 	return cmd.Wait()
 }
 

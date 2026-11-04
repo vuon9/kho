@@ -555,6 +555,10 @@ func (m *model) load() tea.Cmd {
 func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	key := msg.String()
 	if key == "ctrl+c" {
+		if m.inst.running() {
+			m.inst.stop()
+			return nil, false
+		}
 		return nil, true
 	}
 	if m.help {

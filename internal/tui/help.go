@@ -38,6 +38,7 @@ var helpSections = []struct {
 		{"J K  ctrl+d ctrl+u", "scroll the detail below"},
 		{"enter", "install the version, toggle the agent's link, read the advisory,"},
 		{"", "or open a dependency's advisories"},
+		{"ctrl+c", "stop a running install, press again to kill it"},
 		{"t", "after a failed install, run it again in the terminal"},
 		{"y", "open the release page of a version without notes"},
 		{"A", "in Links, every agent the skills CLI supports, or installed ones"},
