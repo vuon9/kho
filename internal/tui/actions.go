@@ -218,7 +218,7 @@ func (m *model) askLink() {
 			return linkedMsg{"removed " + p.Name + " from " + name, unlinkSkill(l)}
 		})}
 	case l.Kind == provider.LinkCopy:
-		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a copied folder, not a link.", "kho won't delete it."}}
+		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a folder, not a link.", "kho won't delete it."}}
 	case l.Kind == provider.LinkNoFolder && l.Shared:
 		nothing(name+" reads ~/.agents/skills directly,", "so it always sees "+p.Name+".")
 	case l.Kind == provider.LinkNoFolder:

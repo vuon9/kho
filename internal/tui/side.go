@@ -751,10 +751,14 @@ func (m model) readmeLines(p provider.Package, inner int) []line {
 
 func linkState(l provider.SkillLink) string {
 	switch {
-	case l.Kind == provider.LinkSymlink:
+	case l.Kind == provider.LinkSymlink && l.Own:
 		return green().Render("🔗 linked")
-	case l.Kind == provider.LinkCopy:
+	case l.Kind == provider.LinkSymlink:
+		return yellow().Render("⚠ broken")
+	case l.Kind == provider.LinkCopy && l.Own:
 		return cyan().Render("📁 copy")
+	case l.Kind == provider.LinkCopy:
+		return yellow().Render("⚠ no SKILL.md")
 	case l.Shared:
 		return faint().Render("≈ shared")
 	}
@@ -816,13 +820,20 @@ func (m model) linkDetail(p provider.Package) []line {
 		}
 		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+name+"'s own folder.")})
 	case l.Kind == provider.LinkSymlink:
-		lines = append(lines, field("points to", tilde(l.Target), ""), line{})
-		if l.Shared {
+		if l.Target != "" {
+			lines = append(lines, field("points to", tilde(l.Target), ""), line{})
+		}
+		switch {
+		case !l.Own:
+			say("This link leads to no SKILL.md, so " + name + " doesn't load the skill from it.")
+		case l.Shared:
 			say(name + " also reads ~/.agents/skills, so it loads this skill twice.")
 		}
 		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
-	case l.Kind == provider.LinkCopy:
+	case l.Kind == provider.LinkCopy && l.Own:
 		say("A copied folder, not a link. kho won't delete it.")
+	case l.Kind == provider.LinkCopy:
+		say("A folder with no SKILL.md, so " + name + " doesn't load the skill from it. kho won't delete it.")
 	case l.Kind == provider.LinkNoFolder && l.Shared:
 		say(name + " reads ~/.agents/skills directly, so it always sees this skill.")
 	case l.Kind == provider.LinkNoFolder:
