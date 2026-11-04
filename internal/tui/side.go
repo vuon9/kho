@@ -165,7 +165,7 @@ func (m model) sideListLen() int {
 		}
 		return len(m.securityEntries())
 	case tabLinks:
-		return len(m.links(p))
+		return len(m.links)
 	}
 	return -1
 }
@@ -254,7 +254,7 @@ func (m model) topLines(inner int) []line {
 	case tabReadme:
 		return m.readmeLines(p, inner)
 	case tabLinks:
-		return linkLines(m.links(p))
+		return linkLines(m.links)
 	}
 	return m.infoLines(p)
 }
@@ -275,14 +275,14 @@ func (m model) bottomTitle() string {
 	case tabSkill:
 		return "📄 SKILL.md"
 	case tabLinks:
-		if l, ok := at(m.links(p), m.sideCursor); ok {
+		if l, ok := at(m.links, m.sideCursor); ok {
 			return "🔗 " + agentName(l)
 		}
 		return "🔗 Link"
 	}
 	if p.Source == "skills" {
 		linked := 0
-		for _, l := range skillLinks(p, false) {
+		for _, l := range installed(m.links) {
 			if l.Sees() {
 				linked++
 			}
@@ -315,7 +315,7 @@ func (m model) bottomLines(inner int) []line {
 		return m.linkDetail(p)
 	}
 	if p.Source == "skills" {
-		return linkLines(skillLinks(p, false))
+		return linkLines(installed(m.links))
 	}
 	return m.depLines(p, inner)
 }
@@ -761,10 +761,30 @@ func linkState(l provider.SkillLink) string {
 	return faint().Render("· none")
 }
 
-// links is the agents the Links tab lists: the installed ones, or with A
-// every agent the skills CLI supports.
-func (m model) links(p provider.Package) []provider.SkillLink {
-	return skillLinks(p, m.allAgents)
+// readLinks reads the selected skill's agents into the model: the installed
+// ones, or with A every agent the skills CLI supports. The Links tab draws
+// and acts on these rows, so enter always works on the row on screen.
+func (m *model) readLinks() {
+	p, _ := m.current()
+	if pkgKey(p) == m.linksOf {
+		return
+	}
+	m.links, m.linksOf = nil, pkgKey(p)
+	if p.Source == "skills" {
+		m.links = skillLinks(p, m.allAgents)
+	}
+}
+
+// installed keeps the agents that are installed. The Info tab lists only
+// those, whatever A shows on the Links tab.
+func installed(links []provider.SkillLink) []provider.SkillLink {
+	var out []provider.SkillLink
+	for _, l := range links {
+		if l.Installed {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
@@ -782,7 +802,7 @@ func linkLines(links []provider.SkillLink) []line {
 }
 
 func (m model) linkDetail(p provider.Package) []line {
-	l, ok := at(m.links(p), m.sideCursor)
+	l, ok := at(m.links, m.sideCursor)
 	if !ok {
 		return nil
 	}

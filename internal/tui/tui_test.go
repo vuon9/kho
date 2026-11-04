@@ -104,9 +104,17 @@ var opened, ran, copied, toggled []string
 // installScript stands in for the package manager an install runs.
 var installScript string
 
+// linkReads counts the times kho read a skill's links, and appeared puts a
+// newly installed agent first in what it reads next.
+var (
+	linkReads int
+	appeared  bool
+)
+
 func loaded(t *testing.T) model {
 	th = themes[0]
 	opened, ran, copied, toggled = nil, nil, nil, nil
+	linkReads, appeared = 0, false
 	installScript = "echo fetched"
 	installProcess = func(c *exec.Cmd) *exec.Cmd {
 		ran = append(ran, strings.Join(c.Args, " "))
@@ -128,6 +136,10 @@ func loaded(t *testing.T) model {
 		if all {
 			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing})
 		}
+		if appeared {
+			links = append([]provider.SkillLink{{Agent: "amp", Path: "/h/.config/agents/skills/pathmaker", Kind: provider.LinkMissing, Installed: true}}, links...)
+		}
+		linkReads++
 		return links
 	}
 	linkSkill = func(l provider.SkillLink, _ provider.Package) error {
@@ -452,6 +464,9 @@ func TestActions(t *testing.T) {
 		ran     []string
 		toggled []string
 		notice  string
+		// after are keys pressed once the screen is drawn and a new agent
+		// has appeared.
+		after []string
 	}{
 		{id: "y runs the upgrade", keys: []string{"l", "v", "enter", "y"}, ran: []string{"brew upgrade anvil"}, notice: "anvil is now v0.2.94"},
 		{id: "n runs nothing", keys: []string{"l", "v", "enter", "n"}},
@@ -460,15 +475,50 @@ func TestActions(t *testing.T) {
 		{id: "y unlinks it", keys: []string{"G", "5", "l", "enter", "y"}, toggled: []string{"unlink claude"}, notice: "removed pathmaker from claude"},
 		{id: "a copied or shared agent is never touched", keys: []string{"G", "5", "l", "j", "j", "enter", "y"}},
 		{id: "A lists agents not installed yet, and links one", keys: []string{"G", "5", "A", "l", "j", "j", "j", "enter", "y"}, toggled: []string{"link goose"}, notice: "linked pathmaker into Goose"},
+		{id: "enter acts on the row on screen, even if an agent appeared since", keys: []string{"G", "5", "l", "j"}, after: []string{"enter", "y"},
+			toggled: []string{"link cursor"}, notice: "linked pathmaker into cursor"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := press(t, loaded(t), tt.keys...)
+			screen(m)
+			appeared = true
+			m = press(t, m, tt.after...)
 			if !reflect.DeepEqual(ran, tt.ran) || !reflect.DeepEqual(toggled, tt.toggled) {
 				t.Errorf("ran %v toggled %v, want %v %v", ran, toggled, tt.ran, tt.toggled)
 			}
 			if m.notice != tt.notice && tt.notice != "" {
 				t.Errorf("notice %q, want %q", m.notice, tt.notice)
+			}
+		})
+	}
+}
+
+func TestLinkReads(t *testing.T) {
+	skills, _ := fakes(t)[3].List(context.Background())
+	tests := []struct {
+		id    string
+		keys  []string
+		msgs  []tea.Msg
+		reads int
+	}{
+		{id: "a skill's links are read once when it is picked, however often they are drawn", keys: []string{"G", "5", "l", "j", "j"}, reads: 1},
+		{id: "A reads them again", keys: []string{"G", "5", "A"}, reads: 2},
+		{id: "so does a link kho makes", keys: []string{"G", "5", "l", "j", "enter", "y"}, reads: 2},
+		{id: "and a relist of the skills", keys: []string{"G"}, msgs: []tea.Msg{listedMsg{"skills", skills, nil}}, reads: 2},
+		{id: "coming back to the skill reads them again", keys: []string{"G", "k", "G"}, reads: 2},
+		{id: "a package that isn't a skill has none to read", keys: []string{"j"}, reads: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), tt.keys...)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			screen(m)
+			screen(m)
+			if linkReads != tt.reads {
+				t.Errorf("read the links %d times, want %d", linkReads, tt.reads)
 			}
 		})
 	}
@@ -560,7 +610,7 @@ func TestLinkStates(t *testing.T) {
 			p, _ := m.current()
 			seen := m.bottomTitle()
 			m = press(t, m, "5")
-			row := strings.Join(strings.Fields(ansi.Strip(linkLines(m.links(p))[1].text)), " ")
+			row := strings.Join(strings.Fields(ansi.Strip(linkLines(m.links)[1].text)), " ")
 			var detail []string
 			for _, l := range m.linkDetail(p) {
 				if l.label == "" && l.text != "" {

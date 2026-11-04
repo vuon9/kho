@@ -195,7 +195,7 @@ func (in *installing) stream(cmd *exec.Cmd, out *os.File, output io.Writer) erro
 // askLink offers to add or remove the selected agent's link to a skill.
 func (m *model) askLink() {
 	p, ok := m.current()
-	l, ok2 := at(m.links(p), m.sideCursor)
+	l, ok2 := at(m.links, m.sideCursor)
 	if !ok || !ok2 {
 		return
 	}

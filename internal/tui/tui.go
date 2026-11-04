@@ -127,6 +127,10 @@ type model struct {
 	deps      map[string]*lazy[[]provider.Dep]
 	versions  map[string]*lazy[[]provider.Release]
 	docs      map[string]*lazy[provider.SkillDoc]
+	// links are the selected skill's agents as the Links tab lists them,
+	// read again by readLinks when linksOf stops naming the selection.
+	links   []provider.SkillLink
+	linksOf string
 
 	db       *vuln.DB
 	dbPath   string
@@ -305,6 +309,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case listedMsg:
 		m.pkgs[msg.name] = msg.pkgs
+		if msg.name == "skills" {
+			m.linksOf = ""
+		}
 		if msg.err != nil {
 			m.errs[msg.name] = msg.err
 			delete(m.busy, msg.name)
@@ -375,7 +382,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 	case linkedMsg:
-		m.notice = msg.done
+		m.notice, m.linksOf = msg.done, ""
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 		}
@@ -632,7 +639,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.showHistory = true
 	case "A":
 		if m.activeTab() == tabLinks {
-			m.allAgents, m.sideCursor, m.sideOffset = !m.allAgents, 0, 0
+			m.allAgents, m.sideCursor, m.sideOffset, m.linksOf = !m.allAgents, 0, 0, ""
 		}
 	case "t":
 		m.setTheme(themeIndex() + 1)
@@ -892,7 +899,8 @@ func (m *model) openReleasePage() tea.Cmd {
 }
 
 // clamp pulls every cursor and offset back in range after a move. The
-// package cursor goes first, since the layout depends on what it selects.
+// package cursor goes first, since the layout and the links depend on what
+// it selects.
 func (m *model) clamp() {
 	m.clampHistory()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
@@ -902,6 +910,7 @@ func (m *model) clamp() {
 		m.selected, m.sel = pkgKey(p), nil
 		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset, m.depCursor = 0, 0, 0, 0, 0
 	}
+	m.readLinks()
 	if n := m.sideListLen(); n >= 0 {
 		m.sideCursor = max(min(m.sideCursor, n-1), 0)
 		m.sideOffset = scroll(m.sideOffset, m.sideCursor, l.topRows-1)
