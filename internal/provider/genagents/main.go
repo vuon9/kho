@@ -43,13 +43,20 @@ func main() {
 }
 
 func generate(src, version string) ([]byte, error) {
-	bases := map[string]string{"home": "~", "homeDir": "~", "configHome": "${XDG_CONFIG_HOME:-~/.config}"}
+	bases := map[string]string{"home": "~", "homeDir": "~", "configHome": "${XDG_CONFIG_HOME:-~/.config}",
+		// Left out on purpose, since kho ships for macOS and Linux: APPDATA is
+		// Windows only, and FLATPAK_XDG_CONFIG_HOME is set only inside a Flatpak.
+		"zedAppDataHome": "", "zedFlatpakConfigHome": ""}
 	for _, m := range envHome.FindAllStringSubmatch(src, -1) {
 		bases[m[1]] = "${" + m[2] + ":-~/" + m[3] + "}"
 	}
 	helpers := map[string][]string{}
 	for _, m := range helper.FindAllStringSubmatch(src, -1) {
-		helpers[m[1]] = paths(m[0], bases, nil)
+		ps, err := paths(m[0], bases, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", m[1], err)
+		}
+		helpers[m[1]] = ps
 	}
 
 	table := src[strings.Index(src, "export const agents"):]
@@ -68,14 +75,18 @@ func generate(src, version string) ([]byte, error) {
 			continue
 		}
 		dir := "~/.openclaw/skills"
+		var err error
 		if g[1] != "getOpenClawGlobalSkillsDir()" {
-			dir = path(g[1], bases)
+			dir, err = path(g[1], bases)
 		}
-		if dir == "" {
-			return nil, fmt.Errorf("%s: can't read globalSkillsDir %s", id, g[1])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", id, err)
 		}
-		detect := body[strings.Index(body, "detectInstalled"):]
-		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v", id, display.FindStringSubmatch(body)[1], dir, paths(detect, bases, helpers))
+		detect, err := paths(body[strings.Index(body, "detectInstalled"):], bases, helpers)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", id, err)
+		}
+		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v", id, display.FindStringSubmatch(body)[1], dir, detect)
 		// Like the CLI: an agent whose project folder is .agents/skills reads
 		// ~/.agents/skills too, so a global skill never needs a link of its own.
 		if project.FindStringSubmatch(body)[1] == ".agents/skills" {
@@ -88,35 +99,44 @@ func generate(src, version string) ([]byte, error) {
 }
 
 // paths lists the folders whose existence shows an agent is installed,
-// leaving out project ones under process.cwd().
-func paths(code string, bases map[string]string, helpers map[string][]string) []string {
+// leaving out project ones under process.cwd() and the bases left out on
+// purpose.
+func paths(code string, bases map[string]string, helpers map[string][]string) ([]string, error) {
 	out := []string{}
 	for _, m := range exists.FindAllStringSubmatch(code, -1) {
-		if p := path(m[1], bases); p != "" {
+		p, err := path(m[1], bases)
+		if err != nil {
+			return nil, err
+		}
+		if p != "" {
 			out = append(out, p)
 		}
 	}
 	for _, m := range call.FindAllStringSubmatch(code, -1) {
 		out = append(out, helpers[m[1]]...)
 	}
-	return out
+	return out, nil
 }
 
 // path turns join(base, 'a', 'b'), a base on its own, or a quoted absolute
-// path into kho's form: ~/a/b, ${ENV:-~/default}/a, or /abs.
-func path(expr string, bases map[string]string) string {
-	if m := join.FindStringSubmatch(expr); m != nil {
-		base, ok := bases[m[1]]
-		if !ok {
-			return ""
-		}
-		parts := strings.Split(strings.ReplaceAll(m[2], "'", ""), ", ")
-		return base + "/" + strings.Join(parts, "/")
-	}
+// path into kho's form: ~/a/b, ${ENV:-~/default}/a, or /abs. It is "" for a
+// base left out on purpose.
+func path(expr string, bases map[string]string) (string, error) {
 	if strings.HasPrefix(expr, "'/") {
-		return strings.Trim(expr, "'")
+		return strings.Trim(expr, "'"), nil
 	}
-	return bases[expr]
+	name, rest := expr, ""
+	if m := join.FindStringSubmatch(expr); m != nil {
+		name, rest = m[1], "/"+strings.Join(strings.Split(strings.ReplaceAll(m[2], "'", ""), ", "), "/")
+	}
+	base, ok := bases[name]
+	switch {
+	case !ok:
+		return "", fmt.Errorf("unknown base %s in %s", name, expr)
+	case base == "":
+		return "", nil
+	}
+	return base + rest, nil
 }
 
 func check(err error) {

@@ -35,6 +35,24 @@ func TestGenerate(t *testing.T) {
 			want: file(`{Name: "aspen", Display: "Aspen", Dir: "~/.aspen/skills", Detect: []string{"~/.aspen"}, Universal: true}`),
 		},
 		{
+			id:  "a path on a base the generator doesn't know fails, naming it",
+			src: agentsTS("", agent("gale", ".gale/skills", "join(home, '.gale/skills')", "existsSync(join(galeHome, 'gale'))")),
+			err: "gale: unknown base galeHome in join(galeHome, 'gale')",
+		},
+		{
+			id:  "so does a skills folder on one",
+			src: agentsTS("", agent("mist", ".mist/skills", "join(mistHome, 'skills')", "existsSync(join(home, '.mist'))")),
+			err: "mist: unknown base mistHome in join(mistHome, 'skills')",
+		},
+		{
+			id: "the Windows and Flatpak bases are left out on purpose",
+			src: agentsTS("const zedAppDataHome = process.env.APPDATA?.trim();\nconst zedFlatpakConfigHome = process.env.FLATPAK_XDG_CONFIG_HOME?.trim();\n",
+				agent("haze", ".agents/skills", "join(home, '.agents/skills')", "existsSync(join(configHome, 'haze')) ||\n"+
+					"        (!!zedAppDataHome && existsSync(join(zedAppDataHome, 'Haze'))) ||\n"+
+					"        (!!zedFlatpakConfigHome && existsSync(join(zedFlatpakConfigHome, 'haze')))")),
+			want: file(`{Name: "haze", Display: "Haze", Dir: "~/.agents/skills", Detect: []string{"${XDG_CONFIG_HOME:-~/.config}/haze"}, Universal: true}`),
+		},
+		{
 			id:   "an agent with its own folder under home",
 			src:  agentsTS("", agent("alder", ".alder/skills", "join(home, '.alder/skills')", "existsSync(join(home, '.alder'))")),
 			want: file(`{Name: "alder", Display: "Alder", Dir: "~/.alder/skills", Detect: []string{"~/.alder"}}`),
