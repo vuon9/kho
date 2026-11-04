@@ -1,8 +1,10 @@
 package vuln
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -178,6 +180,23 @@ func TestSaveLeavesNoHalfWrittenCache(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "kho")
 	path := filepath.Join(dir, "security.json")
 	db := NewDB()
+	if err := db.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	before, err := reader.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	q := Query{"npm", "diffkit", "0.23.0"}
 	db.Merge(map[string][]string{q.Key(): {"GHSA-test"}}, map[string]Advisory{"GHSA-test": {ID: "GHSA-test", Package: "diffkit"}}, now)
@@ -185,6 +204,16 @@ func TestSaveLeavesNoHalfWrittenCache(t *testing.T) {
 		if err := db.Save(path); err != nil {
 			t.Fatalf("save %d: %v", i, err)
 		}
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("Save wrote over the cache in place instead of renaming a new file onto it")
+	}
+	if got, err := io.ReadAll(reader); err != nil || !bytes.Equal(got, old) {
+		t.Errorf("a kho that opened the cache before Save read %q (%v), want the old %q", got, err, old)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
