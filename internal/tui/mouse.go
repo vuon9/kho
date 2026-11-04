@@ -108,17 +108,16 @@ func (m model) depRect() (x, y, w, h int) {
 }
 
 func (m *model) click(x, y int) tea.Cmd {
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		m.help = false
 		return nil
-	}
-	if m.inst != nil {
+	case popInstall:
 		if m.inst.done != nil {
 			m.inst = nil
 		}
 		return nil
-	}
-	if m.depPop != nil {
+	case popDep:
 		if area, p, ok := m.textAt(x, y); ok && area == areaPopup {
 			m.startSelect(area, p)
 			return nil
@@ -128,8 +127,7 @@ func (m *model) click(x, y int) tea.Cmd {
 			m.depPop, m.sel = nil, nil
 		}
 		return nil
-	}
-	if m.confirm != nil {
+	case popConfirm:
 		cx, cy, cw, ch := m.confirmRect()
 		if x < cx || x >= cx+cw || y < cy || y >= cy+ch {
 			m.confirm = nil
@@ -276,15 +274,14 @@ func (m model) columnAt(x int) int {
 }
 
 func (m *model) wheel(x, y, delta int) {
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		m.helpTop += delta
 		return
-	}
-	if m.inst != nil {
-		return
-	}
-	if m.depPop != nil {
+	case popDep:
 		m.depPop.top += delta
+		return
+	case popInstall, popConfirm:
 		return
 	}
 	if m.showHistory {

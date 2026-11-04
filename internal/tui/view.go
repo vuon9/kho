@@ -39,14 +39,14 @@ func (m model) View() tea.View {
 	}
 	rule := edge(false).Render(strings.Repeat("─", m.width))
 	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + rule + "\n" + ansi.Truncate(m.footer(), m.width, "…")
-	switch {
-	case m.help:
+	switch m.popup() {
+	case popHelp:
 		x, y, w, h := m.helpRect()
 		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], w, h), x, y, w)
-	case m.inst != nil:
+	case popInstall:
 		x, y, w, h := m.installRect()
 		screen = overlay(screen, popupBox(m.inst.title, m.installLines(h-3), w, h), x, y, w)
-	case m.depPop != nil:
+	case popDep:
 		x, y, w, h := m.depRect()
 		view := m.depPopView()
 		var lines []string
@@ -58,7 +58,7 @@ func (m model) View() tea.View {
 			lines = append(lines, text)
 		}
 		screen = overlay(screen, popupBox(m.depPopTitle(), lines, w, h), x, y, w)
-	case m.confirm != nil:
+	case popConfirm:
 		x, y, w, h := m.confirmRect()
 		var lines []string
 		for _, l := range m.confirm.lines {
@@ -217,24 +217,24 @@ func keys(pairs ...string) string {
 
 func (m model) footer() string {
 	var line string
-	switch {
-	case m.help && m.helpHidden() > 0:
+	switch pop := m.popup(); {
+	case pop == popHelp && m.helpHidden() > 0:
 		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
-	case m.help:
+	case pop == popHelp:
 		line = keys("?", "close", "esc", "close")
-	case m.inst.running() && m.inst.stopping:
+	case pop == popInstall && m.inst.running() && m.inst.stopping:
 		line = keys("ctrl+c", "kill it") + faint().Render("   stopping, the keys come back once it's done")
-	case m.inst != nil && m.inst.done == nil:
+	case pop == popInstall && m.inst.done == nil:
 		line = keys("ctrl+c", "stop it") + faint().Render("   the other keys come back once it's done")
-	case m.inst != nil && m.inst.done.err != nil:
+	case pop == popInstall && m.inst.done.err != nil:
 		line = keys("t", "run it in the terminal", "enter", "close")
-	case m.inst != nil:
+	case pop == popInstall:
 		line = keys("enter", "close")
-	case m.depPop != nil:
+	case pop == popDep:
 		line = keys("↑↓", "scroll", "drag", "select and copy", "c", "copy all", "esc", "close")
-	case m.confirm != nil && m.confirm.run != nil:
+	case pop == popConfirm && m.confirm.run != nil:
 		line = keys("y", "yes", "n", "no")
-	case m.confirm != nil:
+	case pop == popConfirm:
 		line = keys("esc", "close")
 	case m.filtering:
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")

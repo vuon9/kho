@@ -33,7 +33,7 @@ var copyText = tea.SetClipboard
 // textAt finds the reading area under the mouse, and the line and column in
 // it. List rows are not text to read, so a list half has no area.
 func (m model) textAt(x, y int) (int, point, bool) {
-	if m.depPop != nil {
+	if m.popup() == popDep {
 		px, py, w, h := m.depRect()
 		col, row := x-px-1, y-py-2
 		if col < 0 || col >= w-2 || row < 0 || row >= h-3 {
@@ -117,7 +117,7 @@ func (m model) selectedText() string {
 func (m *model) copyArea() tea.Cmd {
 	area := areaTop
 	switch {
-	case m.depPop != nil:
+	case m.popup() == popDep:
 		area = areaPopup
 	case m.hasBottom():
 		area = areaBottom

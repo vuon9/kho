@@ -572,7 +572,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	}
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		switch key {
 		case "?", "esc", "q", "enter":
 			m.help = false
@@ -582,8 +583,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.helpTop++
 		}
 		return nil, false
-	}
-	if in := m.inst; in != nil {
+	case popInstall:
+		in := m.inst
 		switch {
 		case in.done == nil:
 		case key == "enter" || key == "esc" || key == "q":
@@ -597,15 +598,14 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			}), false
 		}
 		return nil, false
-	}
-	if pop := m.depPop; pop != nil {
+	case popDep:
 		switch key {
 		case "esc", "enter", "q":
 			m.depPop, m.sel = nil, nil
 		case "up", "k":
-			pop.top--
+			m.depPop.top--
 		case "down", "j":
-			pop.top++
+			m.depPop.top++
 		case "c":
 			if m.sel != nil {
 				return m.copy(m.selectedText()), false
@@ -613,8 +613,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return m.copyArea(), false
 		}
 		return nil, false
-	}
-	if c := m.confirm; c != nil {
+	case popConfirm:
+		c := m.confirm
 		switch key {
 		case "y", "enter":
 			m.confirm = nil
@@ -730,6 +730,31 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 	}
 	return nil, false
+}
+
+const (
+	popNone = iota
+	popHelp
+	popInstall
+	popDep
+	popConfirm
+)
+
+// popup names the dialog on top. It takes every key, click and turn of the
+// wheel until it closes, so press, click, wheel, View and the footer all ask
+// it which one that is.
+func (m model) popup() int {
+	switch {
+	case m.help:
+		return popHelp
+	case m.inst != nil:
+		return popInstall
+	case m.depPop != nil:
+		return popDep
+	case m.confirm != nil:
+		return popConfirm
+	}
+	return popNone
 }
 
 // setTheme switches to the i-th theme and remembers it for next time.

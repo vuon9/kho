@@ -377,6 +377,9 @@ func TestMouse(t *testing.T) {
 		check   func(model) bool
 		opened  []string
 	}{
+		{id: "the wheel leaves the packages alone under an install dialog", msgs: []tea.Msg{key("l"), key("v"), tea.KeyPressMsg{Code: tea.KeyEnter},
+			tea.MouseWheelMsg{X: l.tableX + 5, Y: at(3), Button: tea.MouseWheelDown}}, current: "anvil",
+			check: func(m model) bool { return m.confirm != nil && m.confirm.title == "⬆ Upgrade anvil?" }},
 		{id: "click a source", msgs: []tea.Msg{click(5, at(2))}, rows: []string{"bramble", "inkwell"}, current: "bramble",
 			check: func(m model) bool { return m.focus == focusRail }},
 		{id: "click a package", msgs: []tea.Msg{click(l.tableX+5, at(2))}, current: "gust",
