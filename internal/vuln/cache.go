@@ -2,6 +2,7 @@ package vuln
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -107,6 +108,36 @@ func (db *DB) Merge(hits map[string][]string, advisories map[string]Advisory, no
 	}
 	for id, a := range advisories {
 		db.Advisories[id] = a
+	}
+}
+
+// StaleAudits keeps the skills, by GitHub source as SkillAudits takes them,
+// with no audit result or one older than MaxAge.
+func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[string][]string {
+	stale := map[string][]string{}
+	for source, slugs := range bySource {
+		for _, slug := range slugs {
+			if t, ok := db.AuditedAt[auditKey(source, slug)]; !ok || now.Sub(t) > MaxAge {
+				stale[source] = append(stale[source], slug)
+			}
+		}
+	}
+	return stale
+}
+
+// MergeAudits keeps what skills.sh sent back for the asked skills. An answer
+// marks every asked skill fresh, even one skills.sh has no audit for, so it is
+// not asked again until MaxAge. A failed ask marks none fresh, so the next scan
+// asks again, but the audits that came back before it failed still count.
+func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudit, err error, now time.Time) {
+	maps.Copy(db.Audits, audits)
+	if err != nil {
+		return
+	}
+	for source, slugs := range asked {
+		for _, slug := range slugs {
+			db.AuditedAt[auditKey(source, slug)] = now
+		}
 	}
 }
 

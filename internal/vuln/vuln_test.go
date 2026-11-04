@@ -2,6 +2,8 @@ package vuln
 
 import (
 	"encoding/json"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -128,6 +130,45 @@ func TestDB(t *testing.T) {
 	db.MergeHistory("PyPI", "bramble", []Advisory{{ID: "GHSA-new", Package: "bramble", Ranges: []Range{{Introduced: "26.0"}}}, db.Advisories["GHSA-test"]}, now)
 	if got := db.Known("PyPI", "bramble"); len(got) != 2 || !db.HistoryFresh("PyPI", "bramble", now) {
 		t.Errorf("Known found %d, want 2", len(got))
+	}
+}
+
+func TestSkillAuditCache(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	installed := map[string][]string{"someone/skills": {"pathmaker", "tidyup"}}
+	high := map[string]SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "high", Snyk: "low"}}
+	down := errors.New("skills.sh: down")
+	tests := []struct {
+		id        string
+		auditedAt map[string]time.Time
+		got       map[string]SkillAudit
+		err       error
+		asked     map[string][]string
+		audits    map[string]SkillAudit
+		dueLater  map[string][]string
+	}{
+		{"a failed ask marks nothing fresh", nil, nil, down,
+			installed, map[string]SkillAudit{}, installed},
+		{"a failed ask keeps the audits that came back", nil, high, down,
+			installed, high, installed},
+		{"an answer marks every asked skill fresh, even one it has no audit for", nil, high, nil,
+			installed, high, map[string][]string{}},
+		{"a skill audited within MaxAge is not asked", map[string]time.Time{"someone/skills/tidyup": now.Add(-time.Hour)}, nil, nil,
+			map[string][]string{"someone/skills": {"pathmaker"}}, map[string]SkillAudit{}, map[string][]string{}},
+		{"a skill audited longer than MaxAge ago is asked again", map[string]time.Time{"someone/skills/tidyup": now.Add(-13 * time.Hour)}, nil, nil,
+			installed, map[string]SkillAudit{}, map[string][]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			db := NewDB()
+			maps.Copy(db.AuditedAt, tt.auditedAt)
+			asked := db.StaleAudits(installed, now)
+			db.MergeAudits(asked, tt.got, tt.err, now)
+			dueLater := db.StaleAudits(installed, now.Add(time.Hour))
+			if !reflect.DeepEqual(asked, tt.asked) || !reflect.DeepEqual(db.Audits, tt.audits) || !reflect.DeepEqual(dueLater, tt.dueLater) {
+				t.Errorf("asked %v, kept %v, due an hour later %v\nwant  %v, %v, %v", asked, db.Audits, dueLater, tt.asked, tt.audits, tt.dueLater)
+			}
+		})
 	}
 }
 

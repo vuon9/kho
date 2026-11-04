@@ -95,9 +95,9 @@ type historyMsg struct {
 }
 
 type auditMsg struct {
-	audits  map[string]vuln.SkillAudit
-	checked []string
-	err     error
+	asked  map[string][]string
+	audits map[string]vuln.SkillAudit
+	err    error
 }
 
 type openedMsg struct {
@@ -347,12 +347,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case auditMsg:
 		m.scanning--
 		m.secErr = msg.err
-		for _, k := range msg.checked {
-			m.db.AuditedAt[k] = now()
-		}
-		for k, a := range msg.audits {
-			m.db.Audits[k] = a
-		}
+		m.db.MergeAudits(msg.asked, msg.audits, msg.err, now())
 		m.save()
 		m.reindex()
 	case installStartedMsg:
@@ -440,22 +435,18 @@ func (m model) save() {
 func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 	var queries []vuln.Query
 	audits := map[string][]string{}
-	var auditKeys []string
 	for _, p := range pkgs {
 		if q, ok := provider.Query(p); ok {
 			queries = append(queries, q)
 		}
 		queries = append(queries, provider.DepQueries(p)...)
 		if p.Source == "skills" && p.Repo != "" {
-			k := p.Repo + "/" + p.Name
-			if t, ok := m.db.AuditedAt[k]; force || !ok || now().Sub(t) > vuln.MaxAge {
-				audits[p.Repo] = append(audits[p.Repo], p.Name)
-				auditKeys = append(auditKeys, k)
-			}
+			audits[p.Repo] = append(audits[p.Repo], p.Name)
 		}
 	}
 	if !force {
 		queries = m.db.Stale(queries, now())
+		audits = m.db.StaleAudits(audits, now())
 	}
 	var cmds []tea.Cmd
 	if len(queries) > 0 {
@@ -473,7 +464,7 @@ func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 		m.scanning++
 		cmds = append(cmds, func() tea.Msg {
 			got, err := fetchAudits(context.Background(), audits)
-			return auditMsg{got, auditKeys, err}
+			return auditMsg{audits, got, err}
 		})
 	}
 	return tea.Batch(cmds...)
