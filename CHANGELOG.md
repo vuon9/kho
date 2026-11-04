@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/vuon9/kho/compare/v0.1.3...v0.1.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* **check:** keep skill audits honest and pin the exit codes ([#12](https://github.com/vuon9/kho/issues/12)) ([e51a0e2](https://github.com/vuon9/kho/commit/e51a0e22e5ea40d355ccd61343b9b2cc641d9d69))
+* **skills:** keep unlink from deleting the shared skills entry ([9717295](https://github.com/vuon9/kho/commit/97172955512b4fb2cb4458cf87d74375753c0126))
+* **skills:** read the universal agents from the skills CLI's table so kho stops offering links that load a skill twice ([9717295](https://github.com/vuon9/kho/commit/97172955512b4fb2cb4458cf87d74375753c0126))
+* **tui:** call a dependency clean only once osv.dev checked it ([9717295](https://github.com/vuon9/kho/commit/97172955512b4fb2cb4458cf87d74375753c0126))
+* **tui:** read install output at the command's pace so nothing is cut off ([9717295](https://github.com/vuon9/kho/commit/97172955512b4fb2cb4458cf87d74375753c0126))
+* **tui:** stop a running install on ctrl+c or a signal instead of quitting mid-install ([9717295](https://github.com/vuon9/kho/commit/97172955512b4fb2cb4458cf87d74375753c0126))
+
 ## [0.1.3](https://github.com/vuon9/kho/compare/v0.1.2...v0.1.3) (2026-11-04)
 
 
