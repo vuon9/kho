@@ -17,16 +17,17 @@ import (
 )
 
 type fake struct {
-	name     string
-	pkgs     []provider.Package
-	versions []provider.Release
+	name               string
+	pkgs               []provider.Package
+	versions           []provider.Release
+	listErr, latestErr error
 }
 
 func (f fake) Name() string                                     { return f.name }
 func (f fake) Available() bool                                  { return true }
-func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, nil }
+func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, f.listErr }
 func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Package, error) {
-	return p, nil
+	return p, f.latestErr
 }
 func (f fake) Deps(context.Context, provider.Package) ([]provider.Dep, error) { return nil, nil }
 func (f fake) Versions(context.Context, provider.Package) ([]provider.Release, error) {
@@ -206,56 +207,76 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 }
 
 func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
-	var out, errOut bytes.Buffer
-	partial := Env{
-		Version: "v9.9.9",
-		Providers: []provider.Provider{
-			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
-		},
-		DB:      vuln.NewDB(),
-		Log:     history.Open(""),
-		Out:     &out,
-		Err:     &errOut,
-		Now:     func() time.Time { return clock },
-		Skipped: map[string]string{"uv": "uv not on PATH"},
-		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
-			return map[string][]string{}, map[string]vuln.Advisory{}, nil
-		},
-		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	uvMissing := map[string]string{"uv": "uv not on PATH"}
+	vulnerable := map[string][]string{"bramble": {"GHSA-test"}}
+	npm := fake{name: "npm", pkgs: []provider.Package{{Source: "npm", Name: "diffkit", Version: "0.23.0", Latest: "0.23.0"}}}
+	listFails := npm
+	listFails.listErr = errors.New("npm ls: boom")
+	type result struct {
+		code   int
+		stderr string
+		errors map[string]string
 	}
 	tests := []struct {
-		id   string
-		env  Env
-		args []string
-		code int
-		err  string
+		id      string
+		npm     fake
+		skipped map[string]string
+		hits    map[string][]string
+		args    []string
+		want    result
 	}{
-		{"a partial scan still passes without the flag", partial, []string{"check"}, ExitOK, ""},
-		{"a partial scan fails with the flag, and says why", partial, []string{"check", "--require-complete"}, ExitIncomplete, "scan was not complete: uv (uv not on PATH)"},
-		{"a required source that was skipped fails", partial, []string{"check", "--require", "uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
-		{"a required source that was read passes", partial, []string{"check", "--require", "pipx"}, ExitOK, ""},
-		{"a manager this machine lacks is fine unless required", partial, []string{"check", "--require", "pipx,uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
-		{"an unknown source in the list is a usage error", partial, []string{"check", "--require", "npmm"}, ExitUsage, "unknown source in --require: npmm"},
+		{"at risk wins over a partial scan, and stderr still says what was skipped", npm, uvMissing, vulnerable, []string{"--require-complete"},
+			result{ExitAtRisk, "scan was not complete: uv (uv not on PATH)", nil}},
+		{"a required source whose list failed fails, and says why", listFails, nil, nil, []string{"--require", "npm"},
+			result{ExitIncomplete, "scan was not complete for npm failed: npm ls: boom", map[string]string{"npm": "npm ls: boom"}}},
+		{"a partial scan still passes without the flag", npm, uvMissing, nil, nil, result{ExitOK, "", nil}},
+		{"a partial scan fails with the flag, and says why", npm, uvMissing, nil, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: uv (uv not on PATH)", nil}},
+		{"a required source that was skipped fails", npm, uvMissing, nil, []string{"--require", "uv"},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", nil}},
+		{"a required source that was read passes", npm, uvMissing, nil, []string{"--require", "pipx"}, result{ExitOK, "", nil}},
+		{"a manager this machine lacks is fine unless required", npm, uvMissing, nil, []string{"--require", "pipx,uv"},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", nil}},
+		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", nil}},
+		{"an unknown source in the list is a usage error", npm, uvMissing, nil, []string{"--require", "npmm"},
+			result{ExitUsage, "unknown source in --require: npmm", nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			out.Reset()
-			errOut.Reset()
-			if code := Main(tt.env, tt.args); code != tt.code {
-				t.Errorf("exit %d, want %d", code, tt.code)
+			var out, errOut bytes.Buffer
+			env := Env{
+				Version: "v9.9.9",
+				Providers: []provider.Provider{
+					fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+					tt.npm,
+				},
+				DB:      vuln.NewDB(),
+				Log:     history.Open(""),
+				Out:     &out,
+				Err:     &errOut,
+				Now:     func() time.Time { return clock },
+				Skipped: tt.skipped,
+				Scan: func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+					got := map[string][]string{}
+					for _, q := range qs {
+						got[q.Key()] = tt.hits[q.Name]
+					}
+					return got, map[string]vuln.Advisory{redos.ID: redos}, nil
+				},
+				Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
 			}
-			if got := strings.TrimSpace(errOut.String()); got != tt.err {
-				t.Errorf("stderr %q, want %q", got, tt.err)
+			got := result{code: Main(env, append([]string{"check", "--json"}, tt.args...)), stderr: strings.TrimSpace(errOut.String())}
+			if out.Len() > 0 {
+				var r Report
+				if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+					t.Fatalf("not JSON: %v\n%s", err, out.String())
+				}
+				got.errors = r.Errors
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
 			}
 		})
-	}
-
-	full := partial
-	full.Skipped = nil
-	out.Reset()
-	errOut.Reset()
-	if code := Main(full, []string{"check", "--require-complete"}); code != ExitOK {
-		t.Errorf("a full scan with the flag exited %d, want %d: %s", code, ExitOK, errOut.String())
 	}
 }
 
