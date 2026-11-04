@@ -961,9 +961,16 @@ func TestHistory(t *testing.T) {
 		want   []string
 		lacks  []string
 		copied []string
+		opened []string
+		// like are keys whose screen this row's must be, key for key.
+		like []string
 	}{
 		{id: "enter opens no dependency behind the history", keys: []string{"l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"◆ openssl@4"}},
 		{id: "nor an install", keys: []string{"v", "l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"Upgrade anvil?"}},
+		{id: "w opens no homepage behind it", keys: []string{"H", "w"}, want: []string{"🕘 History · 3"}},
+		{id: "nor y a release page", keys: []string{"v", "l", "j", "H", "y"}, want: []string{"🕘 History · 3"}},
+		{id: "and the panels behind it keep their state", keys: []string{"H", "J", "K", "]", "[", "2", "s", "S", "o", "!", "d", "A", "<", ">", "{", "}", "=", "esc"},
+			like: []string{"H", "esc"}},
 		{id: "H lists every command, newest first", keys: []string{"H"}, want: []string{"🕘 History · 3", "ln -s /h/.agents", "pipx install --force", "brew info --json=v2 --installed", "1.3s", "⌨ ln", "change: kho changed the machine"}},
 		{id: "f keeps the changes", keys: []string{"H", "f"}, want: []string{"🕘 History · 2 · ✎ Changes", "✎ Changes 2"}, lacks: []string{"brew info"}},
 		{id: "f again keeps the failures", keys: []string{"H", "f", "f"}, want: []string{"✗ Failed 1", "✗ exit status 1", "boom: no matching distribution"}, lacks: []string{"ln -s"}},
@@ -984,8 +991,13 @@ func TestHistory(t *testing.T) {
 					t.Errorf("screen has %q", w)
 				}
 			}
-			if !reflect.DeepEqual(copied, tt.copied) {
-				t.Errorf("copied %q, want %q", copied, tt.copied)
+			if !reflect.DeepEqual(copied, tt.copied) || !reflect.DeepEqual(opened, tt.opened) {
+				t.Errorf("copied %q, opened %q, want %q, %q", copied, opened, tt.copied, tt.opened)
+			}
+			if tt.like != nil {
+				if like := screen(press(t, withLog(t), tt.like...)); s != like {
+					t.Errorf("screen\n%s\nwant\n%s", s, like)
+				}
 			}
 		})
 	}

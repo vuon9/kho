@@ -776,9 +776,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.notice = "refreshing security data"
 		return m.secure(all, true), false
 	default:
-		if !m.showHistory {
-			m.move(key)
-		}
+		m.move(key)
 	}
 	return nil, false
 }
