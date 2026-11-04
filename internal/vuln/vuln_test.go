@@ -1,10 +1,20 @@
 package vuln
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -131,10 +141,87 @@ func TestDB(t *testing.T) {
 	}
 }
 
+func TestSkillAuditCache(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	installed := map[string][]string{"someone/skills": {"pathmaker", "tidyup"}}
+	high := map[string]SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "high", Snyk: "low"}}
+	none := map[string]SkillAudit{}
+	down := errors.New("skills.sh: down")
+	tests := []struct {
+		id        string
+		auditedAt map[string]time.Time
+		got       map[string]SkillAudit
+		err       error
+		asked     map[string][]string
+		audits    map[string]SkillAudit
+		dueLater  map[string][]string
+	}{
+		{"a failed ask marks nothing fresh", nil, nil, down,
+			installed, map[string]SkillAudit{}, installed},
+		{"nothing asked, as with telemetry off, marks nothing fresh", nil, nil, nil,
+			installed, map[string]SkillAudit{}, installed},
+		{"a failed ask keeps the audits that came back", nil, high, down,
+			installed, high, installed},
+		{"an answer marks every asked skill fresh, even one it has no audit for", nil, high, nil,
+			installed, high, map[string][]string{}},
+		{"an empty answer marks every asked skill fresh", nil, none, nil,
+			installed, map[string]SkillAudit{}, map[string][]string{}},
+		{"a skill audited within MaxAge is not asked", map[string]time.Time{"someone/skills/tidyup": now.Add(-time.Hour)}, none, nil,
+			map[string][]string{"someone/skills": {"pathmaker"}}, map[string]SkillAudit{}, map[string][]string{}},
+		{"a skill audited longer than MaxAge ago is asked again", map[string]time.Time{"someone/skills/tidyup": now.Add(-13 * time.Hour)}, none, nil,
+			installed, map[string]SkillAudit{}, map[string][]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			db := NewDB()
+			maps.Copy(db.AuditedAt, tt.auditedAt)
+			asked := db.StaleAudits(installed, now)
+			db.MergeAudits(asked, tt.got, tt.err, now)
+			dueLater := db.StaleAudits(installed, now.Add(time.Hour))
+			if !reflect.DeepEqual(asked, tt.asked) || !reflect.DeepEqual(db.Audits, tt.audits) || !reflect.DeepEqual(dueLater, tt.dueLater) {
+				t.Errorf("asked %v, kept %v, due an hour later %v\nwant  %v, %v, %v", asked, db.Audits, dueLater, tt.asked, tt.audits, tt.dueLater)
+			}
+		})
+	}
+}
+
+// MergeAudits reads a nil answer as "nothing was asked", so the opt-outs must
+// return nil. The context is already cancelled, so a regression fails here
+// instead of reaching skills.sh.
+func TestSkillAuditsAskNothingWhenTelemetryIsOff(t *testing.T) {
+	for _, opt := range []string{"DISABLE_TELEMETRY", "DO_NOT_TRACK"} {
+		t.Run(opt, func(t *testing.T) {
+			t.Setenv(opt, "1")
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if got, err := SkillAudits(ctx, map[string][]string{"someone/skills": {"pathmaker"}}); got != nil || err != nil {
+				t.Errorf("got %v, %v, want nil, nil", got, err)
+			}
+		})
+	}
+}
+
 func TestSaveLeavesNoHalfWrittenCache(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "kho")
 	path := filepath.Join(dir, "security.json")
 	db := NewDB()
+	if err := db.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	before, err := reader.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	q := Query{"npm", "diffkit", "0.23.0"}
 	db.Merge(map[string][]string{q.Key(): {"GHSA-test"}}, map[string]Advisory{"GHSA-test": {ID: "GHSA-test", Package: "diffkit"}}, now)
@@ -142,6 +229,16 @@ func TestSaveLeavesNoHalfWrittenCache(t *testing.T) {
 		if err := db.Save(path); err != nil {
 			t.Fatalf("save %d: %v", i, err)
 		}
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Error("Save wrote over the cache in place instead of renaming a new file onto it")
+	}
+	if got, err := io.ReadAll(reader); err != nil || !bytes.Equal(got, old) {
+		t.Errorf("a kho that opened the cache before Save read %q (%v), want the old %q", got, err, old)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -160,6 +257,133 @@ func TestOldCacheIsDropped(t *testing.T) {
 	os.WriteFile(path, []byte(`{"checked":{"PyPI/bramble@1.0":"2026-11-03T12:00:00Z"},"hits":{"PyPI/bramble@1.0":["X"]}}`), 0o644)
 	if db := Load(path); len(db.Checked) != 0 || len(db.Hits) != 0 {
 		t.Errorf("a cache without the current format was kept: %+v", db)
+	}
+}
+
+// A cache from an older build that still loads reads as clean wherever a
+// field moved or changed kind, so the shape must never change under an old
+// format.
+func TestStoredShapeMatchesFormat(t *testing.T) {
+	if got := shape(t, NewDB()); !slices.Equal(got, stored) {
+		t.Errorf("the cache now stores\n\t%s\nbut stored in cache.go says\n\t%s\nbump format, set stored to the new paths and add the new format to formats",
+			strings.Join(got, "\n\t"), strings.Join(stored, "\n\t"))
+	}
+	if sum := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(stored, "\n")))); formats[format] != sum {
+		t.Errorf("formats[%d] is %q but stored's checksum is %q: when stored changes, bump format and add the new one to formats with this checksum, leaving the old lines as they are",
+			format, formats[format], sum)
+	}
+}
+
+// Fields JSON never writes cannot change the stored shape, so filling them
+// would only make the shape test fail for nothing, or panic.
+type embedded struct {
+	Note string `json:"note,omitempty"`
+}
+
+func TestShapeSkipsWhatJSONSkips(t *testing.T) {
+	tests := []struct {
+		id   string
+		v    any
+		want []string
+	}{
+		{"an embedded unexported struct still adds its fields", &struct {
+			ID string `json:"id"`
+			embedded
+		}{}, []string{"id string", "note string"}},
+		{"an unexported field", &struct {
+			ID   string `json:"id"`
+			note string
+		}{}, []string{"id string"}},
+		{"a field tagged json:\"-\" of a kind fill cannot fill", &struct {
+			ID   string `json:"id"`
+			Hook func() `json:"-"`
+		}{}, []string{"id string"}},
+		{"an unexported lock", &struct {
+			ID string `json:"id"`
+			mu sync.Mutex
+		}{}, []string{"id string"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := shape(t, tt.v); !slices.Equal(got, tt.want) {
+				t.Errorf("shape %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// shape fills v, which points to a struct, and returns its sorted JSON paths.
+func shape(t *testing.T, v any) []string {
+	fill(t, reflect.ValueOf(v).Elem())
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	jsonPaths(decoded, "", &paths)
+	slices.Sort(paths)
+	return paths
+}
+
+// fill gives every field a value, so omitempty hides none of them, and every
+// map one entry under "*". A kind it does not know fails the test, so a new
+// field cannot slip past it.
+func fill(t *testing.T, v reflect.Value) {
+	switch {
+	case v.Type() == reflect.TypeFor[time.Time]():
+		v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
+	case v.Kind() == reflect.Struct:
+		for i := range v.NumField() {
+			if f := v.Type().Field(i); (f.IsExported() || f.Anonymous && f.Type.Kind() == reflect.Struct) && f.Tag.Get("json") != "-" {
+				fill(t, v.Field(i))
+			}
+		}
+	case v.Kind() == reflect.Pointer:
+		e := reflect.New(v.Type().Elem())
+		fill(t, e.Elem())
+		v.Set(e)
+	case v.Kind() == reflect.Map:
+		e := reflect.New(v.Type().Elem()).Elem()
+		fill(t, e)
+		v.Set(reflect.MakeMap(v.Type()))
+		v.SetMapIndex(reflect.ValueOf("*"), e)
+	case v.Kind() == reflect.Slice:
+		e := reflect.New(v.Type().Elem()).Elem()
+		fill(t, e)
+		v.Set(reflect.Append(reflect.MakeSlice(v.Type(), 0, 1), e))
+	case v.Kind() == reflect.String:
+		v.SetString("x")
+	case v.Kind() == reflect.Bool:
+		v.SetBool(true)
+	case v.CanInt():
+		v.SetInt(1)
+	case v.CanUint():
+		v.SetUint(1)
+	case v.CanFloat():
+		v.SetFloat(1.5)
+	default:
+		t.Fatalf("fill does not know how to fill a %s", v.Type())
+	}
+}
+
+// jsonPaths lists every leaf with the Go type JSON decodes it to, so a field
+// that changes kind changes its path.
+func jsonPaths(v any, path string, out *[]string) {
+	switch v := v.(type) {
+	case map[string]any:
+		for k, e := range v {
+			jsonPaths(e, strings.TrimPrefix(path+"."+k, "."), out)
+		}
+	case []any:
+		for _, e := range v {
+			jsonPaths(e, path+"[]", out)
+		}
+	default:
+		*out = append(*out, fmt.Sprintf("%s %T", path, v))
 	}
 }
 

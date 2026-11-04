@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/vuon9/kho/compare/v0.1.2...v0.1.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* **deps:** bump x/net and x/sys past their advisories ([#10](https://github.com/vuon9/kho/issues/10)) ([6d37453](https://github.com/vuon9/kho/commit/6d374533670b76f55112c731e1a2e54ef9add45e))
+
 ## [0.1.2](https://github.com/vuon9/kho/compare/v0.1.1...v0.1.2) (2026-11-03)
 
 

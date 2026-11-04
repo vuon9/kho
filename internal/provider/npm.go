@@ -12,7 +12,7 @@ import (
 type Npm struct{}
 
 func (Npm) Name() string    { return "npm" }
-func (Npm) Available() bool { return onPath("npm") }
+func (Npm) Missing() string { return notOnPath("npm") }
 
 func (Npm) List(ctx context.Context) ([]Package, error) {
 	out, err := run(ctx, "npm", "ls", "-g", "--json", "--depth=1")

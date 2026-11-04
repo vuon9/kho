@@ -27,7 +27,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 **Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes. An agent whose project `skillsDir` is `.agents/skills` is `Universal`: like the CLI, kho counts it as reading `~/.agents/skills` on top of its own folder, and never links a skill it already sees there. A folder the CLI picks at run time, like OpenClaw's, becomes a list in `Dirs` that kho picks from the same way. The generator stops on any field, path, call or env setting it can't read, and on a `detectInstalled` that checks no folder, rather than drop it or guess.
 
-**Providers.** To add one: implement `Provider`, register it in `All()`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
+**Providers.** To add one: implement `Provider` (its `Missing` says what this machine lacks for it, and `Detect` reports that as skipped), register it in `All()`, add its row to `TestDetect`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
@@ -39,7 +39,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 - Colors come from the active palette (`th`, `accent()`, `faint()`, ...). Never hard-code a color; every theme in `themes` must render.
 - Every key goes in `help.go` and in the footer hints for the panel it belongs to.
 
-**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in `cli_test.go`, and a mention in `skills/use-kho/SKILL.md`.
+**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in `cli_test.go`, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a command, flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
 
 **Comments.** Only for a reason the code can't show. No narration, no restating the next line, no history (that belongs in the commit).
 
@@ -72,4 +72,4 @@ go test -race ./...
 | Command history | `$XDG_STATE_HOME/kho/history.jsonl`, default `~/.local/state/kho` |
 | Chosen theme | next to the history, `theme` |
 
-Bump `format` in `internal/vuln/cache.go` whenever what the cache stores changes, so an old cache is dropped instead of misread.
+Bump `format` in `internal/vuln/cache.go` whenever what the cache stores changes, so an old cache is dropped instead of misread. Then update `stored` next to it and add the new format's checksum to `formats`, leaving the old lines alone. `TestStoredShapeMatchesFormat` fails when the cache's JSON no longer matches `stored`, or when `stored` changes under an old format.

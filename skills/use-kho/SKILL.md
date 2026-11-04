@@ -12,11 +12,17 @@ If `kho` is missing, ask before installing it: `brew install vuon9/tap/kho` or `
 ## Check
 
 ```bash
-kho check --json            # exit 0 safe, 3 at risk, 1 error
+kho check --json                      # exit 0 safe, 3 at risk
 kho check --json --require uv,npm     # exit 4 when a named manager could not be read
-kho check --json --require-complete   # exit 4 when anything at all was skipped
-kho check --json --refresh  # skip the 12-hour cache, ask OSV and skills.sh again
+kho check --json --require-complete   # exit 4 when anything was skipped or failed
+kho check --json --refresh            # skip the 12-hour cache, ask OSV and skills.sh again
 ```
+
+check exits 0, 3 or 4, or 2 on a usage error. At risk wins: a scan that is at risk exits 3 even when `--require` or `--require-complete` also failed, and stderr still names what was not read. A failed OSV or skills.sh lookup does not change the exit code by itself: the report says `complete: false` and names it under `errors.security`, and `--require-complete` turns it into exit 4.
+
+Exit codes for every command: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete.
+
+`kho list` prints every package as JSON without the security checks, `kho version` prints the version, and `kho help` lists every command.
 
 The report has:
 
@@ -24,8 +30,8 @@ The report has:
 - `vulnerable[]`: one entry per package, with `advisories[]` (`id`, `severity`, `summary`, `fixedIn`, `url`), `fixedIn` (the lowest version that fixes all of them), `latestIsClear`, and `fix`, a ready command when the latest version is clear.
 - `vulnerableDeps[]`: advisories in a package's dependencies. OSV matches these by module, so the vulnerable code may never run. Report them as "worth a look", not as an emergency.
 - `riskySkills[]`: skills an auditor failed, with the `report` link on skills.sh.
-- `outdated[]`, `notCovered[]` (sources OSV has no data for, such as `brew`), and `errors`.
-- `skipped`: the package managers this machine does not have, with what was looked for, such as `{"uv": "uv not on PATH"}`. A manager that is skipped is not read at all, so nothing it holds was checked. `complete` is false whenever this is non-empty, so a script can tell a full scan from a partial one.
+- `outdated[]`, `notCovered[]` (sources OSV has no data for, such as `brew`), and `errors`, keyed by what failed: a manager's name when it could not be listed, `<manager> latest` when only its latest versions are unknown (its packages were still checked), and `security` when OSV or skills.sh could not be asked.
+- `skipped`: the package managers this machine does not have, with what was looked for, such as `{"uv": "uv not on PATH"}`. A manager that is skipped is not read at all, so nothing it holds was checked. `complete` is false whenever this or `errors` is non-empty, so a script can tell a full scan from a partial one.
 
 ## Report
 

@@ -26,9 +26,11 @@ type Skills struct{}
 
 func (Skills) Name() string { return "skills" }
 
-func (Skills) Available() bool {
-	_, err := os.Stat(filepath.Join(homeDir(), ".agents", "skills"))
-	return err == nil
+func (Skills) Missing() string {
+	if _, err := os.Stat(filepath.Join(homeDir(), ".agents", "skills")); err != nil {
+		return "no ~/.agents/skills directory"
+	}
+	return ""
 }
 
 //go:generate go run ./genagents v1.7.6

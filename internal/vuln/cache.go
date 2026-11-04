@@ -2,6 +2,7 @@ package vuln
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,39 @@ const MaxAge = 12 * time.Hour
 // format changes whenever what kho stores changes, so a cache from an older
 // build is dropped instead of misread.
 const format = 3
+
+// stored is the shape format holds: each JSON path with the type its value
+// decodes to. formats keeps a checksum of stored for every format, so stored
+// cannot change without a new one: add a line for each new format and never
+// edit an old one. TestStoredShapeMatchesFormat checks both.
+var stored = []string{
+	"advisories.*.aliases[] string",
+	"advisories.*.details string",
+	"advisories.*.id string",
+	"advisories.*.package string",
+	"advisories.*.published string",
+	"advisories.*.ranges[].fixed string",
+	"advisories.*.ranges[].introduced string",
+	"advisories.*.ranges[].last_affected string",
+	"advisories.*.severity string",
+	"advisories.*.summary string",
+	"advisories.*.versions[] string",
+	"auditedAt.* string",
+	"audits.*.analyzed string",
+	"audits.*.gen string",
+	"audits.*.snyk string",
+	"audits.*.socket string",
+	"audits.*.socketAlerts float64",
+	"checked.* string",
+	"format float64",
+	"history.*[] string",
+	"historyAt.* string",
+	"hits.*[] string",
+}
+
+var formats = map[int]string{
+	3: "21601456804166155faf4d9de5de86a90d6f46b0ca8f263fe6a214cf176ee11c",
+}
 
 func NewDB() *DB {
 	return &DB{
@@ -107,6 +141,38 @@ func (db *DB) Merge(hits map[string][]string, advisories map[string]Advisory, no
 	}
 	for id, a := range advisories {
 		db.Advisories[id] = a
+	}
+}
+
+// StaleAudits keeps the skills, by GitHub source as SkillAudits takes them,
+// with no audit result or one older than MaxAge.
+func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[string][]string {
+	stale := map[string][]string{}
+	for source, slugs := range bySource {
+		for _, slug := range slugs {
+			if t, ok := db.AuditedAt[auditKey(source, slug)]; !ok || now.Sub(t) > MaxAge {
+				stale[source] = append(stale[source], slug)
+			}
+		}
+	}
+	return stale
+}
+
+// MergeAudits keeps what skills.sh sent back for the asked skills. An answer
+// marks every asked skill fresh, even one skills.sh has no audit for, so it is
+// not asked again until MaxAge. A failed ask marks none fresh, so the next scan
+// asks again, but the audits that came back before it failed still count. A
+// nil answer means nothing was asked, as SkillAudits does with telemetry off,
+// so it marks none fresh either.
+func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudit, err error, now time.Time) {
+	maps.Copy(db.Audits, audits)
+	if err != nil || audits == nil {
+		return
+	}
+	for source, slugs := range asked {
+		for _, slug := range slugs {
+			db.AuditedAt[auditKey(source, slug)] = now
+		}
 	}
 }
 

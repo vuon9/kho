@@ -49,10 +49,11 @@ func main() {
 		}
 		return
 	}
+	ready, skipped := provider.Detect()
 	os.Exit(cli.Main(cli.Env{
 		Version:   appVersion(),
-		Providers: provider.Available(),
-		Skipped:   provider.Missing(),
+		Providers: ready,
+		Skipped:   skipped,
 		DB:        vuln.Load(vuln.Path()),
 		DBPath:    vuln.Path(),
 		Log:       log,

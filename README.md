@@ -5,9 +5,13 @@
 
 **One place for every package manager on your machine, with security checks.**
 
-https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
+![kho listing packages from several managers, with a vulnerable npm package selected and its advisory open](docs/screenshot.png)
 
 *Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, pipx, uv, `go install`, mise and the skills CLI have put on your machine, tells you which of those packages have known vulnerabilities, and upgrades them only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
+
+See it run:
+
+https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
@@ -70,7 +74,7 @@ npx skills add vuon9/kho --skill use-kho
 
 Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
 
-Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything at all was skipped. `kho help` lists the rest.
+Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped or failed, an OSV or skills.sh lookup included. `kho help` lists the rest.
 
 ## What leaves your machine
 

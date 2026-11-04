@@ -19,9 +19,11 @@ type GoBin struct{}
 
 func (GoBin) Name() string { return "go" }
 
-func (GoBin) Available() bool {
-	_, err := os.Stat(goBinDir())
-	return err == nil
+func (GoBin) Missing() string {
+	if _, err := os.Stat(goBinDir()); err != nil {
+		return "no Go binary directory"
+	}
+	return ""
 }
 
 func goBinDir() string {

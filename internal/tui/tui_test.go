@@ -37,7 +37,7 @@ type fake struct {
 }
 
 func (f fake) Name() string                                     { return f.name }
-func (f fake) Available() bool                                  { return true }
+func (f fake) Missing() string                                  { return "" }
 func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, f.err }
 func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Package, error) {
 	return p, nil
@@ -369,6 +369,47 @@ func TestSecurityCache(t *testing.T) {
 	m = update(t, m, listedMsg{"pipx", pkgs, nil})
 	if s := screen(m); !strings.Contains(s, "⚠ 1 vulnerable") {
 		t.Errorf("the cached result should show at once:\n%s", s)
+	}
+}
+
+func TestSkillAuditCache(t *testing.T) {
+	const key = "someone/skills/pathmaker"
+	high := vuln.SkillAudit{Gen: "safe", Socket: "high", Snyk: "low"}
+	down := errors.New("skills.sh: down")
+	tests := []struct {
+		id        string
+		audits    map[string]vuln.SkillAudit
+		err       error
+		asks      int
+		kept      map[string]vuln.SkillAudit
+		auditedAt map[string]time.Time
+	}{
+		{"a failed ask marks nothing fresh, so the next listing asks again", nil, down, 2,
+			map[string]vuln.SkillAudit{}, map[string]time.Time{}},
+		{"an audit that came back with an error is kept but not fresh", map[string]vuln.SkillAudit{key: high}, down, 2,
+			map[string]vuln.SkillAudit{key: high}, map[string]time.Time{}},
+		{"telemetry off asks nothing, so the next listing asks again", nil, nil, 2,
+			map[string]vuln.SkillAudit{}, map[string]time.Time{}},
+		{"an answer marks the skill fresh even without an audit", map[string]vuln.SkillAudit{}, nil, 1,
+			map[string]vuln.SkillAudit{}, map[string]time.Time{key: clock}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			loaded(t)
+			asks := 0
+			fetchAudits = func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
+				asks++
+				return tt.audits, tt.err
+			}
+			ps := fakes(t)
+			m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
+			pkgs, _ := ps[3].List(context.Background())
+			m = update(t, m, listedMsg{"skills", pkgs, nil})
+			m = update(t, m, listedMsg{"skills", pkgs, nil})
+			if asks != tt.asks || !reflect.DeepEqual(m.db.Audits, tt.kept) || !reflect.DeepEqual(m.db.AuditedAt, tt.auditedAt) {
+				t.Errorf("asked %d times, kept %v, audited at %v\nwant %d, %v, %v", asks, m.db.Audits, m.db.AuditedAt, tt.asks, tt.kept, tt.auditedAt)
+			}
+		})
 	}
 }
 
