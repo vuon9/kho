@@ -1509,6 +1509,36 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
+// The Security tab's list says what osv.dev knows about the package, or why
+// it doesn't know yet.
+func TestSecurityTab(t *testing.T) {
+	tests := []struct {
+		id, scan, pkg string
+		want          []string
+	}{
+		{id: "a failed check says so", scan: "failed", pkg: "tidyup", want: []string{"", "security check failed: osv.dev answered 503", "R checks again."}},
+		{id: "one still out is still checking", scan: "pending", pkg: "tidyup", want: []string{"", "⣾ checking osv.dev…"}},
+		{id: "a source osv.dev has no data for", pkg: "anvil", want: []string{"", "🛡 OSV has no data for brew,", "so kho can't check this one yet."}},
+		{id: "a clean package says when it was checked", pkg: "inkwell", want: []string{"", "✓ No known advisories for 9.0.2", "checked just now on osv.dev"}},
+		{id: "one with advisories in its dependencies lists them", pkg: "tidyup", want: []string{"SEV ID FIX",
+			"HIGH GO-TEST-0001 ≥ 0.52.0 via example.org/net@v0.50.0",
+			"MED GO-TEST-0003 no fix yet via example.org/crypto@v0.20.0",
+			"LOW GO-TEST-0002 ≥ 0.21.0 via example.org/crypto@v0.20.0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, withDeps(t, tt.scan), pick(tt.pkg, "a")...)
+			var got []string
+			for _, l := range m.topView(m.layout().sideW - 2) {
+				got = append(got, strings.Join(strings.Fields(ansi.Strip(l.text)), " "))
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // The Info tab lists the selected package's dependencies, flagging those with
 // advisories.
 func TestDependencyList(t *testing.T) {

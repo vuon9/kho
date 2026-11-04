@@ -482,7 +482,6 @@ func (m model) depPopView() []line {
 		lines = append(lines, row(" "+accent().Render(a.ID)))
 		lines = append(lines, m.advisoryDetail(a, "", d.Version, "", inner)...)
 	}
-	again := faint().Render(" R checks again.")
 	switch {
 	case len(lines) > 0:
 	case provider.Ecosystem(p) == "":
@@ -493,14 +492,23 @@ func (m model) depPopView() []line {
 		lines = plain("", faint().Render(" "+d.Name+" has no release version to check on osv.dev."))
 	case !asked:
 		lines = plain("", faint().Render(" kho doesn't check "+p.Source+" dependencies on osv.dev, so "+d.Name+" isn't checked."))
-	case m.scanning > 0:
-		lines = plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
-	case m.secErr != nil:
-		lines = plain("", red().Render(" security check failed: "+m.secErr.Error()), again)
 	default:
-		lines = plain("", faint().Render(" "+d.Name+" isn't checked yet."), again)
+		lines = m.unchecked(d.Name)
 	}
 	return wrapLines(lines, inner)
+}
+
+// unchecked says why osv.dev hasn't answered for something kho asked it
+// about.
+func (m model) unchecked(name string) []line {
+	again := faint().Render(" R checks again.")
+	switch {
+	case m.scanning > 0:
+		return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+	case m.secErr != nil:
+		return plain("", red().Render(" security check failed: "+m.secErr.Error()), again)
+	}
+	return plain("", faint().Render(" "+name+" isn't checked yet."), again)
 }
 
 func (m model) depLines(p provider.Package, inner int) []line {
@@ -634,7 +642,7 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	es := m.securityEntries()
 	if len(es) == 0 {
 		if _, checked := m.db.Checked[q.Key()]; !checked {
-			return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+			return m.unchecked(p.Name)
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+" on osv.dev"))
 	}
