@@ -102,6 +102,16 @@ func TestGenerate(t *testing.T) {
 			err: "mint: can't read '/opt/mint/' + name",
 		},
 		{
+			id:  "a detect that reads an env setting fails, as kho checks only folders",
+			src: agentsTS("", agent("rue", ".rue/skills", "join(home, '.rue/skills')", "existsSync(join(home, '.rue')) || !!process.env.RUE_HOME")),
+			err: "rue: can't read process.env.RUE_HOME",
+		},
+		{
+			id:  "and so does one that checks no folder at all",
+			src: agentsTS("const rueHome = process.env.RUE_HOME;\n", agent("rue", ".rue/skills", "join(home, '.rue/skills')", "!!rueHome")),
+			err: "rue: detectInstalled checks no folder",
+		},
+		{
 			id: "a project folder that isn't a quoted literal fails",
 			src: agentsTS("", strings.Replace(agent("lark", ".lark/skills", "join(home, '.lark/skills')", "existsSync(join(home, '.lark'))"),
 				"skillsDir: '.lark/skills'", "skillsDir: join('.lark', 'skills')", 1)),

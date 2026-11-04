@@ -27,6 +27,7 @@ var (
 	global  = regexp.MustCompile(`globalSkillsDir: (.+?),\n`)
 	comment = regexp.MustCompile(`//[^\n]*`)
 	calls   = regexp.MustCompile(`([\w.]+)\(`)
+	env     = regexp.MustCompile(`process\.env\.\w+`)
 	exists  = regexp.MustCompile(`^(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
 	abs     = regexp.MustCompile(`^'(/[^']*)'$`)
 	join    = regexp.MustCompile(`^join\((\w+), ((?:'[^']*'(?:, )?)+)\)$`)
@@ -109,6 +110,9 @@ func generate(src, version string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
+		if len(detect) == 0 && !strings.Contains(body[at:], "process.cwd()") {
+			return nil, fmt.Errorf("%s: detectInstalled checks no folder", id)
+		}
 		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dirs: %#v, Detect: %#v", id, name[1], dirs, detect)
 		// Like the CLI: an agent whose project folder is .agents/skills reads
 		// ~/.agents/skills too, so a global skill never needs a link of its own.
@@ -128,6 +132,9 @@ func generate(src, version string) ([]byte, error) {
 // agent can't be dropped without notice.
 func paths(code string, bases map[string]string, helpers map[string][]string) ([]string, error) {
 	code = comment.ReplaceAllString(code, "")
+	if e := env.FindString(code); e != "" {
+		return nil, fmt.Errorf("can't read %s", e)
+	}
 	out := []string{}
 	for _, m := range calls.FindAllStringSubmatchIndex(code, -1) {
 		name, rest := code[m[2]:m[3]], code[m[0]:]
