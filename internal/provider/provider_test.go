@@ -521,6 +521,13 @@ func TestSkillLinks(t *testing.T) {
 				"opencode": "missing, can link", "pi": "no folder"},
 		},
 		{
+			id:    "an agent whose folder is a link to ~/.agents/skills has no folder of its own, so no link to toggle",
+			files: []string{".agents/skills/bar -> ../../dev/bar", "dev/bar/SKILL.md", ".claude/skills -> ../.agents/skills"},
+			skill: ".agents/skills/bar",
+			want: map[string]string{"claude-code": "no folder, sees", "codex": "no folder, sees", "cursor": "missing, sees",
+				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
+		},
+		{
 			id:    "an agent whose folder an env setting moves to ~/.agents/skills reads the shared skills",
 			env:   map[string]string{"CLAUDE_CONFIG_DIR": "{home}/.agents"},
 			files: []string{".agents/skills/workflow/SKILL.md"},
@@ -684,13 +691,19 @@ func TestLinkSkill(t *testing.T) {
 }
 
 func TestUnlinkSkill(t *testing.T) {
+	base := []string{".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md"}
 	tests := []struct {
 		id, agent string
+		// files is the home, base if empty.
+		files []string
 		// since replaces what is at a path after kho read the links.
 		since   []string
 		removed []string
 		err     string
 	}{
+		{id: "the shared entry survives an agent whose folder is a link to ~/.agents/skills", agent: "claude-code",
+			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".claude/skills -> ../.agents/skills"},
+			err:   "claude-code has no skills folder of its own, so kho won't remove ~/.agents/skills/workflow"},
 		{id: "a link is removed", agent: "claude-code", removed: []string{".claude/skills/workflow -> ../../.agents/skills/workflow"}},
 		{id: "a link replaced by an empty folder since kho read it stays", agent: "claude-code", since: []string{".claude/skills/workflow/"},
 			err: "~/.claude/skills/workflow is not a symlink, so kho won't remove it"},
@@ -702,7 +715,11 @@ func TestUnlinkSkill(t *testing.T) {
 		t.Run(tt.id, func(t *testing.T) {
 			clearAgentEnv(t)
 			home, _ := filepath.EvalSymlinks(t.TempDir())
-			build(t, home, ".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md")
+			files := tt.files
+			if files == nil {
+				files = base
+			}
+			build(t, home, files...)
 			p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
 			links := skillLinks(home, p, false)
 			for _, e := range tt.since {

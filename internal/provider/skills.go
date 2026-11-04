@@ -45,7 +45,7 @@ type skillAgent struct {
 }
 
 // dir is the agent's skills folder, or "" when that is ~/.agents/skills
-// itself and so it has no links of its own.
+// itself, or a link to it, and so it has no links of its own.
 func (a skillAgent) dir(home string) string {
 	d := expandPath(home, a.Dirs[0])
 	for _, p := range a.Dirs {
@@ -54,10 +54,18 @@ func (a skillAgent) dir(home string) string {
 			break
 		}
 	}
-	if d == filepath.Join(home, ".agents", "skills") {
+	if resolved(d) == resolved(filepath.Join(home, ".agents", "skills")) {
 		return ""
 	}
 	return d
+}
+
+// resolved is p with its links followed, or p as it is when it doesn't exist.
+func resolved(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }
 
 // placed is an agent with its folder and install state worked out once per
@@ -547,6 +555,9 @@ func linkSkill(home string, l SkillLink, p Package) error {
 // It looks at the path again rather than trust l.Kind, which kho may have
 // read minutes ago.
 func UnlinkSkill(l SkillLink) error {
+	if l.Kind == LinkNoFolder {
+		return fmt.Errorf("%s has no skills folder of its own, so kho won't remove %s", l.Agent, l.Path)
+	}
 	if info, err := os.Lstat(l.Path); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		return fmt.Errorf("%s is not a symlink, so kho won't remove it", l.Path)
 	}
