@@ -75,36 +75,41 @@ func (l layout) row(y int) int {
 	return y - l.top - 1
 }
 
-func (m model) confirmRect() (x, y, w, h int) {
-	w = 40
+// rect is a box on the screen.
+type rect struct{ x, y, w, h int }
+
+func (r rect) has(x, y int) bool {
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+// centered is a w by h box in the middle of the screen.
+func (m model) centered(w, h int) rect {
+	return rect{(m.width - w) / 2, (m.height - h) / 2, w, h}
+}
+
+func (m model) confirmRect() rect {
+	w := 40
 	for _, l := range m.confirm.lines {
 		w = max(w, lipgloss.Width(l)+4)
 	}
-	w = min(w, m.width-8)
-	h = len(m.confirm.lines) + 3
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+	return m.centered(min(w, m.width-8), len(m.confirm.lines)+popupFrame)
 }
 
-func (m model) helpRect() (x, y, w, h int) {
-	w = min(m.width-8, 96)
-	h = min(len(helpLines())+3, m.height-2)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) helpRect() rect {
+	return m.centered(min(m.width-8, 96), min(len(helpLines())+popupFrame, m.height-2))
 }
 
 // helpHidden is how many lines of help don't fit on the screen.
 func (m model) helpHidden() int {
-	_, _, _, h := m.helpRect()
-	return len(helpLines()) - (h - 3)
+	return len(helpLines()) - popupText(m.helpRect()).h
 }
 
-func (m model) installRect() (x, y, w, h int) {
-	w, h = min(m.width-8, 110), min(m.height-4, 24)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) installRect() rect {
+	return m.centered(min(m.width-8, 110), min(m.height-4, 24))
 }
 
-func (m model) depRect() (x, y, w, h int) {
-	w, h = min(m.width-8, 100), min(m.height-4, 30)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) depRect() rect {
+	return m.centered(min(m.width-8, 100), min(m.height-4, 30))
 }
 
 func (m *model) click(x, y int) tea.Cmd {
@@ -122,14 +127,12 @@ func (m *model) click(x, y int) tea.Cmd {
 			m.startSelect(area, p)
 			return nil
 		}
-		px, py, w, h := m.depRect()
-		if x < px || x >= px+w || y < py || y >= py+h {
+		if !m.depRect().has(x, y) {
 			m.depPop, m.sel = nil, nil
 		}
 		return nil
 	case popConfirm:
-		cx, cy, cw, ch := m.confirmRect()
-		if x < cx || x >= cx+cw || y < cy || y >= cy+ch {
+		if !m.confirmRect().has(x, y) {
 			m.confirm = nil
 		}
 		return nil

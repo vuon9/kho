@@ -469,8 +469,7 @@ func (m model) depPopTitle() string {
 // depPopView is the dependency popup's text, wrapped to fit it. It calls a
 // dependency clean only once osv.dev has answered for that very version.
 func (m model) depPopView() []line {
-	_, _, w, _ := m.depRect()
-	inner := w - 2
+	inner := popupText(m.depRect()).w
 	p, d := m.depPop.pkg, m.depPop.dep
 	advs, checked := m.depAdvisories(p, d)
 	_, asked := provider.DepQuery(p, d)

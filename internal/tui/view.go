@@ -41,30 +41,31 @@ func (m model) View() tea.View {
 	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + rule + "\n" + ansi.Truncate(m.footer(), m.width, "…")
 	switch m.popup() {
 	case popHelp:
-		x, y, w, h := m.helpRect()
-		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], w, h), x, y, w)
+		r := m.helpRect()
+		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
 	case popInstall:
-		x, y, w, h := m.installRect()
-		screen = overlay(screen, popupBox(m.inst.title, m.installLines(h-3), w, h), x, y, w)
+		r := m.installRect()
+		screen = overlay(screen, popupBox(m.inst.title, m.installLines(popupText(r).h), r), r.x, r.y, r.w)
 	case popDep:
-		x, y, w, h := m.depRect()
+		r := m.depRect()
+		t := popupText(r)
 		view := m.depPopView()
 		var lines []string
-		for i := m.depPop.top; i < min(len(view), m.depPop.top+h-3); i++ {
+		for i := m.depPop.top; i < min(len(view), m.depPop.top+t.h); i++ {
 			text := view[i].text
-			if from, to, ok := m.sel.span(areaPopup, i, w-2); ok {
+			if from, to, ok := m.sel.span(areaPopup, i, t.w); ok {
 				text = highlight(text, from, to)
 			}
 			lines = append(lines, text)
 		}
-		screen = overlay(screen, popupBox(m.depPopTitle(), lines, w, h), x, y, w)
+		screen = overlay(screen, popupBox(m.depPopTitle(), lines, r), r.x, r.y, r.w)
 	case popConfirm:
-		x, y, w, h := m.confirmRect()
+		r := m.confirmRect()
 		var lines []string
 		for _, l := range m.confirm.lines {
 			lines = append(lines, " "+l)
 		}
-		screen = overlay(screen, popupBox(m.confirm.title, lines, w, h), x, y, w)
+		screen = overlay(screen, popupBox(m.confirm.title, lines, r), r.x, r.y, r.w)
 	}
 	v.SetContent(screen)
 	return v
@@ -465,21 +466,31 @@ func boxTitle(title string, focused bool) string {
 	return bold().Foreground(th.muted).Render(title)
 }
 
+// popupFrame is how many rows a popup's frame takes: the top border, the
+// title bar and the bottom border.
+const popupFrame = 3
+
+// popupText is where popupBox puts lines in a popup at r: inside its
+// one-column border, under the top border and the title bar.
+func popupText(r rect) rect {
+	return rect{r.x + 1, r.y + 2, r.w - 2, r.h - popupFrame}
+}
+
 // popupBox draws a dialog so it can't be taken for a panel: a heavy border and
-// a filled title bar, which leave h-3 rows for lines.
-func popupBox(title string, lines []string, w, h int) string {
+// a filled title bar.
+func popupBox(title string, lines []string, r rect) string {
 	e := fg(th.accent)
-	inner := w - 2
-	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, inner))
-	out := []string{e.Render("┏" + strings.Repeat("━", inner) + "┓"), e.Render("┃") + bar + e.Render("┃")}
+	t := popupText(r)
+	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, t.w))
+	out := []string{e.Render("┏" + strings.Repeat("━", t.w) + "┓"), e.Render("┃") + bar + e.Render("┃")}
 	lines = slices.Clone(lines)
-	for len(lines) < h-3 {
+	for len(lines) < t.h {
 		lines = append(lines, "")
 	}
-	for _, l := range lines[:max(h-3, 0)] {
-		out = append(out, e.Render("┃")+pad(l, inner)+e.Render("┃"))
+	for _, l := range lines[:max(t.h, 0)] {
+		out = append(out, e.Render("┃")+pad(l, t.w)+e.Render("┃"))
 	}
-	out = append(out, e.Render("┗"+strings.Repeat("━", inner)+"┛"))
+	out = append(out, e.Render("┗"+strings.Repeat("━", t.w)+"┛"))
 	return strings.Join(out, "\n")
 }
 

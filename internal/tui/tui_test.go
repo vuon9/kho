@@ -1325,8 +1325,8 @@ func pick(name string, keys ...string) []string {
 	return append(append(ks, "enter", "l"), keys...)
 }
 
-// popupText is the dependency popup's title, then its lines as drawn.
-func popupText(m model) []string {
+// depPopupLines is the dependency popup's title, then its lines as drawn.
+func depPopupLines(m model) []string {
 	if m.depPop == nil {
 		return nil
 	}
@@ -1412,14 +1412,14 @@ func TestDependencyPopup(t *testing.T) {
 			for _, msg := range tt.after {
 				m = update(t, m, msg)
 			}
-			if got := popupText(m); !slices.Equal(got, tt.text) || !slices.Equal(copied, tt.copied) {
+			if got := depPopupLines(m); !slices.Equal(got, tt.text) || !slices.Equal(copied, tt.copied) {
 				t.Errorf("popup\n%s\ncopied %q\nwant\n%s\ncopied %q", strings.Join(got, "\n"), copied, strings.Join(tt.text, "\n"), tt.copied)
 			}
 		})
 	}
 
 	m := press(t, withDeps(t, ""), pick("tidyup", "j", "enter")...)
-	x, y, _, _ := m.depRect()
+	x, y := m.depRect().x, m.depRect().y
 	first := strings.TrimRight(ansi.Cut(ansi.Strip(m.depPopView()[0].text), 0, 12), " ")
 	m = update(t, m, tea.MouseClickMsg{X: x + 1, Y: y + 2, Button: tea.MouseLeft})
 	m = update(t, m, tea.MouseMotionMsg{X: x + 12, Y: y + 2, Button: tea.MouseLeft})

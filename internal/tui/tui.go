@@ -960,8 +960,7 @@ func (m *model) clamp() {
 		m.bodyOffset = scroll(m.bodyOffset, m.depCursor, l.bottomRows)
 	}
 	if m.depPop != nil {
-		_, _, _, h := m.depRect()
-		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-(h-3)), 0)
+		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-popupText(m.depRect()).h), 0)
 	}
 }
 
