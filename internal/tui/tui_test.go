@@ -376,6 +376,12 @@ func TestMouse(t *testing.T) {
 	outdatedChip := l.tableX + 1
 	for m := loaded(t); m.chipAt(outdatedChip-l.tableX-1) != statusOutdated; outdatedChip++ {
 	}
+	// tap is a press and release on one cell, which the sidebar's text takes
+	// as a click.
+	tap := func(x, y int) []tea.Msg {
+		return []tea.Msg{click(x, y), tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft}}
+	}
+	dep := func(i int) int { return at(l.topRows + 1 + i) }
 	tests := []struct {
 		id      string
 		msgs    []tea.Msg
@@ -384,6 +390,12 @@ func TestMouse(t *testing.T) {
 		check   func(model) bool
 		opened  []string
 	}{
+		{id: "click a dependency selects it", msgs: tap(l.sideX+5, dep(1)), current: "anvil",
+			check: func(m model) bool { return m.depCursor == 1 && m.depPop == nil && m.focus == focusSide }},
+		{id: "click it again opens its advisories", msgs: append(tap(l.sideX+5, dep(1)), tap(l.sideX+5, dep(1))...), current: "anvil",
+			check: func(m model) bool { return m.depPop != nil && m.depPop.dep.Name == "ca-certificates" }},
+		{id: "a click closes a finished install", msgs: []tea.Msg{key("l"), key("v"), tea.KeyPressMsg{Code: tea.KeyEnter}, key("y"), click(1, 1)}, current: "anvil",
+			check: func(m model) bool { return m.inst == nil }},
 		{id: "the wheel leaves the packages alone under an install dialog", msgs: []tea.Msg{key("l"), key("v"), tea.KeyPressMsg{Code: tea.KeyEnter},
 			tea.MouseWheelMsg{X: l.tableX + 5, Y: at(3), Button: tea.MouseWheelDown}}, current: "anvil",
 			check: func(m model) bool { return m.confirm != nil && m.confirm.title == "⬆ Upgrade anvil?" }},
@@ -655,6 +667,16 @@ func TestLinkStates(t *testing.T) {
 			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
 			toggled: []string{"link cursor"},
 			logged:  []string{"ln -s {real} /h/.cursor/skills/pathmaker"},
+		},
+		{
+			id:      "an agent not installed yet gets a link that waits for it, and isn't counted",
+			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing},
+			seen:    "🔗 Seen by 0 agents",
+			row:     "Goose · not installed /h/.config/goose/skills/pathmaker",
+			detail:  at("/h/.config/goose/skills/pathmaker", "Goose isn't installed yet; the link waits for it.", "enter links it into Goose's own folder."),
+			dialog:  []string{"🔗 Link pathmaker into Goose?", "creates  /h/.config/goose/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
+			toggled: []string{"link goose"},
+			logged:  []string{"ln -s {real} /h/.config/goose/skills/pathmaker"},
 		},
 		{
 			id:      "a skill whose entry in ~/.agents/skills is a link is linked through the entry, as the CLI does",
@@ -1223,6 +1245,43 @@ func TestStopInstall(t *testing.T) {
 	}
 }
 
+// While an install runs, its popup takes every click, turn of the wheel and
+// key but ctrl+c, so nothing behind it changes and it can't be closed.
+func TestRunningInstall(t *testing.T) {
+	l := loaded(t).layout()
+	tests := []struct {
+		id   string
+		msgs []tea.Msg
+	}{
+		{"a click leaves it open", []tea.Msg{tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft}}},
+		{"the wheel moves nothing under it", []tea.Msg{tea.MouseWheelMsg{X: l.tableX + 5, Y: l.top + 4, Button: tea.MouseWheelDown}}},
+		{"keys do nothing", []tea.Msg{key("q"), key("j"), tea.KeyPressMsg{Code: tea.KeyEnter}, tea.KeyPressMsg{Code: tea.KeyEscape}, key("t")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), "l", "v", "enter")
+			installScript = "echo started; sleep 5"
+			tm, cmd := m.Update(key("y"))
+			tm, _ = tm.Update(cmd())
+			tm, _ = tm.Update(tm.(model).inst.next()())
+			m = tm.(model)
+			defer m.inst.finish(time.Second)
+			for _, msg := range tt.msgs {
+				var cmd tea.Cmd
+				if tm, cmd = m.Update(msg); cmd != nil {
+					if _, quit := cmd().(tea.QuitMsg); quit {
+						t.Fatal("kho quit while the install ran")
+					}
+				}
+				m = tm.(model)
+			}
+			if p, _ := m.current(); !m.inst.running() || p.Name != "anvil" || m.activeTab() != tabVersions || m.sideCursor != 0 || len(ran) != 1 {
+				t.Errorf("running %v, current %q, tab %d, version %d, ran %v:\n%s", m.inst.running(), p.Name, m.activeTab(), m.sideCursor, ran, screen(m))
+			}
+		})
+	}
+}
+
 // A progress bar redraws its line after a \r. The popup shows each state as
 // it comes, rather than nothing until the line ends.
 func TestProgress(t *testing.T) {
@@ -1398,6 +1457,8 @@ func TestFooter(t *testing.T) {
 		want string
 	}{
 		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ J K dependency  enter its advisories  [ ] tabs  w home  ? help"},
+		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ agent  enter link or unlink  A all agents  [ ] tabs  ? help"},
+		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ agent  enter link or unlink  A installed only  [ ] tabs  ? help"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1509,6 +1570,36 @@ func TestDependencyPopup(t *testing.T) {
 		"",
 		"  A crafted header makes the parser loop.",
 	}
+	cryptoAdvisories := []string{"◆ example.org/crypto v0.20.0 · 2 advisories",
+		" GO-TEST-0003",
+		"  MED   A short read panics",
+		"",
+		" affects   v0.20.0",
+		" fixed in  no fix published yet",
+		" details   https://osv.dev/vulnerability/GO-TEST-0003",
+		"",
+		"  A truncated block makes the reader panic.",
+		"",
+		sep,
+		"",
+		" GO-TEST-0002",
+		"  LOW   Keys leak through timing",
+		"",
+		" affects   v0.20.0",
+		" fixed in  0.21.0",
+		" details   https://osv.dev/vulnerability/GO-TEST-0002",
+		"",
+		"  Comparing keys takes longer when more of them match.",
+	}
+	// short leaves the popup 13 rows for its text, fewer than the 19 the two
+	// advisories take.
+	short := []tea.Msg{tea.WindowSizeMsg{Width: 160, Height: 20}}
+	crypto := func(keys ...string) []string { return pick("tidyup", append([]string{"j", "j", "enter"}, keys...)...) }
+	text := popupText(loaded(t).depRect())
+	mouse := func(kind string, x, y int) tea.Msg {
+		ev := tea.Mouse{X: text.x + x, Y: text.y + y, Button: tea.MouseLeft}
+		return map[string]tea.Msg{"click": tea.MouseClickMsg(ev), "drag": tea.MouseMotionMsg(ev), "release": tea.MouseReleaseMsg(ev), "wheel": tea.MouseWheelMsg{X: ev.X, Y: ev.Y, Button: tea.MouseWheelDown}}[kind]
+	}
 	tests := []struct {
 		id, scan string
 		msgs     []tea.Msg
@@ -1516,7 +1607,9 @@ func TestDependencyPopup(t *testing.T) {
 		// after are messages that arrive once the popup is open.
 		after  []tea.Msg
 		text   []string
+		top    int
 		copied []string
+		opened []string
 	}{
 		{id: "a listing that adds rows ahead leaves the popup on its package", keys: pick("tidyup", "j", "enter"),
 			after: []tea.Msg{listedMsg{"brew", []provider.Package{{Source: "brew", Name: "tidyup", Version: "3.0.0"}}, nil}}, text: netAdvisory},
@@ -1536,28 +1629,17 @@ func TestDependencyPopup(t *testing.T) {
 		{id: "a checked dependency with no advisories says so", keys: pick("tidyup", "enter"),
 			text: []string{"◆ example.org/text v0.30.0", "", " ✓ No known advisories for example.org/text v0.30.0"}},
 		{id: "enter opens a dependency's advisory", keys: pick("tidyup", "j", "enter"), text: netAdvisory},
-		{id: "two advisories have a line between them", keys: pick("tidyup", "j", "j", "enter"),
-			text: []string{"◆ example.org/crypto v0.20.0 · 2 advisories",
-				" GO-TEST-0003",
-				"  MED   A short read panics",
-				"",
-				" affects   v0.20.0",
-				" fixed in  no fix published yet",
-				" details   https://osv.dev/vulnerability/GO-TEST-0003",
-				"",
-				"  A truncated block makes the reader panic.",
-				"",
-				sep,
-				"",
-				" GO-TEST-0002",
-				"  LOW   Keys leak through timing",
-				"",
-				" affects   v0.20.0",
-				" fixed in  0.21.0",
-				" details   https://osv.dev/vulnerability/GO-TEST-0002",
-				"",
-				"  Comparing keys takes longer when more of them match.",
-			}},
+		{id: "two advisories have a line between them", keys: crypto(), text: cryptoAdvisories},
+		{id: "j scrolls a popup taller than the screen", msgs: short, keys: crypto("j", "j", "j"), text: cryptoAdvisories, top: 3},
+		{id: "k scrolls it back", msgs: short, keys: crypto("j", "j", "j", "k"), text: cryptoAdvisories, top: 2},
+		{id: "scrolling stops at the last line", msgs: short, keys: crypto(slices.Repeat([]string{"j"}, 20)...), text: cryptoAdvisories, top: 6},
+		{id: "and at the first", msgs: short, keys: crypto("j", "k", "k"), text: cryptoAdvisories},
+		{id: "the wheel scrolls it", msgs: short, keys: crypto(), after: []tea.Msg{mouse("wheel", 5, 5), mouse("wheel", 5, 5)}, text: cryptoAdvisories, top: 2},
+		{id: "a click on its link opens it", keys: pick("tidyup", "j", "enter"), after: []tea.Msg{mouse("click", 20, 5), mouse("release", 20, 5)},
+			text: netAdvisory, opened: []string{"https://osv.dev/vulnerability/GO-TEST-0001"}},
+		{id: "a drag in it copies what it covers", keys: pick("tidyup", "j", "enter"), after: []tea.Msg{mouse("click", 0, 0), mouse("drag", 11, 0), mouse("release", 11, 0)},
+			text: netAdvisory, copied: []string{" GO-TEST-000"}},
+		{id: "a click outside closes it", keys: pick("tidyup", "j", "enter"), after: []tea.Msg{tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft}}},
 		{id: "esc closes it", keys: pick("tidyup", "j", "enter", "esc")},
 		{id: "c copies all of it", keys: pick("tidyup", "j", "enter", "c"), text: netAdvisory,
 			copied: []string{strings.TrimSpace(strings.Join(netAdvisory[1:], "\n"))}},
@@ -1572,23 +1654,14 @@ func TestDependencyPopup(t *testing.T) {
 			for _, msg := range tt.after {
 				m = update(t, m, msg)
 			}
-			if got := depPopupLines(m); !slices.Equal(got, tt.text) || !slices.Equal(copied, tt.copied) {
-				t.Errorf("popup\n%s\ncopied %q\nwant\n%s\ncopied %q", strings.Join(got, "\n"), copied, strings.Join(tt.text, "\n"), tt.copied)
+			top := 0
+			if m.depPop != nil {
+				top = m.depPop.top
+			}
+			if got := depPopupLines(m); !slices.Equal(got, tt.text) || top != tt.top || !slices.Equal(copied, tt.copied) || !slices.Equal(opened, tt.opened) {
+				t.Errorf("popup at %d\n%s\ncopied %q, opened %q\nwant at %d\n%s\ncopied %q, opened %q",
+					top, strings.Join(got, "\n"), copied, opened, tt.top, strings.Join(tt.text, "\n"), tt.copied, tt.opened)
 			}
 		})
-	}
-
-	m := press(t, withDeps(t, ""), pick("tidyup", "j", "enter")...)
-	x, y := m.depRect().x, m.depRect().y
-	first := strings.TrimRight(ansi.Cut(ansi.Strip(m.depPopView()[0].text), 0, 12), " ")
-	m = update(t, m, tea.MouseClickMsg{X: x + 1, Y: y + 2, Button: tea.MouseLeft})
-	m = update(t, m, tea.MouseMotionMsg{X: x + 12, Y: y + 2, Button: tea.MouseLeft})
-	m = update(t, m, tea.MouseReleaseMsg{X: x + 12, Y: y + 2, Button: tea.MouseLeft})
-	if !reflect.DeepEqual(copied, []string{first}) || m.depPop == nil {
-		t.Errorf("a drag in the popup copied %q, want %q, and the popup open", copied, first)
-	}
-	m = update(t, m, tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
-	if m.depPop != nil {
-		t.Error("a click outside the popup should close it")
 	}
 }
