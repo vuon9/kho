@@ -1130,6 +1130,8 @@ func TestInstall(t *testing.T) {
 			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c"},
 		{id: "a child that keeps the output open can't hold the popup open", script: "set -m; (sleep 4; echo late) & echo started", keys: upgrade, ran: []string{brew},
 			shows: []string{"started", "✓ done"}, hides: "late", open: true},
+		{id: "but one still writing is read to its end", script: "(for i in 1 2 3; do sleep 0.4; echo tick $i; done) & echo started", keys: upgrade, ran: []string{brew},
+			shows: []string{"started", "tick 3", "✓ done"}, open: true},
 		{id: "output streams into a popup", script: "echo fetched anvil; echo poured", keys: upgrade, ran: []string{brew},
 			shows: []string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, open: true},
 		{id: "a failure says so and offers the terminal", script: "echo no space left; exit 3", keys: upgrade, ran: []string{brew},
@@ -1285,16 +1287,17 @@ func TestRunningInstall(t *testing.T) {
 // A progress bar redraws its line after a \r. The popup shows each state as
 // it comes, rather than nothing until the line ends.
 func TestProgress(t *testing.T) {
+	// Each printf lands on its own, so each shows as a state of its own.
 	tests := []struct {
 		id, script string
 		// states are the popup's output lines after each message.
 		states [][]string
 	}{
-		{"a progress bar shows each state as it redraws", `printf 'step 1\r'; sleep 0.2; printf 'step 2\r'; printf 'step 3\n'; echo done`,
+		{"a progress bar shows each state as it redraws", `printf 'step 1\r'; sleep 0.1; printf 'step 2\r'; sleep 0.1; printf 'step 3\n'; sleep 0.1; echo done`,
 			[][]string{{"step 1"}, {"step 2"}, {"step 3"}, {"step 3", "done"}}},
-		{"a \\r before a \\n leaves the line as it was", `printf 'step 1\r\nnext\n'`, [][]string{{"step 1"}, {"step 1", "next"}}},
-		{"a bare \\r changes nothing", `printf '\rten\r\rtwenty\n'`, [][]string{{"ten"}, {"twenty"}}},
-		{"an empty line stays", `printf 'a\n\nb\n'`, [][]string{{"a"}, {"a", ""}, {"a", "", "b"}}},
+		{"a \\r before a \\n leaves the line as it was", `printf 'step 1\r'; sleep 0.1; printf '\nnext\n'`, [][]string{{"step 1"}, {"step 1", "next"}}},
+		{"a bare \\r changes nothing", `printf '\r'; sleep 0.1; printf 'ten\r'; sleep 0.1; printf '\r'; sleep 0.1; printf 'twenty\n'`, [][]string{{"ten"}, {"twenty"}}},
+		{"an empty line stays", `printf 'a\n'; sleep 0.1; printf '\n'; sleep 0.1; printf 'b\n'`, [][]string{{"a"}, {"a", ""}, {"a", "", "b"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1313,6 +1316,50 @@ func TestProgress(t *testing.T) {
 			}
 			if !reflect.DeepEqual(states, tt.states) {
 				t.Errorf("got  %q\nwant %q", states, tt.states)
+			}
+		})
+	}
+}
+
+// The screen takes a while to draw each update, but the output is read as
+// fast as the command writes it, so none is lost, on screen or in the
+// history.
+func TestSlowScreen(t *testing.T) {
+	tests := []struct {
+		id, script string
+		// draw is how long the screen takes per update.
+		draw time.Duration
+		// last are the popup's last lines, and logged how the history entry
+		// ends.
+		last   []string
+		logged string
+	}{
+		{"a failing build's last error survives a slow screen", "seq 1 30000; echo LAST LINE; exit 1", time.Millisecond,
+			[]string{"29999", "30000", "LAST LINE"}, "exit status 1: ...29999\n30000\nLAST LINE\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), "l", "v", "enter")
+			installScript = tt.script
+			tm, cmd := m.Update(key("y"))
+			tm, _ = tm.Update(cmd())
+			for {
+				msg := tm.(model).inst.next()()
+				time.Sleep(tt.draw)
+				if tm, _ = tm.Update(msg); tm.(model).inst.done != nil {
+					break
+				}
+			}
+			lines := tm.(model).inst.lines
+			lines = lines[max(len(lines)-len(tt.last), 0):]
+			es := tm.(model).log.Entries()
+			logged := ""
+			if len(es) == 1 {
+				out := es[0].Output
+				logged = es[0].Err + ": ..." + out[max(len(out)-len("29999\n30000\nLAST LINE\n"), 0):]
+			}
+			if !slices.Equal(lines, tt.last) || logged != tt.logged {
+				t.Errorf("popup ends %q, logged %q (%d entries), want %q, %q", lines, logged, len(es), tt.last, tt.logged)
 			}
 		})
 	}

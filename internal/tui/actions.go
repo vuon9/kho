@@ -8,7 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -98,30 +101,38 @@ func (m *model) askInstall() {
 	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider.ProviderOf(p), p.Name, r.Version, nil})}
 }
 
-// installing is a package manager running in a popup. Its output, and then
-// its installedMsg, arrive on events; logged closes once it is in the
-// history. cmd is the command as kho asked for it, which t runs again in the
-// terminal.
+// installing is a package manager running in a popup. cmd is the command as
+// kho asked for it, which t runs again in the terminal, and lines are the
+// output the popup shows.
+//
+// The output is read as fast as the command writes it, whatever the
+// screen's pace: the reader keeps the lines a terminal would show in shown,
+// and says so on changed. Once the install is logged, logged closes and its
+// installedMsg comes on over.
 type installing struct {
 	title      string
 	cmd        *exec.Cmd
 	lines      []string
 	start, end time.Time
-	events     chan tea.Msg
-	logged     chan struct{}
 	done       *installedMsg
 	pid        int
 	stopping   bool
+
+	mu      sync.Mutex
+	shown   []string
+	changed chan struct{}
+	logged  chan struct{}
+	over    chan installedMsg
 }
 
 type installStartedMsg struct{ *installing }
 
-// outputMsg is a line the install printed. redraw says it replaces the line
-// before, as a progress bar redraws itself after a \r.
-type outputMsg struct {
-	text   string
-	redraw bool
-}
+// outputMsg is the output the popup shows, newest last.
+type outputMsg []string
+
+// live is the install kho started last. serve stops it if it is still going
+// when kho leaves, even if the screen never heard it started.
+var live atomic.Pointer[installing]
 
 // startInstall runs cmd in a popup. A command that can't even start leaves
 // nothing to watch or stop, so it comes back as a failed installedMsg.
@@ -134,14 +145,55 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 			log.Add(entry(history.Change, cmd.Args, 0, err, ""))
 			return done
 		}
-		in := &installing{title: title, cmd: cmd, start: now(), events: make(chan tea.Msg, 64), logged: make(chan struct{}), pid: run.Process.Pid}
+		in := &installing{title: title, cmd: cmd, start: now(), pid: run.Process.Pid,
+			changed: make(chan struct{}, 1), logged: make(chan struct{}), over: make(chan installedMsg, 1)}
+		live.Store(in)
 		go in.run(run, out, log, done)
 		return installStartedMsg{in}
 	}
 }
 
+// next waits for new output or the end. New output goes first, so the last
+// lines are on screen before the result.
 func (in *installing) next() tea.Cmd {
-	return func() tea.Msg { return <-in.events }
+	return func() tea.Msg {
+		select {
+		case <-in.changed:
+			return outputMsg(in.screen())
+		default:
+		}
+		select {
+		case <-in.changed:
+			return outputMsg(in.screen())
+		case done := <-in.over:
+			return done
+		}
+	}
+}
+
+func (in *installing) screen() []string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return slices.Clone(in.shown)
+}
+
+// show adds a line to the output, or puts it over the last one when a \r
+// went back over that.
+func (in *installing) show(text string, redraw bool) {
+	in.mu.Lock()
+	if n := len(in.shown); redraw && n > 0 {
+		in.shown[n-1] = text
+	} else {
+		in.shown = append(in.shown, text)
+	}
+	if over := len(in.shown) - 500; over > 0 {
+		in.shown = in.shown[over:]
+	}
+	in.mu.Unlock()
+	select {
+	case in.changed <- struct{}{}:
+	default:
+	}
 }
 
 // The phases of an install. Its popup, its keys and the footer all go by
@@ -190,20 +242,16 @@ func (in *installing) stop() {
 }
 
 // finish stops an install kho is leaving, and kills it when it is still
-// going after patience. It returns once the install is logged. Nothing
-// reads the events any more, so finish drains them.
+// going after patience. It returns once the install is logged.
 func (in *installing) finish(patience time.Duration) {
 	in.stop()
-	kill := time.After(patience)
-	for {
-		select {
-		case <-in.events:
-		case <-kill:
-			in.stop()
-		case <-in.logged:
-			return
-		}
+	select {
+	case <-in.logged:
+		return
+	case <-time.After(patience):
 	}
+	in.stop()
+	<-in.logged
 }
 
 // detach starts cmd in a session of its own, with no terminal: a password
@@ -224,38 +272,63 @@ func detach(cmd *exec.Cmd) (*os.File, error) {
 	return r, nil
 }
 
-// outputGrace is how long kho reads on once the command has exited. A child
-// it left behind, maybe in a process group of its own where a stop can't
-// reach it, can hold the output open for as long as it likes.
+// outputGrace is how long the output may go quiet after the command exits
+// before kho stops reading it.
 const outputGrace = time.Second
 
-// run streams cmd's output while it runs, and sends its installedMsg once it
+// run reads cmd's output while it runs, and sends its installedMsg once it
 // has exited and is logged.
 func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done installedMsg) {
 	var output tail
+	var got counter
 	start := time.Now()
 	read := make(chan struct{})
 	go func() {
-		in.stream(out, &output)
+		in.stream(io.TeeReader(out, io.MultiWriter(&output, &got)))
 		close(read)
 	}()
 	done.err = cmd.Wait()
-	select {
-	case <-read:
-	case <-time.After(outputGrace):
-	}
+	// A child the command left behind, maybe in a process group of its own
+	// that a stop can't reach, can hold the output open for as long as it
+	// likes. Once it has been quiet for outputGrace, kho closes it, and the
+	// child gets SIGPIPE if it writes again.
+	quiet(read, &got)
 	out.Close()
 	<-read
 	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
 	close(in.logged)
-	in.events <- done
+	in.over <- done
 }
 
-// stream sends what the command prints until the output ends or is closed.
-// A line still open after a \r is sent as it is, then redrawn by what comes
+// quiet waits until the output ends, or until nothing has come on it for
+// outputGrace.
+func quiet(read <-chan struct{}, got *counter) {
+	for {
+		seen := got.Load()
+		select {
+		case <-read:
+			return
+		case <-time.After(outputGrace):
+			if got.Load() == seen {
+				return
+			}
+		}
+	}
+}
+
+// counter counts the bytes written to it.
+type counter struct{ atomic.Int64 }
+
+func (c *counter) Write(p []byte) (int, error) {
+	c.Add(int64(len(p)))
+	return len(p), nil
+}
+
+// stream reads what the command prints until the output ends or is closed.
+// A line still open after a \r is shown as it is, then redrawn by what comes
 // next, so a progress bar shows its latest state.
-func (in *installing) stream(out io.Reader, output io.Writer) {
-	sc := bufio.NewScanner(io.TeeReader(out, output))
+func (in *installing) stream(r io.Reader) {
+	sc := bufio.NewScanner(r)
 	sc.Buffer(nil, 1<<20)
 	sc.Split(scanLines)
 	open := false
@@ -268,12 +341,12 @@ func (in *installing) stream(out io.Reader, output io.Writer) {
 			open = open && cr
 			continue
 		}
-		in.events <- outputMsg{printable(text), open}
+		in.show(printable(text), open)
 		open = cr
 	}
 	// A line too long for the scanner stops it; read the rest so the command
 	// never blocks on a full pipe.
-	io.Copy(output, out)
+	io.Copy(io.Discard, r)
 }
 
 // scanLines splits output after each \n or \r, and keeps the one that ended
