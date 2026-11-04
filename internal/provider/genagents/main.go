@@ -155,7 +155,7 @@ func firstFound(code string, bases map[string]string) ([]string, error) {
 			return nil, shape
 		}
 	}
-	return dirs[:n], nil
+	return dirs[:max(n, 1)], nil
 }
 
 // path turns join(base, 'a', 'b'), a base on its own, or a quoted absolute

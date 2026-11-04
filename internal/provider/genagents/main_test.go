@@ -52,6 +52,11 @@ func TestGenerate(t *testing.T) {
 			want: file(`{Name: "pincer", Display: "Pincer", Dirs: []string{"~/.pincer/skills", "~/.clawpincer/skills"}, Detect: []string{"~/.pincer"}}`),
 		},
 		{
+			id:   "a helper with one folder to pick gives that folder",
+			src:  agentsTS(pick("Reed", ".reed"), agent("reed", "skills", "getReedGlobalSkillsDir()", "existsSync(join(home, '.reed'))")),
+			want: file(`{Name: "reed", Display: "Reed", Dirs: []string{"~/.reed/skills"}, Detect: []string{"~/.reed"}}`),
+		},
+		{
 			id:  "a folder picked some other way fails",
 			src: agentsTS(pick("Quill", ".quill", ".oldquill", ".newquill"), agent("quill", "skills", "getQuillGlobalSkillsDir()", "existsSync(join(home, '.quill'))")),
 			err: "getQuillGlobalSkillsDir: must return the first folder whose parent exists, or else the first",
