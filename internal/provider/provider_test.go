@@ -542,6 +542,7 @@ func TestSkillLinks(t *testing.T) {
 				t.Fatalf("scanSkills did not list %s", p.Path)
 			}
 			scanned := slices.DeleteFunc(pkgs[i].Agents, func(a string) bool { _, ok := got[a]; return !ok })
+			slices.Sort(seen)
 			slices.Sort(scanned)
 			if !slices.Equal(seen, scanned) {
 				t.Errorf("seen by %v, but scanSkills says %v", seen, scanned)
@@ -551,15 +552,49 @@ func TestSkillLinks(t *testing.T) {
 }
 
 func TestSkillLinksAll(t *testing.T) {
-	clearAgentEnv(t)
-	home := t.TempDir()
-	build(t, home, ".agents/skills/workflow/SKILL.md", ".config/goose/")
-	byAgent := map[string]SkillLink{}
-	for _, l := range skillLinks(home, Package{Name: "workflow"}, true) {
-		byAgent[l.Agent] = l
+	// Agents found through a system path like /Applications vary by machine,
+	// so both sides leave them out.
+	machine := func(name string) bool {
+		i := slices.IndexFunc(skillAgents, func(a skillAgent) bool { return a.Name == name })
+		return slices.ContainsFunc(skillAgents[i].Detect, func(p string) bool { return strings.HasPrefix(p, "/") })
 	}
-	if len(byAgent) != len(skillAgents) || byAgent["amp"].Installed || !byAgent["goose"].Installed || byAgent["goose"].Display != "Goose" {
-		t.Errorf("all agents: %d of %d, amp %+v, goose %+v", len(byAgent), len(skillAgents), byAgent["amp"], byAgent["goose"])
+	var every []string
+	for _, a := range skillAgents {
+		switch {
+		case machine(a.Name):
+		case a.Name == "goose":
+			every = append(every, "Goose, installed")
+		default:
+			every = append(every, a.Display)
+		}
+	}
+	tests := []struct {
+		id   string
+		all  bool
+		want []string
+	}{
+		{"by default only the installed agents come back", false, []string{"Goose, installed"}},
+		{"with all set, every agent the skills CLI supports does, in its order", true, every},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home := t.TempDir()
+			build(t, home, ".agents/skills/workflow/SKILL.md", ".config/goose/")
+			var got []string
+			for _, l := range skillLinks(home, Package{Name: "workflow"}, tt.all) {
+				switch {
+				case machine(l.Agent):
+				case l.Installed:
+					got = append(got, l.Display+", installed")
+				default:
+					got = append(got, l.Display)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
 	}
 }
 
