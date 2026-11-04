@@ -120,7 +120,9 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// inventory lists every provider with latest versions, in parallel.
+// inventory lists every provider with latest versions, in parallel. A failed
+// list is filed under the provider's name, and a failed latest lookup under
+// "<name> latest", since its packages were still read and can be checked.
 func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]string) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -129,13 +131,17 @@ func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]st
 	for _, p := range env.Providers {
 		wg.Go(func() {
 			pkgs, err := p.List(ctx)
+			var latestErr error
 			if err == nil {
-				pkgs, err = p.Latest(ctx, pkgs)
+				pkgs, latestErr = p.Latest(ctx, pkgs)
 			}
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				errs[p.Name()] = err.Error()
+			}
+			if latestErr != nil {
+				errs[p.Name()+" latest"] = latestErr.Error()
 			}
 			all = append(all, pkgs...)
 		})

@@ -210,8 +210,9 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 	uvMissing := map[string]string{"uv": "uv not on PATH"}
 	vulnerable := map[string][]string{"bramble": {"GHSA-test"}}
 	npm := fake{name: "npm", pkgs: []provider.Package{{Source: "npm", Name: "diffkit", Version: "0.23.0", Latest: "0.23.0"}}}
-	listFails := npm
+	listFails, latestFails := npm, npm
 	listFails.listErr = errors.New("npm ls: boom")
+	latestFails.latestErr = errors.New("registry is down")
 	type result struct {
 		code   int
 		stderr string
@@ -229,6 +230,10 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 			result{ExitAtRisk, "scan was not complete: uv (uv not on PATH)", nil}},
 		{"a required source whose list failed fails, and says why", listFails, nil, nil, []string{"--require", "npm"},
 			result{ExitIncomplete, "scan was not complete for npm failed: npm ls: boom", map[string]string{"npm": "npm ls: boom"}}},
+		{"a required source whose latest versions failed was still read", latestFails, nil, nil, []string{"--require", "npm"},
+			result{ExitOK, "", map[string]string{"npm latest": "registry is down"}}},
+		{"a failed latest lookup still leaves the scan incomplete", latestFails, nil, nil, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: npm latest failed: registry is down", map[string]string{"npm latest": "registry is down"}}},
 		{"a partial scan still passes without the flag", npm, uvMissing, nil, nil, result{ExitOK, "", nil}},
 		{"a partial scan fails with the flag, and says why", npm, uvMissing, nil, []string{"--require-complete"},
 			result{ExitIncomplete, "scan was not complete: uv (uv not on PATH)", nil}},
