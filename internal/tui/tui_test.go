@@ -634,11 +634,11 @@ func TestLinkStates(t *testing.T) {
 			logged:  []string{"rm /h/.config/opencode/skills/pathmaker"},
 		},
 		{
-			id:      "a broken one there doesn't",
+			id:      "a broken one there doesn't, though it still sees the shared copy",
 			link:    provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkSymlink, Shared: true, Installed: true},
 			seen:    "🔗 Seen by 1 agents",
 			row:     "OpenCode ⚠ broken /h/.config/opencode/skills/pathmaker",
-			detail:  at("/h/.config/opencode/skills/pathmaker", "This link leads to no SKILL.md, so OpenCode doesn't load the skill from it.", removes),
+			detail:  at("/h/.config/opencode/skills/pathmaker", "This link leads to no SKILL.md, so OpenCode doesn't load the skill from it.", "OpenCode still sees the skill through ~/.agents/skills.", removes),
 			dialog:  unlink("OpenCode"),
 			toggled: []string{"unlink opencode"},
 			logged:  []string{"rm /h/.config/opencode/skills/pathmaker"},

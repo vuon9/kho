@@ -826,6 +826,9 @@ func (m model) linkDetail(p provider.Package) []line {
 		switch {
 		case !l.Own:
 			say("This link leads to no SKILL.md, so " + name + " doesn't load the skill from it.")
+			if l.Shared {
+				say(name + " still sees the skill through ~/.agents/skills.")
+			}
 		case l.Shared:
 			say(name + " also reads ~/.agents/skills, so it loads this skill twice.")
 		}
