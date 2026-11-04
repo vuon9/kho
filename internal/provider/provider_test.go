@@ -640,7 +640,7 @@ func TestLinkSkill(t *testing.T) {
 			err: "opencode already sees workflow through ~/.agents/skills"},
 		{id: "nor does an agent with no folder of its own", agent: "codex", files: skill, err: "codex has no skills folder of its own"},
 		{id: "a copied folder stays", agent: "cursor", files: skill, err: "cursor already has ~/.cursor/skills/workflow"},
-		{id: "an agent with a folder of its own gets a relative link", agent: "goose", files: skill,
+		{id: "an agent with a folder of its own gets a short relative link, though home is under a symlink", agent: "goose", files: skill,
 			added: []string{".config/goose/skills/", ".config/goose/skills/workflow -> ../../../.agents/skills/workflow"}},
 		{id: "the link goes through the skill's entry in ~/.agents/skills, not to where that leads", agent: "goose",
 			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".config/goose/"},
@@ -660,9 +660,13 @@ func TestLinkSkill(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			clearAgentEnv(t)
-			home, _ := filepath.EvalSymlinks(t.TempDir())
+			// Home sits under a symlink, as macOS temp folders do under /var.
+			real, home := t.TempDir(), filepath.Join(t.TempDir(), "home")
+			if err := os.Symlink(real, home); err != nil {
+				t.Fatal(err)
+			}
 			build(t, home, tt.files...)
-			before := tree(home)
+			before := tree(real)
 			skill := cmp.Or(tt.skill, ".agents/skills/workflow")
 			p := Package{Name: filepath.Base(skill), Path: filepath.Join(home, skill)}
 			links := skillLinks(home, p, true)
@@ -671,7 +675,7 @@ func TestLinkSkill(t *testing.T) {
 			if err := linkSkill(home, links[i], p); err != nil {
 				gotErr = strings.ReplaceAll(err.Error(), home, "~")
 			}
-			added := slices.DeleteFunc(tree(home), func(e string) bool { return slices.Contains(before, e) })
+			added := slices.DeleteFunc(tree(real), func(e string) bool { return slices.Contains(before, e) })
 			if !slices.Equal(added, tt.added) || gotErr != tt.err {
 				t.Errorf("added %q %q\nwant  %q %q", added, gotErr, tt.added, tt.err)
 			}

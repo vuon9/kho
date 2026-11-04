@@ -506,12 +506,19 @@ func linkSkill(home string, l SkillLink, p Package) error {
 		return err
 	}
 	// A link is read from the folder it really sits in, so a symlinked parent
-	// would make a path worked out from dir wrong.
+	// would make a path worked out from dir wrong. The target's parent is
+	// resolved too, so a home under a symlink still gives a short path, while
+	// the target itself stays the entry it is.
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(realDir, linkTarget(home, p))
+	target := linkTarget(home, p)
+	targetDir, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realDir, filepath.Join(targetDir, filepath.Base(target)))
 	if err != nil {
 		return err
 	}
