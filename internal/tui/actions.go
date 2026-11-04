@@ -370,7 +370,7 @@ func printable(s string) string {
 			return -1
 		}
 		return r
-	}, strings.ReplaceAll(ansi.Strip(s), "\t", "    "))
+	}, expandTabs(ansi.Strip(s)))
 }
 
 // askLink offers to add or remove the selected agent's link to a skill.

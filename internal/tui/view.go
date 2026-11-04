@@ -449,8 +449,33 @@ func overlay(screen, boxed string, x, y, w int) string {
 }
 
 func wrap(text string, w int) []string {
-	text = strings.NewReplacer("\r\n", "\n", "\t", "    ").Replace(strings.TrimSpace(text))
+	text = expandTabs(strings.ReplaceAll(strings.TrimSpace(text), "\r\n", "\n"))
 	return strings.Split(ansi.Wrap(text, max(w, 10), ""), "\n")
+}
+
+// expandTabs turns each tab into spaces up to the next multiple of 8
+// columns, as a terminal lines them up.
+func expandTabs(s string) string {
+	if !strings.Contains(s, "\t") {
+		return s
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		switch r {
+		case '\t':
+			n := 8 - col%8
+			b.WriteString(strings.Repeat(" ", n))
+			col += n
+		case '\n':
+			b.WriteRune(r)
+			col = 0
+		default:
+			b.WriteRune(r)
+			col += ansi.StringWidth(string(r))
+		}
+	}
+	return b.String()
 }
 
 func edge(focused bool) lipgloss.Style {

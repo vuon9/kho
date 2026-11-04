@@ -951,7 +951,7 @@ func TestHistory(t *testing.T) {
 		m := loaded(t)
 		m.log.Add(history.Entry{At: clock, Kind: history.Read, Command: []string{"brew", "info", "--json=v2", "--installed"}, Took: 1300 * time.Millisecond})
 		m.log.Add(history.Entry{At: clock.Add(time.Minute), Kind: history.Change, Command: []string{"pipx", "install", "--force", "bramble==26.10.1"},
-			Err: "exit status 1", Output: "boom: no matching distribution"})
+			Err: "exit status 1", Output: "boom:\tno matching distribution"})
 		m.log.Add(history.Entry{At: clock.Add(2 * time.Minute), Kind: history.Change, Command: []string{"ln", "-s", "/h/.agents/skills/pathmaker", "/h/.cursor/skills/pathmaker"}})
 		return m
 	}
@@ -973,7 +973,7 @@ func TestHistory(t *testing.T) {
 			like: []string{"H", "esc"}},
 		{id: "H lists every command, newest first", keys: []string{"H"}, want: []string{"🕘 History · 3", "ln -s /h/.agents", "pipx install --force", "brew info --json=v2 --installed", "1.3s", "⌨ ln", "change: kho changed the machine"}},
 		{id: "f keeps the changes", keys: []string{"H", "f"}, want: []string{"🕘 History · 2 · ✎ Changes", "✎ Changes 2"}, lacks: []string{"brew info"}},
-		{id: "f again keeps the failures", keys: []string{"H", "f", "f"}, want: []string{"✗ Failed 1", "✗ exit status 1", "boom: no matching distribution"}, lacks: []string{"ln -s"}},
+		{id: "f again keeps the failures", keys: []string{"H", "f", "f"}, want: []string{"✗ Failed 1", "✗ exit status 1", "boom:   no matching distribution"}, lacks: []string{"ln -s"}},
 		{id: "/ filters the commands", keys: []string{"H", "/", "b", "r", "e", "w", "enter"}, want: []string{"🕘 History · 1", "brew info"}, lacks: []string{"pipx install"}},
 		{id: "c copies the selected command", keys: []string{"H", "j", "c"}, copied: []string{"pipx install --force bramble==26.10.1"}},
 		{id: "esc goes back to the packages", keys: []string{"H", "esc"}, want: []string{"✨ Sources"}, lacks: []string{"🕘 History"}},
@@ -1179,7 +1179,7 @@ func TestInstall(t *testing.T) {
 		{id: "t does nothing after a success", script: "echo fetched", keys: append(upgrade, "t"), ran: []string{brew}, shows: []string{"✓ done"}, open: true},
 		{id: "a progress line keeps its last state", script: `printf 'step 1\rstep 2\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"step 2"}, hides: "step 1", open: true},
 		{id: "colors are dropped", script: `printf '\033[32mgreen\033[0m\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"green"}, hides: "[32m", open: true},
-		{id: "tabs become spaces", script: `printf '\tgo: missing module\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"┃     go: missing module"}, hides: "\t", open: true},
+		{id: "tabs become spaces", script: `printf '\tgo: missing module\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"┃         go: missing module"}, hides: "\t", open: true},
 		{id: "other control characters are dropped", script: `printf 'ding\a dong\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"ding dong"}, hides: "\a", open: true},
 		{id: "the command can't reach the terminal", script: `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, keys: upgrade, ran: []string{brew},
 			shows: []string{"no-tty"}, hides: "has-tty", open: true},
@@ -1474,6 +1474,25 @@ type panics struct{}
 func (panics) Init() tea.Cmd                       { return nil }
 func (panics) Update(tea.Msg) (tea.Model, tea.Cmd) { panic("boom") }
 func (panics) View() tea.View                      { return tea.NewView("") }
+
+// Tabs line columns up the way a terminal does, at every 8th column.
+func TestExpandTabs(t *testing.T) {
+	tests := []struct{ id, in, want string }{
+		{"a tab after text goes to the next stop", "ab\tcd", "ab      cd"},
+		{"columns stay lined up", "name\tversion\nanvil-cli\t0.2.89", "name    version\nanvil-cli       0.2.89"},
+		{"a leading tab is a whole stop", "\tgo: missing module", "        go: missing module"},
+		{"text that ends on a stop gets a whole one more", "abcdefgh\tz", "abcdefgh        z"},
+		{"a wide character takes two columns", "✨\tz", "✨      z"},
+		{"no tab, no change", "plain", "plain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := expandTabs(tt.in); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 // A box laid over a line must keep the line's width even when its edge cuts a
 // wide character in half, or everything after it shifts by a column.
