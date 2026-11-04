@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -61,8 +60,29 @@ func (a skillAgent) dir(home string) string {
 	return d
 }
 
-func (a skillAgent) readsShared(home string) bool {
-	return a.Universal || a.dir(home) == ""
+// link is how the agent sees the skill called name, where inShared says
+// whether ~/.agents/skills holds it. Both the Links tab and the agents a
+// listed skill names come from here, so they always agree.
+func (a skillAgent) link(home, name string, inShared bool) SkillLink {
+	d := a.dir(home)
+	l := SkillLink{Agent: a.Name, Display: a.Display, Shared: inShared && (a.Universal || d == "")}
+	if d == "" {
+		l.Path, l.Kind = filepath.Join(home, ".agents", "skills", name), LinkNoFolder
+		return l
+	}
+	l.Path = filepath.Join(d, name)
+	info, err := os.Lstat(l.Path)
+	switch {
+	case err != nil:
+		l.Kind = LinkMissing
+	case info.Mode()&os.ModeSymlink != 0:
+		l.Kind = LinkSymlink
+		l.Target, _ = filepath.EvalSymlinks(l.Path)
+	default:
+		l.Kind = LinkCopy
+	}
+	l.Own = isSkill(l.Path)
+	return l
 }
 
 func (a skillAgent) installed(home string) bool {
@@ -136,14 +156,19 @@ func (Skills) List(context.Context) ([]Package, error) {
 	return scanSkills(home, lock)
 }
 
-// skillNames lists the skills in dir. As in the skills CLI, an entry is a
-// skill only when it holds a SKILL.md, so a link whose skill was removed, or a
-// category folder of bundled skills, is not one.
+// isSkill says whether dir holds a skill. As in the skills CLI, it does only
+// with a SKILL.md, so a link whose skill was removed, or a category folder of
+// bundled skills, is not one.
+func isSkill(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "SKILL.md"))
+	return err == nil
+}
+
 func skillNames(dir string) map[string]bool {
 	names := map[string]bool{}
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil && !strings.HasPrefix(e.Name(), ".") {
+		if !strings.HasPrefix(e.Name(), ".") && isSkill(filepath.Join(dir, e.Name())) {
 			names[e.Name()] = true
 		}
 	}
@@ -154,20 +179,33 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 	shared := filepath.Join(home, ".agents", "skills")
 	canonical := skillNames(shared)
 	var agents []skillAgent
-	own := map[string]map[string]bool{}
+	unmanaged := map[string]string{}
 	for _, a := range skillAgents {
 		if !a.installed(home) {
 			continue
 		}
 		agents = append(agents, a)
 		if d := a.dir(home); d != "" {
-			own[a.Name] = skillNames(d)
+			for name := range skillNames(d) {
+				if !canonical[name] {
+					unmanaged[name] = cmp.Or(unmanaged[name], filepath.Join(d, name))
+				}
+			}
 		}
+	}
+	seenBy := func(name string) []string {
+		var as []string
+		for _, a := range agents {
+			if a.link(home, name, canonical[name]).Sees() {
+				as = append(as, a.Name)
+			}
+		}
+		return as
 	}
 
 	var pkgs []Package
 	for name := range canonical {
-		p := Package{Source: "skills", Name: name, Version: "-", Path: filepath.Join(shared, name)}
+		p := Package{Source: "skills", Name: name, Version: "-", Path: filepath.Join(shared, name), Agents: seenBy(name)}
 		if e, ok := lock[name]; ok {
 			p.Origin = e.Source
 			p.Version = shortHash(e.SkillFolderHash)
@@ -182,31 +220,15 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 		} else {
 			p.Note = "no lock entry, the skills CLI can't update it"
 		}
-		for _, a := range agents {
-			if a.readsShared(home) || own[a.Name][name] {
-				p.Agents = append(p.Agents, a.Name)
-			}
-		}
 		pkgs = append(pkgs, p)
 	}
-
-	unmanaged := map[string][]string{}
-	paths := map[string]string{}
-	for _, a := range agents {
-		for name := range own[a.Name] {
-			if !canonical[name] {
-				unmanaged[name] = append(unmanaged[name], a.Name)
-				paths[name] = cmp.Or(paths[name], filepath.Join(a.dir(home), name))
-			}
-		}
-	}
-	for name, as := range unmanaged {
-		sort.Strings(as)
+	for name, path := range unmanaged {
+		as := seenBy(name)
 		pkgs = append(pkgs, Package{
 			Source:  "skills",
 			Name:    name,
 			Version: "-",
-			Path:    paths[name],
+			Path:    path,
 			Agents:  as,
 			Note:    "only in " + strings.Join(as, ", ") + ", not managed by the skills CLI",
 		})
@@ -398,14 +420,17 @@ type SkillLink struct {
 	Target         string
 	// Shared is true when the agent reads ~/.agents/skills and the skill is
 	// there, so it sees the skill without a link of its own.
-	Shared    bool
+	Shared bool
+	// Own is true when Path holds the skill, SKILL.md and all. A broken link
+	// is still a link to remove, but not a skill the agent loads.
+	Own       bool
 	Installed bool
 }
 
 // Sees says whether the agent loads the skill, from its own folder or from
 // ~/.agents/skills.
 func (l SkillLink) Sees() bool {
-	return l.Shared || l.Kind == LinkSymlink || l.Kind == LinkCopy
+	return l.Shared || l.Own
 }
 
 // CanLink says whether a link of the agent's own would add the skill: its
@@ -430,32 +455,15 @@ func SkillLinks(p Package, all bool) []SkillLink {
 }
 
 func skillLinks(home string, p Package, all bool) []SkillLink {
-	shared := filepath.Join(home, ".agents", "skills", p.Name)
-	_, inShared := os.Stat(shared)
+	inShared := isSkill(filepath.Join(home, ".agents", "skills", p.Name))
 	var links []SkillLink
 	for _, a := range skillAgents {
 		installed := a.installed(home)
 		if !installed && !all {
 			continue
 		}
-		l := SkillLink{Agent: a.Name, Display: a.Display, Installed: installed, Shared: a.readsShared(home) && inShared == nil}
-		d := a.dir(home)
-		if d == "" {
-			l.Path, l.Kind = shared, LinkNoFolder
-			links = append(links, l)
-			continue
-		}
-		l.Path = filepath.Join(d, p.Name)
-		info, err := os.Lstat(l.Path)
-		switch {
-		case err != nil:
-			l.Kind = LinkMissing
-		case info.Mode()&os.ModeSymlink != 0:
-			l.Kind = LinkSymlink
-			l.Target, _ = filepath.EvalSymlinks(l.Path)
-		default:
-			l.Kind = LinkCopy
-		}
+		l := a.link(home, p.Name, inShared)
+		l.Installed = installed
 		links = append(links, l)
 	}
 	return links

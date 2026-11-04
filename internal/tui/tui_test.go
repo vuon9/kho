@@ -133,7 +133,7 @@ func loaded(t *testing.T) model {
 	copyText = func(s string) tea.Cmd { copied = append(copied, s); return nil }
 	skillLinks = func(_ provider.Package, all bool) []provider.SkillLink {
 		links := []provider.SkillLink{
-			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Installed: true},
+			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Own: true, Installed: true},
 			{Agent: "cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
 			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true, Installed: true},
 		}
@@ -583,8 +583,18 @@ func TestLinkStates(t *testing.T) {
 		},
 		{
 			id:      "a link can be removed",
-			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Installed: true},
+			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Own: true, Installed: true},
 			seen:    "🔗 Seen by 1 agents",
+			row:     "Goose 🔗 linked /h/.config/goose/skills/pathmaker",
+			detail:  []string{"enter removes this link. The skill's files stay where they are."},
+			dialog:  unlink("Goose"),
+			toggled: []string{"unlink goose"},
+			logged:  []string{"rm /h/.config/goose/skills/pathmaker"},
+		},
+		{
+			id:      "a broken link isn't counted, but can still be removed",
+			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Installed: true},
+			seen:    "🔗 Seen by 0 agents",
 			row:     "Goose 🔗 linked /h/.config/goose/skills/pathmaker",
 			detail:  []string{"enter removes this link. The skill's files stay where they are."},
 			dialog:  unlink("Goose"),
@@ -594,7 +604,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id: "a link next to the shared copy loads the skill twice",
 			link: provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker",
-				Shared: true, Installed: true},
+				Shared: true, Own: true, Installed: true},
 			seen:    "🔗 Seen by 1 agents",
 			row:     "OpenCode 🔗 linked /h/.config/opencode/skills/pathmaker",
 			detail:  []string{"OpenCode also reads ~/.agents/skills, so it loads this skill twice.", "enter removes this link. The skill's files stay where they are."},
@@ -604,7 +614,7 @@ func TestLinkStates(t *testing.T) {
 		},
 		{
 			id:     "a copied folder stays",
-			link:   provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkCopy, Installed: true},
+			link:   provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkCopy, Own: true, Installed: true},
 			seen:   "🔗 Seen by 1 agents",
 			row:    "Cursor 📁 copy /h/.cursor/skills/pathmaker",
 			detail: []string{"A copied folder, not a link. kho won't delete it."},

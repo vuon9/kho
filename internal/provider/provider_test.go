@@ -505,6 +505,21 @@ func TestSkillLinks(t *testing.T) {
 				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
 		},
 		{
+			id: "a broken link or a folder with no SKILL.md in an agent's folder doesn't count as seeing the skill",
+			files: []string{".agents/skills/workflow/SKILL.md", ".config/goose/skills/workflow -> ../../../nowhere", ".claude/skills/workflow/",
+				".cursor/skills/workflow -> ../../nowhere"},
+			skill: ".agents/skills/workflow",
+			want: map[string]string{"claude-code": "copy", "codex": "no folder, sees", "cursor": "link, sees", "goose": "link",
+				"opencode": "missing, sees", "pi": "no folder, sees"},
+		},
+		{
+			id:    "nor does a folder with no SKILL.md in ~/.agents/skills",
+			files: []string{".claude/skills/notes/SKILL.md", ".agents/skills/notes/"},
+			skill: ".claude/skills/notes",
+			want: map[string]string{"claude-code": "copy, sees", "codex": "no folder", "cursor": "missing, can link", "goose": "missing, can link",
+				"opencode": "missing, can link", "pi": "no folder"},
+		},
+		{
 			id:    "an agent whose folder an env setting moves to ~/.agents/skills reads the shared skills",
 			env:   map[string]string{"CLAUDE_CONFIG_DIR": "{home}/.agents"},
 			files: []string{".agents/skills/workflow/SKILL.md"},
