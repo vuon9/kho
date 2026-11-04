@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -459,13 +458,14 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 		return true
 	})
 
-	var flags []string
+	var tokens, flags []string
 	for _, cmd := range commands {
+		tokens = append(tokens, "kho "+cmd)
 		var out, errOut bytes.Buffer
 		Main(Env{DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut, Now: func() time.Time { return clock }}, []string{cmd, "-h"})
 		for _, m := range regexp.MustCompile(`(?m)^  -(\S+)`).FindAllStringSubmatch(errOut.String(), -1) {
 			if len(m[1]) == 1 {
-				flags = append(flags, "-"+m[1]+" ")
+				flags = append(flags, "-"+m[1])
 			} else {
 				flags = append(flags, "--"+m[1])
 			}
@@ -474,6 +474,7 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 	if len(flags) == 0 {
 		t.Fatalf("found no flags in %v", commands)
 	}
+	tokens = append(tokens, flags...)
 
 	_, exits, _ := strings.Cut(Usage, "exit codes: ")
 	exits, _, _ = strings.Cut(exits, "\n")
@@ -494,21 +495,28 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every doc carries the exit code line, and it names --require and
+	// --require-complete, so it is taken out before looking for the rest. A
+	// token must stand alone, or --require would be found in --require-complete.
 	tests := []struct {
-		id   string
-		doc  string
-		want []string
+		id     string
+		doc    string
+		tokens []string
 	}{
-		{"skills/use-kho/SKILL.md", string(skill), append(slices.Clone(flags), exits)},
-		{"Usage", Usage, flags},
-		{"AGENTS.md", string(agents), []string{exits}},
+		{"skills/use-kho/SKILL.md", string(skill), tokens},
+		{"Usage", Usage, tokens},
+		{"AGENTS.md", string(agents), nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			var missing []string
-			for _, w := range tt.want {
-				if !strings.Contains(tt.doc, w) {
-					missing = append(missing, strings.TrimSpace(w))
+			if !strings.Contains(tt.doc, exits) {
+				missing = append(missing, exits)
+			}
+			rest := strings.ReplaceAll(tt.doc, exits, "")
+			for _, w := range tt.tokens {
+				if !regexp.MustCompile(`(^|[^\w-])` + regexp.QuoteMeta(w) + `($|[^\w-])`).MatchString(rest) {
+					missing = append(missing, w)
 				}
 			}
 			if len(missing) > 0 {

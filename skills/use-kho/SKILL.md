@@ -22,6 +22,8 @@ check exits 0, 3 or 4, or 2 on a usage error. At risk wins: a scan that is at ri
 
 Exit codes for every command: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete.
 
+`kho list` prints every package as JSON without the security checks, `kho version` prints the version, and `kho help` lists every command.
+
 The report has:
 
 - `safe`: false when an installed package has a known advisory or a skill failed an audit.

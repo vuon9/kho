@@ -66,6 +66,7 @@ usage:
                                        commands kho ran, newest first
   kho list                             every package as JSON
   kho version                          print the version
+  kho help                             print this
 
 exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete
 `

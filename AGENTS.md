@@ -39,7 +39,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 - Colors come from the active palette (`th`, `accent()`, `faint()`, ...). Never hard-code a color; every theme in `themes` must render.
 - Every key goes in `help.go` and in the footer hints for the panel it belongs to.
 
-**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in `cli_test.go`, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
+**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in `cli_test.go`, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a command, flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
 
 **Comments.** Only for a reason the code can't show. No narration, no restating the next line, no history (that belongs in the commit).
 
