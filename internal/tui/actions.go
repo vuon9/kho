@@ -199,26 +199,32 @@ func (m *model) askLink() {
 	if !ok || !ok2 {
 		return
 	}
-	switch l.Kind {
-	case "missing":
+	name := agentName(l)
+	nothing := func(lines ...string) { m.confirm = &confirm{title: "Nothing to link", lines: lines} }
+	switch {
+	case l.CanLink():
 		target := tilde(provider.RealPath(p))
-		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + agentName(l) + "?", lines: []string{
+		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + name + "?", lines: []string{
 			"creates  " + tilde(l.Path), "      →  " + target, "",
 			accent().Render("y") + faint().Render(" link it   ") + accent().Render("n") + faint().Render(" cancel"),
 		}, run: m.logged([]string{"ln", "-s", provider.RealPath(p), l.Path}, func() tea.Msg {
-			return linkedMsg{"linked " + p.Name + " into " + agentName(l), linkSkill(l, p)}
+			return linkedMsg{"linked " + p.Name + " into " + name, linkSkill(l, p)}
 		})}
-	case "link":
-		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + agentName(l) + "?", lines: []string{
+	case l.Kind == provider.LinkSymlink:
+		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + name + "?", lines: []string{
 			"removes  " + tilde(l.Path), faint().Render("the skill itself stays in ") + tilde(provider.RealPath(p)), "",
 			accent().Render("y") + faint().Render(" remove the link   ") + accent().Render("n") + faint().Render(" cancel"),
 		}, run: m.logged([]string{"rm", l.Path}, func() tea.Msg {
-			return linkedMsg{"removed " + p.Name + " from " + agentName(l), unlinkSkill(l)}
+			return linkedMsg{"removed " + p.Name + " from " + name, unlinkSkill(l)}
 		})}
-	case "copy":
+	case l.Kind == provider.LinkCopy:
 		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a copied folder, not a link.", "kho won't delete it."}}
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		nothing(name+" reads ~/.agents/skills directly,", "so it always sees "+p.Name+".")
+	case l.Kind == provider.LinkNoFolder:
+		nothing(name+" reads only ~/.agents/skills,", "and "+p.Name+" isn't there.")
 	default:
-		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{agentName(l) + " reads ~/.agents/skills directly,", "so it always sees " + p.Name + "."}}
+		nothing(name+" already sees "+p.Name+" through ~/.agents/skills,", "so a link of its own would load it twice.")
 	}
 }
 

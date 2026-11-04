@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -433,58 +434,202 @@ func TestInstallCmd(t *testing.T) {
 	}
 }
 
+// build makes each entry under home: "a/b/" a folder, "a -> b" a symlink,
+// anything else an empty file.
+func build(t *testing.T, home string, entries ...string) {
+	t.Helper()
+	for _, e := range entries {
+		from, to, link := strings.Cut(e, " -> ")
+		p := filepath.Join(home, from)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		switch {
+		case link:
+			err = os.Symlink(to, p)
+		case strings.HasSuffix(from, "/"):
+			err = os.MkdirAll(p, 0o755)
+		default:
+			err = os.WriteFile(p, nil, 0o644)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// tree lists what is under home, the way build takes it.
+func tree(home string) []string {
+	var out []string
+	filepath.WalkDir(home, func(p string, d fs.DirEntry, _ error) error {
+		rel, _ := filepath.Rel(home, p)
+		switch {
+		case rel == ".":
+		case d.Type()&fs.ModeSymlink != 0:
+			to, _ := os.Readlink(p)
+			out = append(out, rel+" -> "+to)
+		case d.IsDir():
+			out = append(out, rel+"/")
+		default:
+			out = append(out, rel)
+		}
+		return nil
+	})
+	return out
+}
+
 func TestSkillLinks(t *testing.T) {
+	agents := []string{".codex/", ".pi/agent/", ".config/goose/", ".config/opencode/", ".cursor/"}
+	tests := []struct {
+		id    string
+		files []string
+		skill string
+		want  map[string]string
+	}{
+		{
+			id:    "a skill only in ~/.claude/skills is seen by claude-code alone",
+			files: []string{".claude/skills/notes/SKILL.md"},
+			skill: ".claude/skills/notes",
+			want: map[string]string{"claude-code": "copy, sees", "codex": "no folder", "cursor": "missing, can link", "goose": "missing, can link",
+				"opencode": "missing, can link", "pi": "no folder"},
+		},
+		{
+			id:    "a skill in ~/.agents/skills is seen by every agent that reads it, and can be linked for the rest",
+			files: []string{".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md"},
+			skill: ".agents/skills/workflow",
+			want: map[string]string{"claude-code": "link to .agents/skills/workflow, sees", "codex": "no folder, sees", "cursor": "copy, sees",
+				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home := t.TempDir()
+			build(t, home, slices.Concat(agents, tt.files)...)
+			p := Package{Name: filepath.Base(tt.skill), Path: filepath.Join(home, tt.skill)}
+			real, _ := filepath.EvalSymlinks(home)
+			got := map[string]string{}
+			var seen []string
+			for _, l := range skillLinks(home, p, false) {
+				// Agents found through a system path like /Applications vary by machine.
+				if !strings.HasPrefix(l.Path, home) {
+					continue
+				}
+				s := string(l.Kind)
+				if l.Target != "" {
+					to, _ := filepath.Rel(real, l.Target)
+					s += " to " + to
+				}
+				if l.Sees() {
+					s += ", sees"
+					seen = append(seen, l.Agent)
+				}
+				if l.CanLink() {
+					s += ", can link"
+				}
+				got[l.Agent] = s
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %v\nwant %v", got, tt.want)
+			}
+
+			pkgs, _ := scanSkills(home, nil)
+			i := slices.IndexFunc(pkgs, func(q Package) bool { return q.Path == p.Path })
+			if i < 0 {
+				t.Fatalf("scanSkills did not list %s", p.Path)
+			}
+			scanned := slices.DeleteFunc(pkgs[i].Agents, func(a string) bool { _, ok := got[a]; return !ok })
+			slices.Sort(scanned)
+			if !slices.Equal(seen, scanned) {
+				t.Errorf("seen by %v, but scanSkills says %v", seen, scanned)
+			}
+		})
+	}
+}
+
+func TestSkillLinksAll(t *testing.T) {
 	clearAgentEnv(t)
 	home := t.TempDir()
-	for _, d := range []string{".agents/skills/workflow", ".claude/skills", ".cursor/skills/workflow", ".pi/agent", ".codex", ".config/goose", ".config/opencode"} {
-		os.MkdirAll(filepath.Join(home, d), 0o755)
-	}
-	os.Symlink("../../.agents/skills/workflow", filepath.Join(home, ".claude/skills/workflow"))
-	p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
-	real := RealPath(p)
-	// Agents found through a system path like /Applications vary by machine.
-	kinds := func() map[string]string {
-		got := map[string]string{}
-		for _, l := range skillLinks(home, p, false) {
-			if !strings.HasPrefix(l.Path, home) {
-				continue
-			}
-			got[l.Agent] = l.Kind
-			if l.Shared && l.Kind != "shared" {
-				got[l.Agent] += ", sees shared"
-			}
-			if l.Kind == "link" && l.Target != real {
-				t.Errorf("%s points at %s, want %s", l.Agent, l.Target, real)
-			}
-		}
-		return got
-	}
-	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy, sees shared", "goose": "missing", "opencode": "missing, sees shared", "pi": "shared"}
-	if got := kinds(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
+	build(t, home, ".agents/skills/workflow/SKILL.md", ".config/goose/")
 	byAgent := map[string]SkillLink{}
-	for _, l := range skillLinks(home, p, true) {
+	for _, l := range skillLinks(home, Package{Name: "workflow"}, true) {
 		byAgent[l.Agent] = l
 	}
 	if len(byAgent) != len(skillAgents) || byAgent["amp"].Installed || !byAgent["goose"].Installed || byAgent["goose"].Display != "Goose" {
 		t.Errorf("all agents: %d of %d, amp %+v, goose %+v", len(byAgent), len(skillAgents), byAgent["amp"], byAgent["goose"])
 	}
-	if !byAgent["pi"].Shared || byAgent["claude-code"].Shared {
-		t.Error("pi reads the shared folder, claude-code does not")
+}
+
+func TestLinkSkill(t *testing.T) {
+	skill := []string{".agents/skills/workflow/SKILL.md", ".config/goose/", ".config/opencode/", ".codex/", ".cursor/skills/workflow/SKILL.md"}
+	tests := []struct {
+		id, agent string
+		files     []string
+		added     []string
+		err       string
+	}{
+		{id: "an agent that sees the skill through ~/.agents/skills gets no link of its own", agent: "opencode", files: skill,
+			err: "opencode already sees workflow through ~/.agents/skills"},
+		{id: "nor does an agent with no folder of its own", agent: "codex", files: skill, err: "codex has no skills folder of its own"},
+		{id: "a copied folder stays", agent: "cursor", files: skill, err: "cursor already has ~/.cursor/skills/workflow"},
+		{id: "an agent with a folder of its own gets a relative link", agent: "goose", files: skill,
+			added: []string{".config/goose/skills/", ".config/goose/skills/workflow -> ../../../.agents/skills/workflow"}},
+		{id: "a link from a folder under a symlink still reaches the skill", agent: "goose",
+			files: []string{".agents/skills/workflow/SKILL.md", "dotfiles/config/goose/", ".config -> dotfiles/config"},
+			added: []string{"dotfiles/config/goose/skills/", "dotfiles/config/goose/skills/workflow -> ../../../../.agents/skills/workflow"}},
+		{id: "OpenClaw links into ~/.clawdbot, the folder it has", agent: "openclaw", files: []string{".agents/skills/workflow/SKILL.md", ".clawdbot/"},
+			added: []string{".clawdbot/skills/", ".clawdbot/skills/workflow -> ../../.agents/skills/workflow"}},
 	}
-	if err := LinkSkill(byAgent["goose"], p); err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home, _ := filepath.EvalSymlinks(t.TempDir())
+			build(t, home, tt.files...)
+			before := tree(home)
+			p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
+			links := skillLinks(home, p, true)
+			i := slices.IndexFunc(links, func(l SkillLink) bool { return l.Agent == tt.agent })
+			gotErr := ""
+			if err := LinkSkill(links[i], p); err != nil {
+				gotErr = strings.ReplaceAll(err.Error(), home, "~")
+			}
+			added := slices.DeleteFunc(tree(home), func(e string) bool { return slices.Contains(before, e) })
+			if !slices.Equal(added, tt.added) || gotErr != tt.err {
+				t.Errorf("added %q %q\nwant  %q %q", added, gotErr, tt.added, tt.err)
+			}
+		})
 	}
-	if err := UnlinkSkill(byAgent["claude-code"]); err != nil {
-		t.Fatal(err)
+}
+
+func TestUnlinkSkill(t *testing.T) {
+	tests := []struct {
+		id, agent string
+		removed   []string
+		err       string
+	}{
+		{"a link is removed", "claude-code", []string{".claude/skills/workflow -> ../../.agents/skills/workflow"}, ""},
+		{"a copied folder never is", "cursor", nil, "~/.cursor/skills/workflow is not a symlink, so kho won't remove it"},
 	}
-	if err := UnlinkSkill(byAgent["cursor"]); err == nil {
-		t.Error("a copied folder must not be removed")
-	}
-	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy, sees shared", "goose": "link", "opencode": "missing, sees shared", "pi": "shared"}
-	if got := kinds(); !reflect.DeepEqual(got, want) {
-		t.Errorf("after toggling got %v, want %v", got, want)
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home, _ := filepath.EvalSymlinks(t.TempDir())
+			build(t, home, ".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md")
+			before := tree(home)
+			p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
+			links := skillLinks(home, p, false)
+			i := slices.IndexFunc(links, func(l SkillLink) bool { return l.Agent == tt.agent })
+			gotErr := ""
+			if err := UnlinkSkill(links[i]); err != nil {
+				gotErr = strings.ReplaceAll(err.Error(), home, "~")
+			}
+			after := tree(home)
+			removed := slices.DeleteFunc(before, func(e string) bool { return slices.Contains(after, e) })
+			if !slices.Equal(removed, tt.removed) || gotErr != tt.err {
+				t.Errorf("removed %q %q\nwant    %q %q", removed, gotErr, tt.removed, tt.err)
+			}
+		})
 	}
 }
 

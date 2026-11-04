@@ -283,7 +283,7 @@ func (m model) bottomTitle() string {
 	if p.Source == "skills" {
 		linked := 0
 		for _, l := range skillLinks(p, false) {
-			if l.Kind == "link" || l.Kind == "copy" || l.Shared || l.Kind == "shared" {
+			if l.Sees() {
 				linked++
 			}
 		}
@@ -751,11 +751,11 @@ func (m model) readmeLines(p provider.Package, inner int) []line {
 
 func linkState(l provider.SkillLink) string {
 	switch {
-	case l.Kind == "link":
+	case l.Kind == provider.LinkSymlink:
 		return green().Render("🔗 linked")
-	case l.Kind == "copy":
+	case l.Kind == provider.LinkCopy:
 		return cyan().Render("📁 copy")
-	case l.Kind == "shared", l.Shared:
+	case l.Shared:
 		return faint().Render("≈ shared")
 	}
 	return faint().Render("· none")
@@ -773,7 +773,7 @@ func (m model) linkLines(p provider.Package) []line {
 	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
 	for _, l := range m.links(p) {
 		state := linkState(l)
-		if !l.Installed && l.Kind == "missing" {
+		if !l.Installed && l.Kind == provider.LinkMissing {
 			state = faint().Render("· not installed")
 		}
 		lines = append(lines, row("  "+pad(agentName(l), 16)+" "+pad(state, 15)+" "+faint().Render(tilde(l.Path))))
@@ -788,22 +788,27 @@ func (m model) linkDetail(p provider.Package) []line {
 	}
 	name := agentName(l)
 	lines := []line{field("path", tilde(l.Path), ""), field("skill", tilde(provider.RealPath(p)), ""), {}}
-	switch l.Kind {
-	case "link":
-		lines = append(lines, field("points to", tilde(l.Target), ""), line{},
-			line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
-	case "copy":
-		lines = append(lines, line{text: faint().Render(" A copied folder, not a link. kho won't delete it.")})
-	case "shared":
-		lines = append(lines, line{text: faint().Render(" " + name + " reads ~/.agents/skills directly, so it always sees this skill.")})
-	default:
-		if l.Shared {
-			lines = append(lines, line{text: faint().Render(" " + name + " already sees it through ~/.agents/skills.")})
-		}
+	say := func(s string) { lines = append(lines, line{text: faint().Render(" " + s)}) }
+	switch {
+	case l.CanLink():
 		if !l.Installed {
-			lines = append(lines, line{text: faint().Render(" " + name + " isn't installed yet; the link waits for it.")})
+			say(name + " isn't installed yet; the link waits for it.")
 		}
 		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+name+"'s own folder.")})
+	case l.Kind == provider.LinkSymlink:
+		lines = append(lines, field("points to", tilde(l.Target), ""), line{})
+		if l.Shared {
+			say(name + " also reads ~/.agents/skills, so it loads this skill twice.")
+		}
+		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
+	case l.Kind == provider.LinkCopy:
+		say("A copied folder, not a link. kho won't delete it.")
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		say(name + " reads ~/.agents/skills directly, so it always sees this skill.")
+	case l.Kind == provider.LinkNoFolder:
+		say(name + " reads only ~/.agents/skills, and this skill isn't there.")
+	default:
+		say(name + " already sees it through ~/.agents/skills, so there is nothing to link.")
 	}
 	return lines
 }

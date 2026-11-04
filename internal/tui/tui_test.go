@@ -121,12 +121,12 @@ func loaded(t *testing.T) model {
 	copyText = func(s string) tea.Cmd { copied = append(copied, s); return nil }
 	skillLinks = func(_ provider.Package, all bool) []provider.SkillLink {
 		links := []provider.SkillLink{
-			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: "link", Target: "/h/.agents/skills/pathmaker", Installed: true},
-			{Agent: "cursor", Path: "/h/.cursor/skills/pathmaker", Kind: "missing", Installed: true},
-			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: "shared", Shared: true, Installed: true},
+			{Agent: "claude", Path: "/h/.claude/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Installed: true},
+			{Agent: "cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
+			{Agent: "codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true, Installed: true},
 		}
 		if all {
-			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: "missing"})
+			links = append(links, provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing})
 		}
 		return links
 	}
@@ -285,7 +285,7 @@ func TestView(t *testing.T) {
 		{id: "links list every agent", keys: []string{"G", "5"}, want: []string{"AGENT", "claude", "🔗 linked", "cursor", "· none", "codex", "≈ shared"}},
 		{id: "skill info shows who sees it", keys: []string{"G"}, want: []string{"🔗 Seen by 2 agents"}},
 		{id: "enter on a link asks to remove it", keys: []string{"G", "5", "l", "enter"}, want: []string{"✂ Unlink pathmaker from claude?", "removes  /h/.claude/skills/pathmaker"}},
-		{id: "a shared agent has nothing to toggle", keys: []string{"G", "5", "l", "j", "j", "enter"}, want: []string{"Nothing to toggle", "codex reads ~/.agents/skills directly,"}},
+		{id: "a shared agent has nothing to link", keys: []string{"G", "5", "l", "j", "j", "enter"}, want: []string{"Nothing to link", "codex reads ~/.agents/skills directly,"}},
 		{id: "? shows every key", keys: []string{"?"}, want: []string{"⌨ Keys", "show or hide these keys", "Sidebar", "check security again"}},
 		{id: "? again hides them", keys: []string{"?", "?"}, lacks: []string{"⌨ Keys"}},
 		{id: "w opens the homepage", keys: []string{"w"}, opened: []string{"https://anvil.example"}, want: []string{"opened https://anvil.example"}},
@@ -467,6 +467,120 @@ func TestActions(t *testing.T) {
 			}
 			if m.notice != tt.notice && tt.notice != "" {
 				t.Errorf("notice %q, want %q", m.notice, tt.notice)
+			}
+		})
+	}
+}
+
+// TestLinkStates shows the skill to one agent at a time and reads what each
+// part of kho says: the count on the Info tab, the agent's row and detail on
+// the Links tab, the dialog enter opens, and what y then changes.
+func TestLinkStates(t *testing.T) {
+	unlink := func(name string) []string {
+		return []string{"✂ Unlink pathmaker from " + name + "?", "removes  /h/.config/" + strings.ToLower(name) + "/skills/pathmaker",
+			"the skill itself stays in {real}", "", "y remove the link   n cancel"}
+	}
+	tests := []struct {
+		id      string
+		link    provider.SkillLink
+		seen    string
+		row     string
+		detail  []string
+		dialog  []string
+		toggled []string
+	}{
+		{
+			id:     "an agent that sees the shared copy has nothing to link, since a link would load it twice",
+			link:   provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkMissing, Shared: true, Installed: true},
+			seen:   "🔗 Seen by 1 agents",
+			row:    "OpenCode ≈ shared /h/.config/opencode/skills/pathmaker",
+			detail: []string{"OpenCode already sees it through ~/.agents/skills, so there is nothing to link."},
+			dialog: []string{"Nothing to link", "OpenCode already sees pathmaker through ~/.agents/skills,", "so a link of its own would load it twice."},
+		},
+		{
+			id:     "an agent that reads only ~/.agents/skills doesn't see a skill that isn't there",
+			link:   provider.SkillLink{Agent: "codex", Display: "Codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Installed: true},
+			seen:   "🔗 Seen by 0 agents",
+			row:    "Codex · none /h/.agents/skills/pathmaker",
+			detail: []string{"Codex reads only ~/.agents/skills, and this skill isn't there."},
+			dialog: []string{"Nothing to link", "Codex reads only ~/.agents/skills,", "and pathmaker isn't there."},
+		},
+		{
+			id:     "and sees one that is",
+			link:   provider.SkillLink{Agent: "codex", Display: "Codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true, Installed: true},
+			seen:   "🔗 Seen by 1 agents",
+			row:    "Codex ≈ shared /h/.agents/skills/pathmaker",
+			detail: []string{"Codex reads ~/.agents/skills directly, so it always sees this skill."},
+			dialog: []string{"Nothing to link", "Codex reads ~/.agents/skills directly,", "so it always sees pathmaker."},
+		},
+		{
+			id:      "an agent with nothing in its own folder gets a link",
+			link:    provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
+			seen:    "🔗 Seen by 0 agents",
+			row:     "Cursor · none /h/.cursor/skills/pathmaker",
+			detail:  []string{"enter links it into Cursor's own folder."},
+			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
+			toggled: []string{"link cursor"},
+		},
+		{
+			id:      "a link can be removed",
+			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Installed: true},
+			seen:    "🔗 Seen by 1 agents",
+			row:     "Goose 🔗 linked /h/.config/goose/skills/pathmaker",
+			detail:  []string{"enter removes this link. The skill's files stay where they are."},
+			dialog:  unlink("Goose"),
+			toggled: []string{"unlink goose"},
+		},
+		{
+			id: "a link next to the shared copy loads the skill twice",
+			link: provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker",
+				Shared: true, Installed: true},
+			seen:    "🔗 Seen by 1 agents",
+			row:     "OpenCode 🔗 linked /h/.config/opencode/skills/pathmaker",
+			detail:  []string{"OpenCode also reads ~/.agents/skills, so it loads this skill twice.", "enter removes this link. The skill's files stay where they are."},
+			dialog:  unlink("OpenCode"),
+			toggled: []string{"unlink opencode"},
+		},
+		{
+			id:     "a copied folder stays",
+			link:   provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkCopy, Installed: true},
+			seen:   "🔗 Seen by 1 agents",
+			row:    "Cursor 📁 copy /h/.cursor/skills/pathmaker",
+			detail: []string{"A copied folder, not a link. kho won't delete it."},
+			dialog: []string{"Nothing to toggle", "/h/.cursor/skills/pathmaker is a copied folder, not a link.", "kho won't delete it."},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			skillLinks = func(provider.Package, bool) []provider.SkillLink { return []provider.SkillLink{tt.link} }
+			m = press(t, m, "G")
+			p, _ := m.current()
+			seen := m.bottomTitle()
+			m = press(t, m, "5")
+			row := strings.Join(strings.Fields(ansi.Strip(m.linkLines(p)[1].text)), " ")
+			var detail []string
+			for _, l := range m.linkDetail(p) {
+				if l.label == "" && l.text != "" {
+					detail = append(detail, strings.TrimSpace(ansi.Strip(l.text)))
+				}
+			}
+			m = press(t, m, "l", "enter")
+			var dialog []string
+			if m.confirm != nil {
+				dialog = append(dialog, m.confirm.title)
+				for _, l := range m.confirm.lines {
+					dialog = append(dialog, ansi.Strip(l))
+				}
+			}
+			press(t, m, "y")
+			want := slices.Clone(tt.dialog)
+			for i := range want {
+				want[i] = strings.ReplaceAll(want[i], "{real}", provider.RealPath(p))
+			}
+			if seen != tt.seen || row != tt.row || !slices.Equal(detail, tt.detail) || !slices.Equal(dialog, want) || !slices.Equal(toggled, tt.toggled) {
+				t.Errorf("got  %q\n     %q\n     %q\n     %q\n     %q\nwant %q\n     %q\n     %q\n     %q\n     %q",
+					seen, row, detail, dialog, toggled, tt.seen, tt.row, tt.detail, want, tt.toggled)
 			}
 		})
 	}
