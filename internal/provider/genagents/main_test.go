@@ -30,6 +30,11 @@ func TestGenerate(t *testing.T) {
 		id, src, want, err string
 	}{
 		{
+			id:   "an agent whose project folder is .agents/skills is universal, so it reads the shared folder too",
+			src:  agentsTS("", agent("aspen", ".agents/skills", "join(home, '.aspen/skills')", "existsSync(join(home, '.aspen'))")),
+			want: file(`{Name: "aspen", Display: "Aspen", Dir: "~/.aspen/skills", Detect: []string{"~/.aspen"}, Universal: true}`),
+		},
+		{
 			id:   "an agent with its own folder under home",
 			src:  agentsTS("", agent("alder", ".alder/skills", "join(home, '.alder/skills')", "existsSync(join(home, '.alder'))")),
 			want: file(`{Name: "alder", Display: "Alder", Dir: "~/.alder/skills", Detect: []string{"~/.alder"}}`),

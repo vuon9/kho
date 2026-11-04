@@ -232,11 +232,11 @@ func TestScanSkills(t *testing.T) {
 		{Source: "skills", Name: "agent-only", Version: "-", Path: filepath.Join(home, ".claude/skills/agent-only"), Agents: []string{"claude-code", "cursor"},
 			Note: "only in claude-code, cursor, not managed by the skills CLI"},
 		{Source: "skills", Name: "claude-off", Version: "8295b8e", Pinned: true, Origin: "someone/skills", Path: filepath.Join(shared, "claude-off"),
-			Agents: []string{"opencode", "pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
+			Agents: []string{"cursor", "opencode", "pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
 		{Source: "skills", Name: "cursor-only", Version: "-", Path: filepath.Join(home, ".cursor/skills/cursor-only"), Agents: []string{"cursor"},
 			Note: "only in cursor, not managed by the skills CLI"},
-		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "opencode", "pi"}, Repo: "someone/skills"},
-		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "opencode", "pi"},
+		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "cursor", "opencode", "pi"}, Repo: "someone/skills"},
+		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "cursor", "opencode", "pi"},
 			Note: "no lock entry, the skills CLI can't update it"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -422,7 +422,7 @@ func TestSkillLinks(t *testing.T) {
 		}
 		return got
 	}
-	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy", "goose": "missing", "opencode": "missing, sees shared", "pi": "shared"}
+	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy, sees shared", "goose": "missing", "opencode": "missing, sees shared", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -445,7 +445,7 @@ func TestSkillLinks(t *testing.T) {
 	if err := UnlinkSkill(byAgent["cursor"]); err == nil {
 		t.Error("a copied folder must not be removed")
 	}
-	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy", "goose": "link", "opencode": "missing, sees shared", "pi": "shared"}
+	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy, sees shared", "goose": "link", "opencode": "missing, sees shared", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Errorf("after toggling got %v, want %v", got, want)
 	}

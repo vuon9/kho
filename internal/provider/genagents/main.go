@@ -20,6 +20,7 @@ var (
 	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\n\}`)
 	entry   = regexp.MustCompile(`\n  '?([a-z0-9-]+)'?: \{\n`)
 	display = regexp.MustCompile(`displayName: '([^']+)'`)
+	project = regexp.MustCompile(`\bskillsDir: '([^']*)'`)
 	global  = regexp.MustCompile(`globalSkillsDir: (.+?),\n`)
 	join    = regexp.MustCompile(`join\((\w+), ((?:'[^']*'(?:, )?)+)\)`)
 	exists  = regexp.MustCompile(`(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
@@ -74,7 +75,13 @@ func generate(src, version string) ([]byte, error) {
 			return nil, fmt.Errorf("%s: can't read globalSkillsDir %s", id, g[1])
 		}
 		detect := body[strings.Index(body, "detectInstalled"):]
-		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v},\n", id, display.FindStringSubmatch(body)[1], dir, paths(detect, bases, helpers))
+		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v", id, display.FindStringSubmatch(body)[1], dir, paths(detect, bases, helpers))
+		// Like the CLI: an agent whose project folder is .agents/skills reads
+		// ~/.agents/skills too, so a global skill never needs a link of its own.
+		if project.FindStringSubmatch(body)[1] == ".agents/skills" {
+			b.WriteString(", Universal: true")
+		}
+		b.WriteString("},\n")
 	}
 	b.WriteString("}\n")
 	return format.Source(b.Bytes())
