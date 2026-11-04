@@ -128,3 +128,7 @@ go vet ./... && go test -race ./...
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), which is how releases get their version and changelog.
+
+## License
+
+[MIT](LICENSE)
