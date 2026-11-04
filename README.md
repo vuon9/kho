@@ -9,9 +9,12 @@
 
 *Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, pipx, uv, `go install`, mise and the skills CLI have put on your machine, tells you which of those packages have known vulnerabilities, and upgrades them only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
 
-See it run:
+<details>
+<summary>See it run</summary>
 
 https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
+
+</details>
 
 ## What it does
 
@@ -73,6 +76,27 @@ npx skills add vuon9/kho --skill use-kho
 ```
 
 Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
+
+Without the skill, paste a prompt like this into Claude Code, Hermes Agent, or any agent that can run shell commands:
+
+```text
+Use kho to check this machine. Run `kho check --json --require-complete`
+and read the JSON. Don't install or change anything yet.
+
+Report back:
+1. One line: safe or at risk, and whether the scan was complete.
+2. Each vulnerable package: name, installed version, worst severity,
+   the version that fixes it, and whether the latest version is clear.
+3. Skills that failed an audit, with their skills.sh report link.
+4. Vulnerable dependencies as "worth a look", and how many packages
+   are outdated.
+5. What wasn't checked: sources OSV doesn't cover, skipped managers,
+   and any errors.
+
+Then list the updates you recommend, most urgent first, each with its
+dry run: `kho install <source>/<name>@<version>` without --yes. Run an
+install only after I say yes to that package, then check again.
+```
 
 Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped or failed, an OSV or skills.sh lookup included. `kho help` lists the rest.
 
