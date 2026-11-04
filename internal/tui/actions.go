@@ -198,18 +198,36 @@ func detach(cmd *exec.Cmd) (*os.File, error) {
 	return r, nil
 }
 
+// outputGrace is how long kho reads on once the command has exited. A child
+// it left behind, maybe in a process group of its own where a stop can't
+// reach it, can hold the output open for as long as it likes.
+const outputGrace = time.Second
+
+// run streams cmd's output while it runs, and sends its installedMsg once it
+// has exited and is logged.
 func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done installedMsg) {
 	var output tail
 	start := time.Now()
-	done.err = in.stream(cmd, out, &output)
+	read := make(chan struct{})
+	go func() {
+		in.stream(out, &output)
+		close(read)
+	}()
+	done.err = cmd.Wait()
+	select {
+	case <-read:
+	case <-time.After(outputGrace):
+	}
+	out.Close()
+	<-read
 	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
 	in.events <- done
 }
 
-// stream sends what cmd prints until it exits. Each line keeps only what
-// follows its last \r, as a progress bar would leave it on screen.
-func (in *installing) stream(cmd *exec.Cmd, out *os.File, output io.Writer) error {
-	defer out.Close()
+// stream sends what the command prints until the output ends or is closed.
+// Each line keeps only what follows its last \r, as a progress bar would
+// leave it on screen.
+func (in *installing) stream(out io.Reader, output io.Writer) {
 	sc := bufio.NewScanner(io.TeeReader(out, output))
 	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
@@ -219,7 +237,6 @@ func (in *installing) stream(cmd *exec.Cmd, out *os.File, output io.Writer) erro
 	// A line too long for the scanner stops it; read the rest so the command
 	// never blocks on a full pipe.
 	io.Copy(output, out)
-	return cmd.Wait()
 }
 
 // askLink offers to add or remove the selected agent's link to a skill.

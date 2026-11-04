@@ -1065,6 +1065,8 @@ func TestInstall(t *testing.T) {
 	}{
 		{id: "a command that can't start says so, with nothing left to stop", missing: true, keys: upgrade, ran: []string{brew},
 			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c"},
+		{id: "a child that keeps the output open can't hold the popup open", script: "set -m; (sleep 4; echo late) & echo started", keys: upgrade, ran: []string{brew},
+			shows: []string{"started", "✓ done"}, hides: "late", open: true},
 		{id: "output streams into a popup", script: "echo fetched anvil; echo poured", keys: upgrade, ran: []string{brew},
 			shows: []string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, open: true},
 		{id: "a failure says so and offers the terminal", script: "echo no space left; exit 3", keys: upgrade, ran: []string{brew},
@@ -1143,6 +1145,7 @@ func TestStopInstall(t *testing.T) {
 	}{
 		{"ctrl+c interrupts the install", "echo started; sleep 5; echo finished", 1, "signal: interrupt"},
 		{"a second ctrl+c kills one that ignores the first", "trap '' INT; echo started; sleep 5; echo finished", 2, "signal: killed"},
+		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; set -m; (sleep 4; echo finished) & echo started; sleep 5", 2, "signal: killed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
