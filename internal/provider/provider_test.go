@@ -672,20 +672,30 @@ func TestLinkSkill(t *testing.T) {
 func TestUnlinkSkill(t *testing.T) {
 	tests := []struct {
 		id, agent string
-		removed   []string
-		err       string
+		// since replaces what is at a path after kho read the links.
+		since   []string
+		removed []string
+		err     string
 	}{
-		{"a link is removed", "claude-code", []string{".claude/skills/workflow -> ../../.agents/skills/workflow"}, ""},
-		{"a copied folder never is", "cursor", nil, "~/.cursor/skills/workflow is not a symlink, so kho won't remove it"},
+		{id: "a link is removed", agent: "claude-code", removed: []string{".claude/skills/workflow -> ../../.agents/skills/workflow"}},
+		{id: "a link replaced by an empty folder since kho read it stays", agent: "claude-code", since: []string{".claude/skills/workflow/"},
+			err: "~/.claude/skills/workflow is not a symlink, so kho won't remove it"},
+		{id: "and so does one replaced by a file", agent: "claude-code", since: []string{".claude/skills/workflow"},
+			err: "~/.claude/skills/workflow is not a symlink, so kho won't remove it"},
+		{id: "a copied folder is never removed", agent: "cursor", err: "~/.cursor/skills/workflow is not a symlink, so kho won't remove it"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			clearAgentEnv(t)
 			home, _ := filepath.EvalSymlinks(t.TempDir())
 			build(t, home, ".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md")
-			before := tree(home)
 			p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
 			links := skillLinks(home, p, false)
+			for _, e := range tt.since {
+				os.Remove(filepath.Join(home, e))
+				build(t, home, e)
+			}
+			before := tree(home)
 			i := slices.IndexFunc(links, func(l SkillLink) bool { return l.Agent == tt.agent })
 			gotErr := ""
 			if err := UnlinkSkill(links[i]); err != nil {

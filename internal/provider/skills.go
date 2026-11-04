@@ -500,8 +500,10 @@ func LinkSkill(l SkillLink, p Package) error {
 }
 
 // UnlinkSkill removes an agent's symlink. It never deletes a copied folder.
+// It looks at the path again rather than trust l.Kind, which kho may have
+// read minutes ago.
 func UnlinkSkill(l SkillLink) error {
-	if l.Kind != LinkSymlink {
+	if info, err := os.Lstat(l.Path); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		return fmt.Errorf("%s is not a symlink, so kho won't remove it", l.Path)
 	}
 	return os.Remove(l.Path)
