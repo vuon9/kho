@@ -1406,6 +1406,60 @@ func TestProgress(t *testing.T) {
 	}
 }
 
+// stream shows the output as a terminal would, each write as soon as it is
+// read, even a line that hasn't ended yet.
+func TestStream(t *testing.T) {
+	tests := []struct {
+		id     string
+		writes []string
+		// screens are the output lines after each write, or nil for a write
+		// that changes nothing on screen.
+		screens [][]string
+	}{
+		{"a bar drawn after its \\r shows as soon as it is drawn", []string{"downloading\n", "\r[#   ] 10%", "\r[##  ] 20%", "\n", "done\n"},
+			[][]string{{"downloading"}, {"downloading", "[#   ] 10%"}, {"downloading", "[##  ] 20%"}, nil, {"downloading", "[##  ] 20%", "done"}}},
+		{"a line written in parts shows as it grows", []string{"fetch", "ing", "\n"}, [][]string{{"fetch"}, {"fetching"}, nil}},
+		{"a bar drawn before its \\r redraws its line", []string{"step 1\r", "step 2\r", "step 3\n", "done\n"},
+			[][]string{{"step 1"}, {"step 2"}, {"step 3"}, {"step 3", "done"}}},
+		{"a \\r before a \\n leaves the line as it was", []string{"step 1\r", "\n", "next\n"}, [][]string{{"step 1"}, nil, {"step 1", "next"}}},
+		{"a bare \\r changes nothing", []string{"\r", "ten\r", "\r", "twenty\n"}, [][]string{nil, {"ten"}, nil, {"twenty"}}},
+		{"an empty line stays", []string{"a\n", "\n", "b\n"}, [][]string{{"a"}, {"a", ""}, {"a", "", "b"}}},
+		{"styles and control bytes go", []string{"\x1b[32mgreen\x1b[0m\a\n"}, [][]string{{"green"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			in := &installing{changed: make(chan struct{}, 1)}
+			r, w := io.Pipe()
+			ended := make(chan struct{})
+			go func() {
+				in.stream(r)
+				close(ended)
+			}()
+			for i, s := range tt.writes {
+				w.Write([]byte(s))
+				if tt.screens[i] == nil {
+					select {
+					case <-in.changed:
+						t.Errorf("%q changed the screen to %q", s, in.screen())
+					case <-time.After(50 * time.Millisecond):
+					}
+					continue
+				}
+				select {
+				case <-in.changed:
+					if got := in.screen(); !slices.Equal(got, tt.screens[i]) {
+						t.Errorf("after %q the screen is %q, want %q", s, got, tt.screens[i])
+					}
+				case <-time.After(time.Second):
+					t.Errorf("%q never showed, the screen is %q, want %q", s, in.screen(), tt.screens[i])
+				}
+			}
+			w.Close()
+			<-ended
+		})
+	}
+}
+
 // Once the command has exited, kho reads on until the output ends, goes
 // quiet, has run on too long, or the install is cut short.
 func TestQuiet(t *testing.T) {

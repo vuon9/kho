@@ -2,7 +2,6 @@ package tui
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -339,41 +338,47 @@ func (c *counter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// stream reads what the command prints until the output ends or is closed.
-// A line still open after a \r is shown as it is, then redrawn by what comes
-// next, so a progress bar shows its latest state.
+// stream reads what the command prints until the output ends or is closed,
+// and shows it as a terminal would after each read, the line still being
+// written included. A \r goes back to the start of the line, so the text
+// after it draws the line again, as a progress bar does.
 func (in *installing) stream(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(nil, 1<<20)
-	sc.Split(scanLines)
-	open := false
-	for sc.Scan() {
-		line := sc.Text()
-		text, cr := strings.TrimRight(line, "\r\n"), strings.HasSuffix(line, "\r")
-		// A bare \r only goes back over the line, and a \n after one leaves
-		// the line as it was.
-		if text == "" && (cr || open) {
-			open = open && cr
-			continue
+	// line is the line being written. shown says it is on screen, back that
+	// a \r went back over it, and drawn that it changed since it was shown.
+	var line []byte
+	shown, back, drawn := false, false, false
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := r.Read(buf)
+		for _, b := range buf[:n] {
+			switch b {
+			case '\r':
+				back = true
+			case '\n':
+				// The line ends as it stands, an empty one included.
+				if drawn || !shown {
+					in.show(printable(string(line)), shown)
+				}
+				line, shown, back, drawn = line[:0], false, false, false
+			default:
+				if back {
+					line, back = line[:0], false
+				}
+				// A line that never ends keeps its last part.
+				if len(line) >= 1<<20 {
+					line = line[:copy(line, line[len(line)/2:])]
+				}
+				line, drawn = append(line, b), true
+			}
 		}
-		in.show(printable(text), open)
-		open = cr
+		if drawn {
+			in.show(printable(string(line)), shown)
+			shown, drawn = true, false
+		}
+		if err != nil {
+			return
+		}
 	}
-	// A line too long for the scanner stops it; read the rest so the command
-	// never blocks on a full pipe.
-	io.Copy(io.Discard, r)
-}
-
-// scanLines splits output after each \n or \r, and keeps the one that ended
-// the line.
-func scanLines(data []byte, atEOF bool) (int, []byte, error) {
-	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
-		return i + 1, data[:i+1], nil
-	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
 }
 
 // printable is a line of output as wide as the popup measures it: no
