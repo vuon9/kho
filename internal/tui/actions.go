@@ -97,14 +97,16 @@ func (m *model) askInstall() {
 }
 
 // installing is a package manager running in a popup. Its output, and then
-// its installedMsg, arrive on events. cmd is the command as kho asked for
-// it, which t runs again in the terminal.
+// its installedMsg, arrive on events; logged closes once it is in the
+// history. cmd is the command as kho asked for it, which t runs again in the
+// terminal.
 type installing struct {
 	title      string
 	cmd        *exec.Cmd
 	lines      []string
 	start, end time.Time
 	events     chan tea.Msg
+	logged     chan struct{}
 	done       *installedMsg
 	pid        int
 	stopping   bool
@@ -125,7 +127,7 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 			log.Add(entry(history.Change, cmd.Args, 0, err, ""))
 			return done
 		}
-		in := &installing{title: title, cmd: cmd, start: now(), events: make(chan tea.Msg, 64), pid: run.Process.Pid}
+		in := &installing{title: title, cmd: cmd, start: now(), events: make(chan tea.Msg, 64), logged: make(chan struct{}), pid: run.Process.Pid}
 		go in.run(run, out, log, done)
 		return installStartedMsg{in}
 	}
@@ -180,6 +182,23 @@ func (in *installing) stop() {
 	syscall.Kill(-in.pid, sig)
 }
 
+// finish stops an install kho is leaving, and kills it when it is still
+// going after patience. It returns once the install is logged. Nothing
+// reads the events any more, so finish drains them.
+func (in *installing) finish(patience time.Duration) {
+	in.stop()
+	kill := time.After(patience)
+	for {
+		select {
+		case <-in.events:
+		case <-kill:
+			in.stop()
+		case <-in.logged:
+			return
+		}
+	}
+}
+
 // detach starts cmd in a session of its own, with no terminal: a password
 // prompt then fails instead of drawing over kho, and t can rerun it in the
 // terminal. Being its own process group, it can be stopped as a whole.
@@ -221,6 +240,7 @@ func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done in
 	out.Close()
 	<-read
 	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
+	close(in.logged)
 	in.events <- done
 }
 

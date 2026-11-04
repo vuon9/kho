@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1175,6 +1177,57 @@ func TestStopInstall(t *testing.T) {
 			}
 			if _, cmd := m.Update(ctrlC); !quits(cmd) {
 				t.Error("ctrl+c should quit once the install is over")
+			}
+		})
+	}
+}
+
+// A signal, or the terminal closing, ends kho without a key press, so an
+// install still running is stopped and logged before kho is gone.
+func TestSignal(t *testing.T) {
+	tests := []struct {
+		id, script string
+		// patience is how long kho waits on an interrupted install before
+		// it kills it; 0 leaves kho through serve, as a signal does.
+		patience time.Duration
+		said     string
+		logged   []string
+	}{
+		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30",
+			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}},
+		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
+			logged: []string{"brew upgrade anvil: signal: killed"}},
+		{id: "with nothing running kho just leaves"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			if tt.script != "" {
+				installScript = tt.script
+				m = press(t, m, "l", "v", "enter")
+				tm, cmd := m.Update(key("y"))
+				tm, _ = tm.Update(cmd())
+				tm, _ = tm.Update(tm.(model).inst.next()())
+				m = tm.(model)
+			}
+			var said bytes.Buffer
+			if tt.patience > 0 {
+				m.inst.finish(tt.patience)
+			} else {
+				sigs := make(chan os.Signal, 1)
+				sigs <- syscall.SIGHUP
+				if err := serve(m, sigs, &said, tea.WithInput(nil), tea.WithOutput(io.Discard)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var logged []string
+			for _, e := range m.log.Entries() {
+				if e.Kind == history.Change {
+					logged = append(logged, strings.Join(e.Command, " ")+": "+e.Err)
+				}
+			}
+			if said.String() != tt.said || !slices.Equal(logged, tt.logged) {
+				t.Errorf("said %q, logged %q, want %q, %q", said.String(), logged, tt.said, tt.logged)
 			}
 		})
 	}

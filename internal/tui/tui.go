@@ -3,12 +3,15 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -27,7 +30,27 @@ func Run(log *history.Log, version string) error {
 			th, m.themePicked = t, true
 		}
 	}
-	_, err := tea.NewProgram(m).Run()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	return serve(m, sigs, os.Stderr)
+}
+
+// serve runs the program until it quits or a signal comes. kho takes the
+// signals from Bubble Tea, whose handler hears only the first SIGINT or
+// SIGTERM, and from Go, whose default for SIGHUP, as when the terminal
+// closes, kills kho on the spot. Either way an install would be cut off and
+// never logged; this way kho stops it and waits until it is logged.
+func serve(m model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
+	p := tea.NewProgram(m, append(opts, tea.WithoutSignalHandler())...)
+	go func() {
+		<-sigs
+		p.Quit()
+	}()
+	end, err := p.Run()
+	if in := end.(model).inst; in.running() {
+		fmt.Fprintf(stderr, "kho: stopping %s\n", strings.Join(in.cmd.Args, " "))
+		in.finish(5 * time.Second)
+	}
 	return err
 }
 
