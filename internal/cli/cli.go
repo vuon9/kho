@@ -158,14 +158,12 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 		}
 		queries = append(queries, provider.DepQueries(p)...)
 		if p.Source == "skills" && p.Repo != "" {
-			k := p.Repo + "/" + p.Name
-			if t, ok := env.DB.AuditedAt[k]; refresh || !ok || env.Now().Sub(t) > vuln.MaxAge {
-				bySource[p.Repo] = append(bySource[p.Repo], p.Name)
-			}
+			bySource[p.Repo] = append(bySource[p.Repo], p.Name)
 		}
 	}
 	if !refresh {
 		queries = env.DB.Stale(queries, env.Now())
+		bySource = env.DB.StaleAudits(bySource, env.Now())
 	}
 	var errs []error
 	if len(queries) > 0 {
@@ -182,13 +180,9 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 	}
 	if len(bySource) > 0 {
 		audits, err := env.Audits(ctx, bySource)
+		env.DB.MergeAudits(bySource, audits, err, env.Now())
 		if err != nil {
 			errs = append(errs, err)
-		} else {
-			for k, a := range audits {
-				env.DB.Audits[k] = a
-				env.DB.AuditedAt[k] = env.Now()
-			}
 		}
 	}
 	if env.DBPath != "" {

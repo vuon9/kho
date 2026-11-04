@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -268,75 +269,82 @@ func TestCheckUsesTheCache(t *testing.T) {
 	}
 }
 
-func TestCheckAsksAgainWhenTheSkillAuditFailed(t *testing.T) {
+func TestCheckSkillAudits(t *testing.T) {
 	const key = "someone/skills/pathmaker"
-	want := vuln.SkillAudit{Gen: "safe", Socket: "low", Snyk: "low"}
-	db := vuln.NewDB()
-	calls := 0
-	var out, errOut bytes.Buffer
-	env := Env{
-		Version: "v9.9.9",
-		Providers: []provider.Provider{
-			fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
-		},
-		DB:  db,
-		Log: history.Open(""),
-		Out: &out, Err: &errOut,
-		Now: func() time.Time { return clock },
-		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
-			return map[string][]string{}, map[string]vuln.Advisory{}, nil
-		},
-		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
-			calls++
-			if calls == 1 {
-				return nil, errors.New("skills.sh is down")
-			}
-			return map[string]vuln.SkillAudit{key: want}, nil
-		},
+	high := map[string]vuln.SkillAudit{key: {Gen: "safe", Socket: "high", Snyk: "low"}}
+	low := map[string]vuln.SkillAudit{key: {Gen: "safe", Socket: "low", Snyk: "low"}}
+	down := errors.New("skills.sh: down")
+	type answer struct {
+		audits map[string]vuln.SkillAudit
+		err    error
+	}
+	type result struct {
+		code      int
+		stderr    string
+		asks      int
+		risky     []string
+		errors    map[string]string
+		complete  bool
+		audits    map[string]vuln.SkillAudit
+		auditedAt map[string]time.Time
 	}
 	tests := []struct {
-		id    string
-		check func(t *testing.T, r Report, code int)
+		id      string
+		answers []answer
+		runs    int
+		flags   []string
+		want    result
 	}{
-		{"a failed audit is reported and leaves the skill stale", func(t *testing.T, r Report, code int) {
-			if code != ExitOK || r.Errors["security"] != "skills.sh is down" || r.Complete {
-				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
-			}
-			if calls != 1 {
-				t.Errorf("asked skills.sh %d times, want 1", calls)
-			}
-			if at, ok := db.AuditedAt[key]; ok {
-				t.Errorf("a failed audit marked the skill fresh at %v", at)
-			}
-			if _, ok := db.Audits[key]; ok {
-				t.Errorf("a failed audit stored %+v", db.Audits[key])
-			}
-		}},
-		{"the next scan asks skills.sh again and caches what it got", func(t *testing.T, r Report, code int) {
-			if code != ExitOK || r.Errors["security"] != "" || !r.Complete {
-				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
-			}
-			if calls != 2 {
-				t.Errorf("asked skills.sh %d times, want 2", calls)
-			}
-			if at := db.AuditedAt[key]; !at.Equal(clock) {
-				t.Errorf("audited at %v, want %v", at, clock)
-			}
-			if got := db.Audits[key]; got != want {
-				t.Errorf("audit %+v, want %+v", got, want)
-			}
-		}},
+		{"an audit that came back with an error still puts the scan at risk", []answer{{high, down}}, 1, nil,
+			result{ExitAtRisk, "", 1, []string{"pathmaker"}, map[string]string{"security": "skills.sh: down"}, false, high, map[string]time.Time{}}},
+		{"at risk wins over incomplete, and stderr still says what failed", []answer{{high, down}}, 1, []string{"--require-complete"},
+			result{ExitAtRisk, "scan was not complete: security failed: skills.sh: down", 1, []string{"pathmaker"}, map[string]string{"security": "skills.sh: down"}, false, high, map[string]time.Time{}}},
+		{"a failed ask is incomplete", []answer{{nil, down}}, 1, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: security failed: skills.sh: down", 1, nil, map[string]string{"security": "skills.sh: down"}, false, map[string]vuln.SkillAudit{}, map[string]time.Time{}}},
+		{"a failed ask is asked again on the next scan", []answer{{nil, down}, {low, nil}}, 2, nil,
+			result{ExitOK, "", 2, nil, nil, true, low, map[string]time.Time{key: clock}}},
+		{"an answer without an audit is not asked again", []answer{{nil, nil}}, 3, nil,
+			result{ExitOK, "", 1, nil, nil, true, map[string]vuln.SkillAudit{}, map[string]time.Time{key: clock}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			out.Reset()
-			errOut.Reset()
-			code := Main(env, []string{"check", "--json"})
+			var out, errOut bytes.Buffer
+			db := vuln.NewDB()
+			got := result{audits: db.Audits, auditedAt: db.AuditedAt}
+			env := Env{
+				Version: "v9.9.9",
+				Providers: []provider.Provider{
+					fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
+				},
+				DB:  db,
+				Log: history.Open(""),
+				Out: &out, Err: &errOut,
+				Now: func() time.Time { return clock },
+				Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+					return map[string][]string{}, map[string]vuln.Advisory{}, nil
+				},
+				Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
+					a := tt.answers[min(got.asks, len(tt.answers)-1)]
+					got.asks++
+					return a.audits, a.err
+				},
+			}
+			for range tt.runs {
+				out.Reset()
+				errOut.Reset()
+				got.code = Main(env, append([]string{"check", "--json"}, tt.flags...))
+			}
 			var r Report
 			if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, out.String())
 			}
-			tt.check(t, r, code)
+			got.stderr, got.errors, got.complete = strings.TrimSpace(errOut.String()), r.Errors, r.Complete
+			for _, s := range r.RiskySkills {
+				got.risky = append(got.risky, s.Name)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
+			}
 		})
 	}
 }
