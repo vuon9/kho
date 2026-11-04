@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -263,20 +264,7 @@ func TestOldCacheIsDropped(t *testing.T) {
 // field moved or changed kind, so the shape must never change under an old
 // format.
 func TestStoredShapeMatchesFormat(t *testing.T) {
-	db := NewDB()
-	fill(t, reflect.ValueOf(db).Elem())
-	data, err := json.Marshal(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var v any
-	if err := json.Unmarshal(data, &v); err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	jsonPaths(v, "", &got)
-	slices.Sort(got)
-	if !slices.Equal(got, stored) {
+	if got := shape(t, NewDB()); !slices.Equal(got, stored) {
 		t.Errorf("the cache now stores\n\t%s\nbut stored in cache.go says\n\t%s\nbump format, set stored to the new paths and add the new format to formats",
 			strings.Join(got, "\n\t"), strings.Join(stored, "\n\t"))
 	}
@@ -284,6 +272,52 @@ func TestStoredShapeMatchesFormat(t *testing.T) {
 		t.Errorf("formats[%d] is %q but stored's checksum is %q: when stored changes, bump format and add the new one to formats with this checksum, leaving the old lines as they are",
 			format, formats[format], sum)
 	}
+}
+
+// Fields JSON never writes cannot change the stored shape, so filling them
+// would only make the shape test fail for nothing, or panic.
+func TestShapeSkipsWhatJSONSkips(t *testing.T) {
+	tests := []struct {
+		id string
+		v  any
+	}{
+		{"an unexported field", &struct {
+			ID   string `json:"id"`
+			note string
+		}{}},
+		{"a field tagged json:\"-\" of a kind fill cannot fill", &struct {
+			ID   string `json:"id"`
+			Hook func() `json:"-"`
+		}{}},
+		{"an unexported lock", &struct {
+			ID string `json:"id"`
+			mu sync.Mutex
+		}{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := shape(t, tt.v); !slices.Equal(got, []string{"id string"}) {
+				t.Errorf("shape %q, want only the id", got)
+			}
+		})
+	}
+}
+
+// shape fills v, which points to a struct, and returns its sorted JSON paths.
+func shape(t *testing.T, v any) []string {
+	fill(t, reflect.ValueOf(v).Elem())
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	jsonPaths(decoded, "", &paths)
+	slices.Sort(paths)
+	return paths
 }
 
 // fill gives every field a value, so omitempty hides none of them, and every
@@ -295,7 +329,9 @@ func fill(t *testing.T, v reflect.Value) {
 		v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
 	case v.Kind() == reflect.Struct:
 		for i := range v.NumField() {
-			fill(t, v.Field(i))
+			if f := v.Type().Field(i); f.IsExported() && f.Tag.Get("json") != "-" {
+				fill(t, v.Field(i))
+			}
 		}
 	case v.Kind() == reflect.Pointer:
 		e := reflect.New(v.Type().Elem())
