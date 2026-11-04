@@ -220,9 +220,11 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 	listFails.listErr = errors.New("npm ls: boom")
 	latestFails.latestErr = errors.New("registry is down")
 	type result struct {
-		code   int
-		stderr string
-		errors map[string]string
+		code     int
+		stderr   string
+		safe     bool
+		complete bool
+		errors   map[string]string
 	}
 	tests := []struct {
 		id      string
@@ -233,26 +235,26 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 		want    result
 	}{
 		{"at risk wins over a partial scan, and stderr still says what was skipped", npm, uvMissing, vulnerable, []string{"--require-complete"},
-			result{ExitAtRisk, "scan was not complete: uv (uv not on PATH)", nil}},
+			result{ExitAtRisk, "scan was not complete: uv (uv not on PATH)", false, false, nil}},
 		{"a required source whose list failed fails, and says why", listFails, nil, nil, []string{"--require", "npm"},
-			result{ExitIncomplete, "scan was not complete for npm failed: npm ls: boom", map[string]string{"npm": "npm ls: boom"}}},
+			result{ExitIncomplete, "scan was not complete for npm failed: npm ls: boom", true, false, map[string]string{"npm": "npm ls: boom"}}},
 		{"a required source whose latest versions failed was still read", latestFails, nil, nil, []string{"--require", "npm"},
-			result{ExitOK, "", map[string]string{"npm latest": "registry is down"}}},
+			result{ExitOK, "", true, false, map[string]string{"npm latest": "registry is down"}}},
 		{"a failed latest lookup still leaves the scan incomplete", latestFails, nil, nil, []string{"--require-complete"},
-			result{ExitIncomplete, "scan was not complete: npm latest failed: registry is down", map[string]string{"npm latest": "registry is down"}}},
-		{"a partial scan still passes without the flag", npm, uvMissing, nil, nil, result{ExitOK, "", nil}},
+			result{ExitIncomplete, "scan was not complete: npm latest failed: registry is down", true, false, map[string]string{"npm latest": "registry is down"}}},
+		{"a partial scan still passes without the flag", npm, uvMissing, nil, nil, result{ExitOK, "", true, false, nil}},
 		{"a partial scan fails with the flag, and says why", npm, uvMissing, nil, []string{"--require-complete"},
-			result{ExitIncomplete, "scan was not complete: uv (uv not on PATH)", nil}},
+			result{ExitIncomplete, "scan was not complete: uv (uv not on PATH)", true, false, nil}},
 		{"a required source that was skipped fails", npm, uvMissing, nil, []string{"--require", "uv"},
-			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", nil}},
-		{"a required source that was read passes", npm, uvMissing, nil, []string{"--require", "pipx"}, result{ExitOK, "", nil}},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", true, false, nil}},
+		{"a required source that was read passes", npm, uvMissing, nil, []string{"--require", "pipx"}, result{ExitOK, "", true, false, nil}},
 		{"a manager this machine lacks is fine unless required", npm, uvMissing, nil, []string{"--require", "pipx,uv"},
-			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", nil}},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", true, false, nil}},
 		{"cask is read by brew, so requiring it requires brew", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask"},
-			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", nil}},
-		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", nil}},
+			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", true, false, nil}},
+		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", true, true, nil}},
 		{"an unknown source in the list is a usage error", npm, uvMissing, nil, []string{"--require", "npmm"},
-			result{ExitUsage, "unknown source in --require: npmm", nil}},
+			result{ExitUsage, "unknown source in --require: npmm", false, false, nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -284,7 +286,7 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 				if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 					t.Fatalf("not JSON: %v\n%s", err, out.String())
 				}
-				got.errors = r.Errors
+				got.safe, got.complete, got.errors = r.Safe, r.Complete, r.Errors
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("got  %+v\nwant %+v", got, tt.want)
