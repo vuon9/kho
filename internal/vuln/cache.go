@@ -154,10 +154,12 @@ func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[strin
 // MergeAudits keeps what skills.sh sent back for the asked skills. An answer
 // marks every asked skill fresh, even one skills.sh has no audit for, so it is
 // not asked again until MaxAge. A failed ask marks none fresh, so the next scan
-// asks again, but the audits that came back before it failed still count.
+// asks again, but the audits that came back before it failed still count. A
+// nil answer means nothing was asked, as SkillAudits does with telemetry off,
+// so it marks none fresh either.
 func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudit, err error, now time.Time) {
 	maps.Copy(db.Audits, audits)
-	if err != nil {
+	if err != nil || audits == nil {
 		return
 	}
 	for source, slugs := range asked {

@@ -2,6 +2,7 @@ package vuln
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -141,6 +142,7 @@ func TestSkillAuditCache(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	installed := map[string][]string{"someone/skills": {"pathmaker", "tidyup"}}
 	high := map[string]SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "high", Snyk: "low"}}
+	none := map[string]SkillAudit{}
 	down := errors.New("skills.sh: down")
 	tests := []struct {
 		id        string
@@ -153,13 +155,17 @@ func TestSkillAuditCache(t *testing.T) {
 	}{
 		{"a failed ask marks nothing fresh", nil, nil, down,
 			installed, map[string]SkillAudit{}, installed},
+		{"nothing asked, as with telemetry off, marks nothing fresh", nil, nil, nil,
+			installed, map[string]SkillAudit{}, installed},
 		{"a failed ask keeps the audits that came back", nil, high, down,
 			installed, high, installed},
 		{"an answer marks every asked skill fresh, even one it has no audit for", nil, high, nil,
 			installed, high, map[string][]string{}},
-		{"a skill audited within MaxAge is not asked", map[string]time.Time{"someone/skills/tidyup": now.Add(-time.Hour)}, nil, nil,
+		{"an empty answer marks every asked skill fresh", nil, none, nil,
+			installed, map[string]SkillAudit{}, map[string][]string{}},
+		{"a skill audited within MaxAge is not asked", map[string]time.Time{"someone/skills/tidyup": now.Add(-time.Hour)}, none, nil,
 			map[string][]string{"someone/skills": {"pathmaker"}}, map[string]SkillAudit{}, map[string][]string{}},
-		{"a skill audited longer than MaxAge ago is asked again", map[string]time.Time{"someone/skills/tidyup": now.Add(-13 * time.Hour)}, nil, nil,
+		{"a skill audited longer than MaxAge ago is asked again", map[string]time.Time{"someone/skills/tidyup": now.Add(-13 * time.Hour)}, none, nil,
 			installed, map[string]SkillAudit{}, map[string][]string{}},
 	}
 	for _, tt := range tests {
@@ -171,6 +177,22 @@ func TestSkillAuditCache(t *testing.T) {
 			dueLater := db.StaleAudits(installed, now.Add(time.Hour))
 			if !reflect.DeepEqual(asked, tt.asked) || !reflect.DeepEqual(db.Audits, tt.audits) || !reflect.DeepEqual(dueLater, tt.dueLater) {
 				t.Errorf("asked %v, kept %v, due an hour later %v\nwant  %v, %v, %v", asked, db.Audits, dueLater, tt.asked, tt.audits, tt.dueLater)
+			}
+		})
+	}
+}
+
+// MergeAudits reads a nil answer as "nothing was asked", so the opt-outs must
+// return nil. The context is already cancelled, so a regression fails here
+// instead of reaching skills.sh.
+func TestSkillAuditsAskNothingWhenTelemetryIsOff(t *testing.T) {
+	for _, opt := range []string{"DISABLE_TELEMETRY", "DO_NOT_TRACK"} {
+		t.Run(opt, func(t *testing.T) {
+			t.Setenv(opt, "1")
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if got, err := SkillAudits(ctx, map[string][]string{"someone/skills": {"pathmaker"}}); got != nil || err != nil {
+				t.Errorf("got %v, %v, want nil, nil", got, err)
 			}
 		})
 	}

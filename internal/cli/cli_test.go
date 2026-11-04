@@ -338,7 +338,9 @@ func TestCheckSkillAudits(t *testing.T) {
 			result{ExitIncomplete, "scan was not complete: security failed: skills.sh: down", 1, nil, map[string]string{"security": "skills.sh: down"}, false, map[string]vuln.SkillAudit{}, map[string]time.Time{}}},
 		{"a failed ask is asked again on the next scan", []answer{{nil, down}, {low, nil}}, 2, nil,
 			result{ExitOK, "", 2, nil, nil, true, low, map[string]time.Time{key: clock}}},
-		{"an answer without an audit is not asked again", []answer{{nil, nil}}, 3, nil,
+		{"a scan with telemetry off leaves the skill due, so the next scan asks", []answer{{nil, nil}, {high, nil}}, 2, []string{"--require-complete"},
+			result{ExitAtRisk, "", 2, []string{"pathmaker"}, nil, true, high, map[string]time.Time{key: clock}}},
+		{"an answer without an audit is not asked again", []answer{{map[string]vuln.SkillAudit{}, nil}}, 3, nil,
 			result{ExitOK, "", 1, nil, nil, true, map[string]vuln.SkillAudit{}, map[string]time.Time{key: clock}}},
 	}
 	for _, tt := range tests {

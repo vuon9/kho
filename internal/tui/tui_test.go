@@ -348,7 +348,9 @@ func TestSkillAuditCache(t *testing.T) {
 			map[string]vuln.SkillAudit{}, map[string]time.Time{}},
 		{"an audit that came back with an error is kept but not fresh", map[string]vuln.SkillAudit{key: high}, down, 2,
 			map[string]vuln.SkillAudit{key: high}, map[string]time.Time{}},
-		{"an answer marks the skill fresh even without an audit", nil, nil, 1,
+		{"telemetry off asks nothing, so the next listing asks again", nil, nil, 2,
+			map[string]vuln.SkillAudit{}, map[string]time.Time{}},
+		{"an answer marks the skill fresh even without an audit", map[string]vuln.SkillAudit{}, nil, 1,
 			map[string]vuln.SkillAudit{}, map[string]time.Time{key: clock}},
 	}
 	for _, tt := range tests {
