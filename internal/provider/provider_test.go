@@ -182,13 +182,15 @@ func TestExpandPath(t *testing.T) {
 		{"home", "~/.cursor/skills", "", "/h/.cursor/skills"},
 		{"env unset falls back to its default", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "", "/h/.config/goose/skills"},
 		{"env set wins", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "/x", "/x/goose/skills"},
-		{"a blank env setting falls back to its default, as in the CLI", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", " ", "/h/.config/goose/skills"},
-		{"spaces around an env setting are dropped", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", " /x\n", "/x/goose/skills"},
+		{"a blank CLAUDE_CONFIG_DIR falls back to its default, as the CLI trims it", "${CLAUDE_CONFIG_DIR:-~/.claude}/skills", " ", "/h/.claude/skills"},
+		{"spaces around it are dropped", "${CLAUDE_CONFIG_DIR:-~/.claude}/skills", " /x\n", "/x/skills"},
 		{"absolute", "/etc/codex", "", "/etc/codex"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", tt.env)
+			if m := envDefault.FindStringSubmatch(tt.path); m != nil {
+				t.Setenv(m[1], tt.env)
+			}
 			if got := expandPath("/h", tt.path); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
