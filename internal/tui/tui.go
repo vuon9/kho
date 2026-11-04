@@ -42,7 +42,7 @@ func Run(log *history.Log, version string) error {
 
 // serve runs the program until it quits, which a hangup on sigs makes it
 // do, then stops an install still running and waits until it is logged.
-func serve(m model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
+func serve(m tea.Model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
 	p := tea.NewProgram(m, opts...)
 	go func() {
 		for s := range sigs {
@@ -51,10 +51,14 @@ func serve(m model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.Program
 			}
 		}
 	}()
-	end, err := p.Run()
-	if in := end.(model).inst; in.running() {
-		fmt.Fprintf(stderr, "kho: stopping %s\n", strings.Join(in.cmd.Args, " "))
-		in.finish(5 * time.Second)
+	_, err := p.Run()
+	if in := live.Load(); in != nil {
+		select {
+		case <-in.logged:
+		default:
+			fmt.Fprintf(stderr, "kho: stopping %s\n", strings.Join(in.cmd.Args, " "))
+			in.finish(5 * time.Second)
+		}
 	}
 	return err
 }

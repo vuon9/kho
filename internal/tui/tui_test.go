@@ -129,6 +129,7 @@ func loaded(t *testing.T) model {
 	opened, ran, copied, toggled = nil, nil, nil, nil
 	linkReads, appeared = 0, false
 	installScript, reran = "echo fetched", nil
+	live.Store(nil)
 	installProcess = func(c *exec.Cmd) *exec.Cmd {
 		ran = append(ran, strings.Join(c.Args, " "))
 		return exec.Command("sh", "-c", installScript)
@@ -1370,14 +1371,23 @@ func TestSlowScreen(t *testing.T) {
 func TestSignal(t *testing.T) {
 	tests := []struct {
 		id, script string
+		// unseen starts the install without the screen hearing of it, as
+		// when a signal comes right after y.
+		unseen bool
+		// crash runs a screen that panics.
+		crash bool
 		// patience is how long kho waits on an interrupted install before
-		// it kills it; 0 leaves kho through serve, as a signal does.
+		// it kills it; 0 leaves kho through serve, as a hangup does.
 		patience time.Duration
 		said     string
 		logged   []string
+		err      error
 	}{
 		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30",
 			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}},
+		{id: "so does one that comes before the screen heard the install started", script: "echo started; sleep 30", unseen: true,
+			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}},
+		{id: "a crash in the screen comes back as an error", crash: true, err: tea.ErrProgramPanic},
 		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
 			logged: []string{"brew upgrade anvil: signal: killed"}},
 		{id: "with nothing running kho just leaves"},
@@ -1389,19 +1399,24 @@ func TestSignal(t *testing.T) {
 				installScript = tt.script
 				m = press(t, m, "l", "v", "enter")
 				tm, cmd := m.Update(key("y"))
-				tm, _ = tm.Update(cmd())
-				tm, _ = tm.Update(tm.(model).inst.next()())
-				m = tm.(model)
+				msg := cmd()
+				if !tt.unseen {
+					tm, _ = tm.Update(msg)
+					tm, _ = tm.Update(tm.(model).inst.next()())
+					m = tm.(model)
+				}
 			}
 			var said bytes.Buffer
-			if tt.patience > 0 {
+			var err error
+			switch {
+			case tt.patience > 0:
 				m.inst.finish(tt.patience)
-			} else {
+			case tt.crash:
+				err = serve(panics{}, make(chan os.Signal, 1), &said, tea.WithInput(nil), tea.WithOutput(io.Discard))
+			default:
 				sigs := make(chan os.Signal, 1)
 				sigs <- syscall.SIGHUP
-				if err := serve(m, sigs, &said, tea.WithInput(nil), tea.WithOutput(io.Discard)); err != nil {
-					t.Fatal(err)
-				}
+				err = serve(m, sigs, &said, tea.WithInput(nil), tea.WithOutput(io.Discard))
 			}
 			var logged []string
 			for _, e := range m.log.Entries() {
@@ -1409,12 +1424,19 @@ func TestSignal(t *testing.T) {
 					logged = append(logged, strings.Join(e.Command, " ")+": "+e.Err)
 				}
 			}
-			if said.String() != tt.said || !slices.Equal(logged, tt.logged) {
-				t.Errorf("said %q, logged %q, want %q, %q", said.String(), logged, tt.said, tt.logged)
+			if said.String() != tt.said || !slices.Equal(logged, tt.logged) || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
+				t.Errorf("said %q, logged %q, err %v, want %q, %q, %v", said.String(), logged, err, tt.said, tt.logged, tt.err)
 			}
 		})
 	}
 }
+
+// panics is a screen that crashes on the first message.
+type panics struct{}
+
+func (panics) Init() tea.Cmd                       { return nil }
+func (panics) Update(tea.Msg) (tea.Model, tea.Cmd) { panic("boom") }
+func (panics) View() tea.View                      { return tea.NewView("") }
 
 // A box laid over a line must keep the line's width even when its edge cuts a
 // wide character in half, or everything after it shifts by a column.
