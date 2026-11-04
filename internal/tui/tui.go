@@ -389,7 +389,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inst = msg.installing
 		cmds = append(cmds, m.inst.next(), m.startTicking())
 	case outputMsg:
-		m.inst.lines = append(m.inst.lines, string(msg))
+		if n := len(m.inst.lines); msg.redraw && n > 0 {
+			m.inst.lines[n-1] = msg.text
+		} else {
+			m.inst.lines = append(m.inst.lines, msg.text)
+		}
 		if over := len(m.inst.lines) - 500; over > 0 {
 			m.inst.lines = m.inst.lines[over:]
 		}

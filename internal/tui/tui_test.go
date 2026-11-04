@@ -1184,6 +1184,42 @@ func TestStopInstall(t *testing.T) {
 	}
 }
 
+// A progress bar redraws its line after a \r. The popup shows each state as
+// it comes, rather than nothing until the line ends.
+func TestProgress(t *testing.T) {
+	tests := []struct {
+		id, script string
+		// states are the popup's output lines after each message.
+		states [][]string
+	}{
+		{"a progress bar shows each state as it redraws", `printf 'step 1\r'; sleep 0.2; printf 'step 2\r'; printf 'step 3\n'; echo done`,
+			[][]string{{"step 1"}, {"step 2"}, {"step 3"}, {"step 3", "done"}}},
+		{"a \\r before a \\n leaves the line as it was", `printf 'step 1\r\nnext\n'`, [][]string{{"step 1"}, {"step 1", "next"}}},
+		{"a bare \\r changes nothing", `printf '\rten\r\rtwenty\n'`, [][]string{{"ten"}, {"twenty"}}},
+		{"an empty line stays", `printf 'a\n\nb\n'`, [][]string{{"a"}, {"a", ""}, {"a", "", "b"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), "l", "v", "enter")
+			installScript = tt.script
+			tm, cmd := m.Update(key("y"))
+			tm, _ = tm.Update(cmd())
+			var states [][]string
+			for {
+				msg := tm.(model).inst.next()()
+				if _, ok := msg.(installedMsg); ok {
+					break
+				}
+				tm, _ = tm.Update(msg)
+				states = append(states, slices.Clone(tm.(model).inst.lines))
+			}
+			if !reflect.DeepEqual(states, tt.states) {
+				t.Errorf("got  %q\nwant %q", states, tt.states)
+			}
+		})
+	}
+}
+
 // A signal, or the terminal closing, ends kho without a key press, so an
 // install still running is stopped and logged before kho is gone.
 func TestSignal(t *testing.T) {

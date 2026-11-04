@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -115,7 +116,12 @@ type installing struct {
 
 type installStartedMsg struct{ *installing }
 
-type outputMsg string
+// outputMsg is a line the install printed. redraw says it replaces the line
+// before, as a progress bar redraws itself after a \r.
+type outputMsg struct {
+	text   string
+	redraw bool
+}
 
 // startInstall runs cmd in a popup. A command that can't even start leaves
 // nothing to watch or stop, so it comes back as a failed installedMsg.
@@ -246,18 +252,40 @@ func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done in
 }
 
 // stream sends what the command prints until the output ends or is closed.
-// Each line keeps only what follows its last \r, as a progress bar would
-// leave it on screen.
+// A line still open after a \r is sent as it is, then redrawn by what comes
+// next, so a progress bar shows its latest state.
 func (in *installing) stream(out io.Reader, output io.Writer) {
 	sc := bufio.NewScanner(io.TeeReader(out, output))
 	sc.Buffer(nil, 1<<20)
+	sc.Split(scanLines)
+	open := false
 	for sc.Scan() {
-		line := strings.TrimRight(sc.Text(), "\r")
-		in.events <- outputMsg(printable(line[strings.LastIndex(line, "\r")+1:]))
+		line := sc.Text()
+		text, cr := strings.TrimRight(line, "\r\n"), strings.HasSuffix(line, "\r")
+		// A bare \r only goes back over the line, and a \n after one leaves
+		// the line as it was.
+		if text == "" && (cr || open) {
+			open = open && cr
+			continue
+		}
+		in.events <- outputMsg{printable(text), open}
+		open = cr
 	}
 	// A line too long for the scanner stops it; read the rest so the command
 	// never blocks on a full pipe.
 	io.Copy(output, out)
+}
+
+// scanLines splits output after each \n or \r, and keeps the one that ended
+// the line.
+func scanLines(data []byte, atEOF bool) (int, []byte, error) {
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		return i + 1, data[:i+1], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 // printable is a line of output as wide as the popup measures it: no
