@@ -532,19 +532,23 @@ func linkSkill(home string, l SkillLink, p Package) error {
 		return err
 	}
 	// A link is read from the folder it really sits in, so a symlinked parent
-	// would make a path worked out from dir wrong. The target's parent is
-	// resolved too, so a home under a symlink still gives a short path, while
-	// the target itself stays the entry it is.
+	// would make a path worked out from dir wrong. Of the target only home is
+	// resolved: a home under a symlink still gives a short path, and the link
+	// still goes through ~/.agents/skills when that is a link itself, as the
+	// CLI's do and as the dialog and history say.
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return err
 	}
-	target := linkTarget(home, p)
-	targetDir, err := filepath.EvalSymlinks(filepath.Dir(target))
+	realHome, err := filepath.EvalSymlinks(home)
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(realDir, filepath.Join(targetDir, filepath.Base(target)))
+	target := linkTarget(home, p)
+	if under, err := filepath.Rel(home, target); err == nil && filepath.IsLocal(under) {
+		target = filepath.Join(realHome, under)
+	}
+	rel, err := filepath.Rel(realDir, target)
 	if err != nil {
 		return err
 	}
