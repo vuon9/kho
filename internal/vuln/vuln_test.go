@@ -276,28 +276,37 @@ func TestStoredShapeMatchesFormat(t *testing.T) {
 
 // Fields JSON never writes cannot change the stored shape, so filling them
 // would only make the shape test fail for nothing, or panic.
+type embedded struct {
+	Note string `json:"note,omitempty"`
+}
+
 func TestShapeSkipsWhatJSONSkips(t *testing.T) {
 	tests := []struct {
-		id string
-		v  any
+		id   string
+		v    any
+		want []string
 	}{
+		{"an embedded unexported struct still adds its fields", &struct {
+			ID string `json:"id"`
+			embedded
+		}{}, []string{"id string", "note string"}},
 		{"an unexported field", &struct {
 			ID   string `json:"id"`
 			note string
-		}{}},
+		}{}, []string{"id string"}},
 		{"a field tagged json:\"-\" of a kind fill cannot fill", &struct {
 			ID   string `json:"id"`
 			Hook func() `json:"-"`
-		}{}},
+		}{}, []string{"id string"}},
 		{"an unexported lock", &struct {
 			ID string `json:"id"`
 			mu sync.Mutex
-		}{}},
+		}{}, []string{"id string"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			if got := shape(t, tt.v); !slices.Equal(got, []string{"id string"}) {
-				t.Errorf("shape %q, want only the id", got)
+			if got := shape(t, tt.v); !slices.Equal(got, tt.want) {
+				t.Errorf("shape %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -329,7 +338,7 @@ func fill(t *testing.T, v reflect.Value) {
 		v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
 	case v.Kind() == reflect.Struct:
 		for i := range v.NumField() {
-			if f := v.Type().Field(i); f.IsExported() && f.Tag.Get("json") != "-" {
+			if f := v.Type().Field(i); (f.IsExported() || f.Anonymous && f.Type.Kind() == reflect.Struct) && f.Tag.Get("json") != "-" {
 				fill(t, v.Field(i))
 			}
 		}
