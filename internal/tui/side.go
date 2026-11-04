@@ -223,11 +223,12 @@ func (m model) sideBox(w, h int, focused bool) string {
 			if j < len(bottoms) {
 				text = bottoms[j].text
 			}
-			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
-				text = highlight(text, from, to)
-			}
+			// The selected row is drawn plain, so a drag over it is lit after.
 			if j == m.depCursor && j < len(deps) {
 				text = selected(text, inner, focused)
+			}
+			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
+				text = highlight(text, from, to)
 			}
 			out = append(out, row(text))
 		}

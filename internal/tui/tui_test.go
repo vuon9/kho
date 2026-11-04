@@ -807,6 +807,45 @@ func TestCopy(t *testing.T) {
 	}
 }
 
+// A drag lights the text it covers before it is let go and copied.
+func TestHighlight(t *testing.T) {
+	lit := regexp.MustCompile("\x1b\\[7m([^\x1b]*)")
+	l := loaded(t).layout()
+	deps := l.top + 1 + l.topRows + 1
+	text := popupText(loaded(t).depRect())
+	drag := func(x0, x1, y int) []tea.Msg {
+		return []tea.Msg{tea.MouseClickMsg{X: x0, Y: y, Button: tea.MouseLeft}, tea.MouseMotionMsg{X: x1, Y: y, Button: tea.MouseLeft}}
+	}
+	tests := []struct {
+		id    string
+		popup bool
+		msgs  []tea.Msg
+		want  []string
+	}{
+		{id: "a drag in the sidebar lights what it covers", msgs: drag(l.sideX+2, l.sideX+12, deps), want: []string{"• openssl@4"}},
+		{id: "a drag in the dependency popup lights what it covers", popup: true, msgs: drag(text.x, text.x+11, text.y), want: []string{" GO-TEST-000"}},
+		{id: "a press alone lights nothing", msgs: drag(l.sideX+2, l.sideX+2, deps)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			if tt.popup {
+				m = press(t, withDeps(t, ""), pick("tidyup", "j", "enter")...)
+			}
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			var got []string
+			for _, match := range lit.FindAllStringSubmatch(m.View().Content, -1) {
+				got = append(got, match[1])
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("lit %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResizePanels(t *testing.T) {
 	base := loaded(t).layout()
 	drag := func(x0, y0, x1, y1 int) []tea.Msg {
