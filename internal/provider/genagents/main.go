@@ -18,16 +18,19 @@ import (
 
 var (
 	envHome = regexp.MustCompile(`(?s)const (\w+) =\s*process\.env\.(\w+)\?\.trim\(\) \|\|[^;]*?join\(home, '([^']+)'\)\)?;`)
-	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\n\}`)
-	picker  = regexp.MustCompile(`(?s)export function (get\w+GlobalSkillsDir)\(.*?\n\}`)
+	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\) \{\n(.*?)\n\}`)
+	picker  = regexp.MustCompile(`(?s)export function (get\w+GlobalSkillsDir)\(.*?\) \{\n(.*?)\n\}`)
 	returns = regexp.MustCompile(`return (join\([^()]*\));`)
 	entry   = regexp.MustCompile(`\n  '?([a-z0-9-]+)'?: \{\n`)
 	display = regexp.MustCompile(`displayName: '([^']+)'`)
-	project = regexp.MustCompile(`\bskillsDir: '([^']*)'`)
+	project = regexp.MustCompile(`\bskillsDir: '([^']*)',`)
 	global  = regexp.MustCompile(`globalSkillsDir: (.+?),\n`)
-	join    = regexp.MustCompile(`join\((\w+), ((?:'[^']*'(?:, )?)+)\)`)
-	exists  = regexp.MustCompile(`(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
-	call    = regexp.MustCompile(`(is\w+Installed)\(\)`)
+	comment = regexp.MustCompile(`//[^\n]*`)
+	calls   = regexp.MustCompile(`([\w.]+)\(`)
+	exists  = regexp.MustCompile(`^(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
+	abs     = regexp.MustCompile(`^'(/[^']*)'$`)
+	join    = regexp.MustCompile(`^join\((\w+), ((?:'[^']*'(?:, )?)+)\)$`)
+	ident   = regexp.MustCompile(`^\w+$`)
 )
 
 func main() {
@@ -55,7 +58,7 @@ func generate(src, version string) ([]byte, error) {
 	}
 	helpers := map[string][]string{}
 	for _, m := range helper.FindAllStringSubmatch(src, -1) {
-		ps, err := paths(m[0], bases, nil)
+		ps, err := paths(m[2], bases, nil)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", m[1], err)
 		}
@@ -63,7 +66,7 @@ func generate(src, version string) ([]byte, error) {
 	}
 	picks := map[string][]string{}
 	for _, m := range picker.FindAllStringSubmatch(src, -1) {
-		dirs, err := firstFound(m[0], bases)
+		dirs, err := firstFound(m[2], bases)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", m[1], err)
 		}
@@ -93,14 +96,23 @@ func generate(src, version string) ([]byte, error) {
 			}
 			dirs = []string{dir}
 		}
-		detect, err := paths(body[strings.Index(body, "detectInstalled"):], bases, helpers)
+		name, skillsDir, at := display.FindStringSubmatch(body), project.FindStringSubmatch(body), strings.Index(body, "detectInstalled")
+		switch {
+		case name == nil:
+			return nil, fmt.Errorf("%s: can't read displayName", id)
+		case skillsDir == nil:
+			return nil, fmt.Errorf("%s: can't read skillsDir", id)
+		case at < 0:
+			return nil, fmt.Errorf("%s: has no detectInstalled", id)
+		}
+		detect, err := paths(body[at:], bases, helpers)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
-		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dirs: %#v, Detect: %#v", id, display.FindStringSubmatch(body)[1], dirs, detect)
+		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dirs: %#v, Detect: %#v", id, name[1], dirs, detect)
 		// Like the CLI: an agent whose project folder is .agents/skills reads
 		// ~/.agents/skills too, so a global skill never needs a link of its own.
-		if project.FindStringSubmatch(body)[1] == ".agents/skills" {
+		if skillsDir[1] == ".agents/skills" {
 			b.WriteString(", Universal: true")
 		}
 		b.WriteString("},\n")
@@ -109,22 +121,40 @@ func generate(src, version string) ([]byte, error) {
 	return format.Source(b.Bytes())
 }
 
-// paths lists the folders whose existence shows an agent is installed,
-// leaving out project ones under process.cwd() and the bases left out on
-// purpose.
+// paths lists the folders whose existence shows an agent is installed, from
+// the existsSync and pathExists calls in code and the is*Installed helpers it
+// calls. It leaves out project folders under process.cwd() and the bases left
+// out on purpose, and fails on any other call, so a new way of finding an
+// agent can't be dropped without notice.
 func paths(code string, bases map[string]string, helpers map[string][]string) ([]string, error) {
+	code = comment.ReplaceAllString(code, "")
 	out := []string{}
-	for _, m := range exists.FindAllStringSubmatch(code, -1) {
-		p, err := path(m[1], bases)
-		if err != nil {
-			return nil, err
+	for _, m := range calls.FindAllStringSubmatchIndex(code, -1) {
+		name, rest := code[m[2]:m[3]], code[m[0]:]
+		helped, isHelper := helpers[name]
+		switch {
+		case name == "join" || name == "process.cwd":
+			// Read as part of the call they sit in.
+		case isHelper:
+			out = append(out, helped...)
+		case name == "existsSync" || name == "pathExists":
+			e := exists.FindStringSubmatch(rest)
+			if e == nil && strings.HasPrefix(rest, name+"(join(process.cwd(), ") {
+				continue
+			}
+			if e == nil {
+				return nil, fmt.Errorf("can't read %s", strings.TrimSuffix(strings.SplitN(rest, "\n", 2)[0], ";"))
+			}
+			p, err := path(e[1], bases)
+			if err != nil {
+				return nil, err
+			}
+			if p != "" {
+				out = append(out, p)
+			}
+		default:
+			return nil, fmt.Errorf("can't read %s", strings.TrimSuffix(strings.SplitN(rest, "\n", 2)[0], ";"))
 		}
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	for _, m := range call.FindAllStringSubmatch(code, -1) {
-		out = append(out, helpers[m[1]]...)
 	}
 	return out, nil
 }
@@ -162,8 +192,8 @@ func firstFound(code string, bases map[string]string) ([]string, error) {
 // path into kho's form: ~/a/b, ${ENV:-~/default}/a, or /abs. It is "" for a
 // base left out on purpose.
 func path(expr string, bases map[string]string) (string, error) {
-	if strings.HasPrefix(expr, "'/") {
-		return strings.Trim(expr, "'"), nil
+	if m := abs.FindStringSubmatch(expr); m != nil {
+		return m[1], nil
 	}
 	name, rest := expr, ""
 	if m := join.FindStringSubmatch(expr); m != nil {
@@ -171,6 +201,8 @@ func path(expr string, bases map[string]string) (string, error) {
 	}
 	base, ok := bases[name]
 	switch {
+	case !ident.MatchString(name):
+		return "", fmt.Errorf("can't read %s", expr)
 	case !ok:
 		return "", fmt.Errorf("unknown base %s in %s", name, expr)
 	case base == "":

@@ -72,11 +72,38 @@ func TestGenerate(t *testing.T) {
 			err: "mist: unknown base mistHome in join(mistHome, 'skills')",
 		},
 		{
-			id: "the Windows and Flatpak bases are left out on purpose",
+			id:  "a detect path built some other way fails rather than vanish",
+			src: agentsTS("", agent("ivy", ".ivy/skills", "join(home, '.ivy/skills')", "existsSync(join(homedir(), '.ivy'))")),
+			err: "ivy: can't read existsSync(join(homedir(), '.ivy'))",
+		},
+		{
+			id:  "so does one through path.join",
+			src: agentsTS("", agent("ivy", ".ivy/skills", "join(home, '.ivy/skills')", "existsSync(path.join(home, '.ivy'))")),
+			err: "ivy: can't read existsSync(path.join(home, '.ivy'))",
+		},
+		{
+			id:  "and a helper that isn't an is*Installed one",
+			src: agentsTS("", agent("juniper", ".juniper/skills", "join(home, '.juniper/skills')", "hasJuniperConfig()")),
+			err: "juniper: can't read hasJuniperConfig()",
+		},
+		{
+			id:  "a skills folder picked by a condition fails rather than take its first join",
+			src: agentsTS("", agent("kelp", ".kelp/skills", "process.platform === 'win32' ? join(home, 'AppData', 'kelp') : join(home, '.kelp/skills')", "existsSync(join(home, '.kelp'))")),
+			err: "kelp: can't read process.platform === 'win32' ? join(home, 'AppData', 'kelp') : join(home, '.kelp/skills')",
+		},
+		{
+			id: "a project folder that isn't a quoted literal fails",
+			src: agentsTS("", strings.Replace(agent("lark", ".lark/skills", "join(home, '.lark/skills')", "existsSync(join(home, '.lark'))"),
+				"skillsDir: '.lark/skills'", "skillsDir: join('.lark', 'skills')", 1)),
+			err: "lark: can't read skillsDir",
+		},
+		{
+			id: "the Windows and Flatpak bases are left out on purpose, and comments are no calls",
 			src: agentsTS("const zedAppDataHome = process.env.APPDATA?.trim();\nconst zedFlatpakConfigHome = process.env.FLATPAK_XDG_CONFIG_HOME?.trim();\n",
-				agent("haze", ".agents/skills", "join(home, '.agents/skills')", "existsSync(join(configHome, 'haze')) ||\n"+
+				strings.Replace(agent("haze", ".agents/skills", "join(home, '.agents/skills')", "existsSync(join(configHome, 'haze')) ||\n"+
 					"        (!!zedAppDataHome && existsSync(join(zedAppDataHome, 'Haze'))) ||\n"+
-					"        (!!zedFlatpakConfigHome && existsSync(join(zedFlatpakConfigHome, 'haze')))")),
+					"        (!!zedFlatpakConfigHome && existsSync(join(zedFlatpakConfigHome, 'haze')))"),
+					"      return", "      // Per Haze's config_dir() in its paths.rs.\n      return", 1)),
 			want: file(`{Name: "haze", Display: "Haze", Dirs: []string{"~/.agents/skills"}, Detect: []string{"${XDG_CONFIG_HOME:-~/.config}/haze"}, Universal: true}`),
 		},
 		{
