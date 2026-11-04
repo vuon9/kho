@@ -423,10 +423,10 @@ func splitSources(list string) (known, unknown []string) {
 		if name == "" {
 			continue
 		}
-		if sources[name] {
-			known = append(known, name)
-		} else {
+		if !sources[name] {
 			unknown = append(unknown, name)
+		} else if !slices.Contains(known, name) {
+			known = append(known, name)
 		}
 	}
 	return known, unknown

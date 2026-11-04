@@ -252,6 +252,8 @@ func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
 			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", true, false, nil}},
 		{"cask is read by brew, so requiring it requires brew", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask"},
 			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", true, false, nil}},
+		{"a source required twice is named once", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask,brew"},
+			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", true, false, nil}},
 		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", true, true, nil}},
 		{"an unknown source in the list is a usage error", npm, uvMissing, nil, []string{"--require", "npmm"},
 			result{ExitUsage, "unknown source in --require: npmm", false, false, nil}},
