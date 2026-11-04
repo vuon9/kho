@@ -865,6 +865,8 @@ func TestHistory(t *testing.T) {
 		lacks  []string
 		copied []string
 	}{
+		{id: "enter opens no dependency behind the history", keys: []string{"l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"◆ openssl@4"}},
+		{id: "nor an install", keys: []string{"v", "l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"Upgrade anvil?"}},
 		{id: "H lists every command, newest first", keys: []string{"H"}, want: []string{"🕘 History · 3", "ln -s /h/.agents", "pipx install --force", "brew info --json=v2 --installed", "1.3s", "⌨ ln", "change: kho changed the machine"}},
 		{id: "f keeps the changes", keys: []string{"H", "f"}, want: []string{"🕘 History · 2 · ✎ Changes", "✎ Changes 2"}, lacks: []string{"brew info"}},
 		{id: "f again keeps the failures", keys: []string{"H", "f", "f"}, want: []string{"✗ Failed 1", "✗ exit status 1", "boom: no matching distribution"}, lacks: []string{"ln -s"}},
