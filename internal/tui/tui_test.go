@@ -959,7 +959,7 @@ func TestHistory(t *testing.T) {
 		m := loaded(t)
 		m.log.Add(history.Entry{At: clock, Kind: history.Read, Command: []string{"brew", "info", "--json=v2", "--installed"}, Took: 1300 * time.Millisecond})
 		m.log.Add(history.Entry{At: clock.Add(time.Minute), Kind: history.Change, Command: []string{"pipx", "install", "--force", "bramble==26.10.1"},
-			Err: "exit status 1", Output: "boom:\tno matching distribution"})
+			Err: "exit status 1", Output: "Collecting bramble\r\x1b[31mboom:\x1b[0m\tno matching distribution\a"})
 		m.log.Add(history.Entry{At: clock.Add(2 * time.Minute), Kind: history.Change, Command: []string{"ln", "-s", "/h/.agents/skills/pathmaker", "/h/.cursor/skills/pathmaker"}})
 		return m
 	}
@@ -982,6 +982,8 @@ func TestHistory(t *testing.T) {
 		{id: "H lists every command, newest first", keys: []string{"H"}, want: []string{"🕘 History · 3", "ln -s /h/.agents", "pipx install --force", "brew info --json=v2 --installed", "1.3s", "⌨ ln", "change: kho changed the machine"}},
 		{id: "f keeps the changes", keys: []string{"H", "f"}, want: []string{"🕘 History · 2 · ✎ Changes", "✎ Changes 2"}, lacks: []string{"brew info"}},
 		{id: "f again keeps the failures", keys: []string{"H", "f", "f"}, want: []string{"✗ Failed 1", "✗ exit status 1", "boom:   no matching distribution"}, lacks: []string{"ln -s"}},
+		{id: "an install's output shows as its popup showed it", keys: []string{"H", "j"}, want: []string{"│ boom:   no matching distribution"},
+			lacks: []string{"Collecting bramble", "\r", "\a"}},
 		{id: "/ filters the commands", keys: []string{"H", "/", "b", "r", "e", "w", "enter"}, want: []string{"🕘 History · 1", "brew info"}, lacks: []string{"pipx install"}},
 		{id: "c copies the selected command", keys: []string{"H", "j", "c"}, copied: []string{"pipx install --force bramble==26.10.1"}},
 		{id: "esc goes back to the packages", keys: []string{"H", "esc"}, want: []string{"✨ Sources"}, lacks: []string{"🕘 History"}},

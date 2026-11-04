@@ -393,6 +393,17 @@ func printable(s string) string {
 	}, expandTabs(ansi.Strip(s)))
 }
 
+// tidy is what an install printed as its popup showed it: each line as a
+// terminal leaves it after its last \r, then printable.
+func tidy(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, l := range lines {
+		l = strings.TrimRight(l, "\r")
+		lines[i] = printable(l[strings.LastIndex(l, "\r")+1:])
+	}
+	return strings.Join(lines, "\n")
+}
+
 // askLink offers to add or remove the selected agent's link to a skill.
 func (m *model) askLink() {
 	p, ok := m.current()

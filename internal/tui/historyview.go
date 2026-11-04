@@ -240,7 +240,9 @@ func (m model) historyDetail(inner int) []string {
 	}
 	if e.Output != "" {
 		lines = append(lines, line{}, line{text: " " + accent().Render("output")})
-		lines = append(lines, plain(wrap(e.Output, inner-1)...)...)
+		for _, l := range wrap(tidy(e.Output), inner-1) {
+			lines = append(lines, line{text: " " + l})
+		}
 	}
 	var out []string
 	for _, l := range wrapLines(lines, inner) {
