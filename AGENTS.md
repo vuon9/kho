@@ -25,7 +25,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 ## Conventions
 
-**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes.
+**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes. The table can't say that an agent reads `~/.agents/skills` on top of its own folder, so those agents (OpenCode) are listed by hand in `alsoShared`.
 
 **Providers.** To add one: implement `Provider`, register it in `All()`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
 

@@ -213,7 +213,7 @@ func TestScanSkills(t *testing.T) {
 		".claude/skills/tracked", ".claude/skills/untracked", ".claude/skills/agent-only",
 		".cursor/skills/cursor-only", ".cursor/skills/agent-only",
 	)
-	mkdirs(".pi/agent")
+	mkdirs(".pi/agent", ".config/opencode")
 	// Not skills: a link left behind after its skill was removed, and a
 	// category folder like the ones Hermes keeps its bundled skills in.
 	os.Symlink("../../.agents/skills/removed", filepath.Join(home, ".cursor/skills/removed"))
@@ -232,11 +232,11 @@ func TestScanSkills(t *testing.T) {
 		{Source: "skills", Name: "agent-only", Version: "-", Path: filepath.Join(home, ".claude/skills/agent-only"), Agents: []string{"claude-code", "cursor"},
 			Note: "only in claude-code, cursor, not managed by the skills CLI"},
 		{Source: "skills", Name: "claude-off", Version: "8295b8e", Pinned: true, Origin: "someone/skills", Path: filepath.Join(shared, "claude-off"),
-			Agents: []string{"pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
+			Agents: []string{"opencode", "pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
 		{Source: "skills", Name: "cursor-only", Version: "-", Path: filepath.Join(home, ".cursor/skills/cursor-only"), Agents: []string{"cursor"},
 			Note: "only in cursor, not managed by the skills CLI"},
-		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "pi"}, Repo: "someone/skills"},
-		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "pi"},
+		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "opencode", "pi"}, Repo: "someone/skills"},
+		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "opencode", "pi"},
 			Note: "no lock entry, the skills CLI can't update it"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -399,7 +399,7 @@ func TestInstallCmd(t *testing.T) {
 func TestSkillLinks(t *testing.T) {
 	clearAgentEnv(t)
 	home := t.TempDir()
-	for _, d := range []string{".agents/skills/workflow", ".claude/skills", ".cursor/skills/workflow", ".pi/agent", ".codex", ".config/goose"} {
+	for _, d := range []string{".agents/skills/workflow", ".claude/skills", ".cursor/skills/workflow", ".pi/agent", ".codex", ".config/goose", ".config/opencode"} {
 		os.MkdirAll(filepath.Join(home, d), 0o755)
 	}
 	os.Symlink("../../.agents/skills/workflow", filepath.Join(home, ".claude/skills/workflow"))
@@ -413,13 +413,16 @@ func TestSkillLinks(t *testing.T) {
 				continue
 			}
 			got[l.Agent] = l.Kind
+			if l.Shared && l.Kind != "shared" {
+				got[l.Agent] += ", sees shared"
+			}
 			if l.Kind == "link" && l.Target != real {
 				t.Errorf("%s points at %s, want %s", l.Agent, l.Target, real)
 			}
 		}
 		return got
 	}
-	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy", "goose": "missing", "pi": "shared"}
+	want := map[string]string{"claude-code": "link", "codex": "shared", "cursor": "copy", "goose": "missing", "opencode": "missing, sees shared", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -442,7 +445,7 @@ func TestSkillLinks(t *testing.T) {
 	if err := UnlinkSkill(byAgent["cursor"]); err == nil {
 		t.Error("a copied folder must not be removed")
 	}
-	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy", "goose": "link", "pi": "shared"}
+	want = map[string]string{"claude-code": "missing", "codex": "shared", "cursor": "copy", "goose": "link", "opencode": "missing, sees shared", "pi": "shared"}
 	if got := kinds(); !reflect.DeepEqual(got, want) {
 		t.Errorf("after toggling got %v, want %v", got, want)
 	}

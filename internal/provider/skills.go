@@ -51,6 +51,15 @@ func (a skillAgent) dir(home string) string {
 	return ""
 }
 
+// alsoShared are agents that read ~/.agents/skills on top of a folder of
+// their own, which the skills CLI's table can't express. Linking a skill into
+// their folder would load it twice.
+var alsoShared = map[string]bool{"opencode": true}
+
+func (a skillAgent) readsShared(home string) bool {
+	return a.dir(home) == "" || alsoShared[a.Name]
+}
+
 func (a skillAgent) installed(home string) bool {
 	for _, p := range a.Detect {
 		if _, err := os.Stat(expandPath(home, p)); err == nil {
@@ -169,7 +178,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 			p.Note = "no lock entry, the skills CLI can't update it"
 		}
 		for _, a := range agents {
-			if a.dir(home) == "" || own[a.Name][name] {
+			if a.readsShared(home) || own[a.Name][name] {
 				p.Agents = append(p.Agents, a.Name)
 			}
 		}
@@ -369,7 +378,7 @@ func frontMatter(s string) ([][2]string, string) {
 type SkillLink struct {
 	Agent, Display string
 	Path           string
-	Kind           string // "link", "copy", "missing", or "shared" for agents that read ~/.agents/skills
+	Kind           string // "link", "copy", "missing", or "shared" for agents whose only folder is ~/.agents/skills
 	Target         string
 	// Shared is true when the agent reads ~/.agents/skills and the skill is
 	// there, so it sees the skill without a link of its own.
@@ -400,10 +409,10 @@ func skillLinks(home string, p Package, all bool) []SkillLink {
 		if !installed && !all {
 			continue
 		}
-		l := SkillLink{Agent: a.Name, Display: a.Display, Installed: installed}
+		l := SkillLink{Agent: a.Name, Display: a.Display, Installed: installed, Shared: a.readsShared(home) && inShared == nil}
 		d := a.dir(home)
 		if d == "" {
-			l.Path, l.Kind, l.Shared = shared, "shared", inShared == nil
+			l.Path, l.Kind = shared, "shared"
 			links = append(links, l)
 			continue
 		}
