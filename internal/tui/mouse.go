@@ -75,14 +75,12 @@ func (l layout) row(y int) int {
 	return y - l.top - 1
 }
 
-// rect is a box on the screen.
 type rect struct{ x, y, w, h int }
 
 func (r rect) has(x, y int) bool {
 	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
 }
 
-// centered is a w by h box in the middle of the screen.
 func (m model) centered(w, h int) rect {
 	return rect{(m.width - w) / 2, (m.height - h) / 2, w, h}
 }

@@ -32,14 +32,19 @@ func Run(log *history.Log, version string) error {
 			th, m.themePicked = t, true
 		}
 	}
-	// Bubble Tea quits on the first SIGINT or SIGTERM, ignores them while
-	// a command runs in the terminal, and then stops listening, and Go's
-	// default for SIGHUP, as when the terminal closes, kills kho on the spot.
-	// Listening to all three for as long as kho runs keeps a later signal
-	// from killing it before an install is stopped and logged.
+	return serve(m, listen(), os.Stderr)
+}
+
+// listen hears the signals that would end kho. Bubble Tea quits on the
+// first SIGINT or SIGTERM, ignores them while a command runs in the
+// terminal, and then stops listening, and Go's default for SIGHUP, as when
+// the terminal closes, kills kho on the spot. Listening to all three for as
+// long as kho runs keeps a later signal from killing it before an install
+// is stopped and logged.
+func listen() chan os.Signal {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	return serve(m, sigs, os.Stderr)
+	return sigs
 }
 
 // ErrHangup is what Run returns when the terminal went away, so kho can

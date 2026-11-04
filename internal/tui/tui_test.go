@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1493,6 +1494,35 @@ func TestSignal(t *testing.T) {
 			}
 			if said.String() != tt.said || !slices.Equal(logged, tt.logged) || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
 				t.Errorf("said %q, logged %q, err %v, want %q, %q, %v", said.String(), logged, err, tt.said, tt.logged, tt.err)
+			}
+		})
+	}
+}
+
+// kho listens for these signals for as long as it runs; one it didn't hear
+// would kill this test.
+func TestListen(t *testing.T) {
+	sigs := listen()
+	defer signal.Stop(sigs)
+	tests := []struct {
+		id  string
+		sig syscall.Signal
+	}{
+		{"a closed terminal's hangup", syscall.SIGHUP},
+		{"a termination", syscall.SIGTERM},
+		{"an interrupt", syscall.SIGINT},
+		{"a second hangup, after the first was heard", syscall.SIGHUP},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			syscall.Kill(os.Getpid(), tt.sig)
+			select {
+			case got := <-sigs:
+				if got != tt.sig {
+					t.Errorf("heard %v, want %v", got, tt.sig)
+				}
+			case <-time.After(time.Second):
+				t.Errorf("%v never came", tt.sig)
 			}
 		})
 	}
