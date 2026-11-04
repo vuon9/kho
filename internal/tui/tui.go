@@ -30,21 +30,26 @@ func Run(log *history.Log, version string) error {
 			th, m.themePicked = t, true
 		}
 	}
+	// Bubble Tea quits on the first SIGINT or SIGTERM, ignores them while
+	// a command runs in the terminal, and then stops listening, and Go's
+	// default for SIGHUP, as when the terminal closes, kills kho on the spot.
+	// Listening to all three for as long as kho runs keeps a later signal
+	// from killing it before an install is stopped and logged.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	return serve(m, sigs, os.Stderr)
 }
 
-// serve runs the program until it quits or a signal comes. kho takes the
-// signals from Bubble Tea, whose handler hears only the first SIGINT or
-// SIGTERM, and from Go, whose default for SIGHUP, as when the terminal
-// closes, kills kho on the spot. Either way an install would be cut off and
-// never logged; this way kho stops it and waits until it is logged.
+// serve runs the program until it quits, which a hangup on sigs makes it
+// do, then stops an install still running and waits until it is logged.
 func serve(m model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
-	p := tea.NewProgram(m, append(opts, tea.WithoutSignalHandler())...)
+	p := tea.NewProgram(m, opts...)
 	go func() {
-		<-sigs
-		p.Quit()
+		for s := range sigs {
+			if s == syscall.SIGHUP {
+				p.Quit()
+			}
+		}
 	}()
 	end, err := p.Run()
 	if in := end.(model).inst; in.running() {
