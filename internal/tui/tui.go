@@ -814,12 +814,17 @@ func (m *model) moveSide(key string, step int) {
 }
 
 // scrollDetail scrolls the sidebar's reading area: the bottom half, or the
-// whole sidebar for a tab that has no bottom.
+// whole sidebar for a tab that has no bottom. A dependency list scrolls with
+// its cursor, so the cursor moves instead.
 func (m *model) scrollDetail(n int) {
-	if m.hasBottom() {
-		m.bodyOffset += max(abs(n), 1) * sign(n)
-	} else {
-		m.sideOffset += max(abs(n), 1) * sign(n)
+	n = max(abs(n), 1) * sign(n)
+	switch {
+	case m.depList() != nil:
+		m.depCursor += n
+	case m.hasBottom():
+		m.bodyOffset += n
+	default:
+		m.sideOffset += n
 	}
 }
 

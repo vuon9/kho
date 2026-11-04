@@ -35,7 +35,7 @@ var helpSections = []struct {
 		{"1-6  [ ]", "pick a tab, or the previous or next"},
 		{"i  v  a", "Info, Versions, Security"},
 		{"↑ ↓", "pick a version, advisory or agent, or scroll"},
-		{"J K  ctrl+d ctrl+u", "scroll the detail below"},
+		{"J K  ctrl+d ctrl+u", "scroll the detail below, or move through the dependencies"},
 		{"enter", "install the version, toggle the agent's link, read the advisory,"},
 		{"", "or open a dependency's advisories"},
 		{"ctrl+c", "stop a running install, press again to kill it"},

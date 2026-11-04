@@ -253,7 +253,7 @@ func (m model) footer() string {
 	case m.sideListLen() >= 0 && m.sidePart == 0:
 		line = keys("↑↓", "select", "enter", "read", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
 	case m.depList() != nil:
-		line = keys("↑↓", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
+		line = keys("↑↓ J K", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
 	default:
 		line = keys("↑↓", "scroll", "J K", "scroll detail", "esc", "back", "[ ]", "tabs", "w", "home", "?", "help")
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image/color"
 	"os"
 	"os/exec"
@@ -1155,6 +1156,51 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
+// With more dependencies than the Info tab's bottom half shows, the keys and
+// the wheel that scroll the detail move through the list.
+func TestDependencyScroll(t *testing.T) {
+	var deps []provider.Dep
+	for i := range 30 {
+		deps = append(deps, provider.Dep{Name: fmt.Sprintf("example.org/mod%02d", i), Version: "v1.0.0"})
+	}
+	sprawl := fake{name: "go", pkgs: []provider.Package{{Source: "go", Name: "sprawl", Version: "v1.0.0", Origin: "example.com/sprawl", Deps: deps}}}
+	ctrl := func(r rune) tea.Msg { return tea.KeyPressMsg{Code: r, Mod: tea.ModCtrl} }
+	repeat := func(n int, msgs ...tea.Msg) []tea.Msg { return slices.Repeat(msgs, n) }
+	l := loaded(t).layout()
+	if l.bottomRows != 17 {
+		t.Fatalf("the rows below assume the list shows 17 dependencies, it shows %d", l.bottomRows)
+	}
+	wheel := tea.MouseWheelMsg{X: l.sideX + 5, Y: l.top + 1 + l.topRows + 3, Button: tea.MouseWheelDown}
+	tests := []struct {
+		id             string
+		keys           []string
+		msgs           []tea.Msg
+		cursor, offset int
+	}{
+		{id: "J moves the dependency cursor", keys: pick("sprawl"), msgs: repeat(20, key("J")), cursor: 20, offset: 4},
+		{id: "K moves it back", keys: pick("sprawl"), msgs: append(repeat(20, key("J")), repeat(5, key("K"))...), cursor: 15, offset: 4},
+		{id: "ctrl+d moves it half a page", keys: pick("sprawl"), msgs: repeat(3, ctrl('d')), cursor: 24, offset: 8},
+		{id: "ctrl+u moves it back", keys: pick("sprawl"), msgs: append(repeat(3, ctrl('d')), ctrl('u')), cursor: 16, offset: 8},
+		{id: "the wheel over the list moves it", keys: pick("sprawl"), msgs: repeat(20, wheel), cursor: 20, offset: 4},
+		{id: "J works from the package list too", keys: []string{"/", "s", "p", "r", "a", "w", "l", "enter"}, msgs: repeat(20, key("J")), cursor: 20, offset: 4},
+		{id: "and stops at the last one", keys: pick("sprawl"), msgs: repeat(40, key("J")), cursor: 29, offset: 13},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			m.providers = append(m.providers, sprawl)
+			m = update(t, m, listedMsg{"go", sprawl.pkgs, nil})
+			m = press(t, m, tt.keys...)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			if m.depCursor != tt.cursor || m.bodyOffset != tt.offset {
+				t.Errorf("cursor %d, offset %d, want %d, %d", m.depCursor, m.bodyOffset, tt.cursor, tt.offset)
+			}
+		})
+	}
+}
+
 // TestFooter reads the key hints under the panels, which change with what
 // has focus and what is open.
 func TestFooter(t *testing.T) {
@@ -1163,7 +1209,7 @@ func TestFooter(t *testing.T) {
 		keys []string
 		want string
 	}{
-		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ dependency  enter its advisories  [ ] tabs  w home  ? help"},
+		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ J K dependency  enter its advisories  [ ] tabs  w home  ? help"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

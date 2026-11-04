@@ -302,6 +302,8 @@ func (m *model) wheel(x, y, delta int) {
 		m.bodyOffset = 0
 	case l.row(y) < l.topRows:
 		m.sideOffset += delta
+	case m.depList() != nil:
+		m.depCursor += delta
 	default:
 		m.bodyOffset += delta
 	}
