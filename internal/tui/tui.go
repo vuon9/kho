@@ -428,6 +428,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.wheel(msg.X, msg.Y, 1)
 		}
 	}
+	switch msg.(type) {
+	case listedMsg, checkedMsg, scanMsg, auditMsg:
+		m.reselect()
+	}
 	m.clamp()
 	cmds = append(cmds, m.load())
 	if m.working() {
@@ -926,6 +930,18 @@ func (m *model) clamp() {
 	if m.depPop != nil {
 		_, _, _, h := m.depRect()
 		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-(h-3)), 0)
+	}
+}
+
+// reselect puts the cursor back on the selected package after a listing or a
+// security result has added or moved rows. The cursor is a row number, so
+// otherwise it would land on whichever package took that row.
+func (m *model) reselect() {
+	for i, p := range m.rows() {
+		if pkgKey(p) == m.selected {
+			m.cursor = i
+			return
+		}
 	}
 }
 

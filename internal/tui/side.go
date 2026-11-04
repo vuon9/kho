@@ -427,15 +427,18 @@ func (m model) depList() []provider.Dep {
 	return nil
 }
 
-// depPopup shows one dependency's advisories over the screen.
+// depPopup shows one of a package's dependencies and its advisories over the
+// screen.
 type depPopup struct {
+	pkg provider.Package
 	dep provider.Dep
 	top int
 }
 
 func (m *model) openDep(i int) {
+	p, _ := m.current()
 	if d, ok := at(m.depList(), i); ok {
-		m.depPop, m.sel = &depPopup{dep: d}, nil
+		m.depPop, m.sel = &depPopup{pkg: p, dep: d}, nil
 	}
 }
 
@@ -451,8 +454,7 @@ func (m model) depAdvisories(p provider.Package, d provider.Dep) ([]vuln.Advisor
 }
 
 func (m model) depPopTitle() string {
-	p, _ := m.current()
-	d := m.depPop.dep
+	p, d := m.depPop.pkg, m.depPop.dep
 	advs, _ := m.depAdvisories(p, d)
 	title := "◆ " + d.Name + " " + d.Version
 	switch n := len(advs); {
@@ -469,8 +471,7 @@ func (m model) depPopTitle() string {
 func (m model) depPopView() []line {
 	_, _, w, _ := m.depRect()
 	inner := w - 2
-	p, _ := m.current()
-	d := m.depPop.dep
+	p, d := m.depPop.pkg, m.depPop.dep
 	advs, checked := m.depAdvisories(p, d)
 	_, asked := provider.DepQuery(p, d)
 	var lines []line

@@ -428,6 +428,37 @@ func TestMouse(t *testing.T) {
 	}
 }
 
+// The package cursor is a row number, so a listing or a security result that
+// adds or moves rows must not swap the selected package for another.
+func TestKeepSelection(t *testing.T) {
+	brew := fakes(t)[0].(fake).pkgs
+	tests := []struct {
+		id      string
+		keys    []string
+		msgs    []tea.Msg
+		current string
+	}{
+		{id: "a listing that adds rows ahead keeps the package selected", keys: []string{"G"},
+			msgs: []tea.Msg{listedMsg{"brew", append(slices.Clone(brew), provider.Package{Source: "brew", Name: "awl", Version: "1.0.0"}), nil}}, current: "pathmaker"},
+		{id: "so does a security result that moves it", keys: []string{"s", "s", "s", "j", "j", "j"},
+			msgs: []tea.Msg{scanMsg{hits: map[string][]string{"PyPI/inkwell@9.0.2": {redos.ID}}, advisories: map[string]vuln.Advisory{redos.ID: redos}}}, current: "pathmaker"},
+		{id: "a listing that drops it leaves the cursor where it was", keys: []string{"j"},
+			msgs: []tea.Msg{listedMsg{"brew", brew[:1], nil}}, current: "bramble"},
+		{id: "moving still moves", keys: []string{"j"}, current: "gust"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := press(t, loaded(t), tt.keys...)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			if p, _ := m.current(); p.Name != tt.current {
+				t.Errorf("current %q, want %q:\n%s", p.Name, tt.current, screen(m))
+			}
+		})
+	}
+}
+
 func TestDefaultRail(t *testing.T) {
 	tests := []struct{ width, rail int }{
 		{222, 42}, {160, 42}, {130, 42}, {120, 34}, {110, 24}, {100, 24},
@@ -1248,9 +1279,13 @@ func TestDependencyPopup(t *testing.T) {
 		id, scan string
 		msgs     []tea.Msg
 		keys     []string
-		text     []string
-		copied   []string
+		// after are messages that arrive once the popup is open.
+		after  []tea.Msg
+		text   []string
+		copied []string
 	}{
+		{id: "a listing that adds rows ahead leaves the popup on its package", keys: pick("tidyup", "j", "enter"),
+			after: []tea.Msg{listedMsg{"brew", []provider.Package{{Source: "brew", Name: "tidyup", Version: "3.0.0"}}, nil}}, text: netAdvisory},
 		{id: "a uv tool's dependency, never sent to osv.dev, isn't called clean", keys: pick("quill", "enter"),
 			text: []string{"◆ inkpot 3.1.0", "", " kho doesn't check uv dependencies on osv.dev, so inkpot isn't checked."}},
 		{id: "a dependency osv.dev hasn't answered for is still being checked", scan: "pending", keys: pick("tidyup", "j", "enter"),
@@ -1300,6 +1335,9 @@ func TestDependencyPopup(t *testing.T) {
 				m = update(t, m, msg)
 			}
 			m = press(t, m, tt.keys...)
+			for _, msg := range tt.after {
+				m = update(t, m, msg)
+			}
 			if got := popupText(m); !slices.Equal(got, tt.text) || !slices.Equal(copied, tt.copied) {
 				t.Errorf("popup\n%s\ncopied %q\nwant\n%s\ncopied %q", strings.Join(got, "\n"), copied, strings.Join(tt.text, "\n"), tt.copied)
 			}
