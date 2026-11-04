@@ -1078,6 +1078,8 @@ func TestInstall(t *testing.T) {
 		{id: "t does nothing after a success", script: "echo fetched", keys: append(upgrade, "t"), ran: []string{brew}, shows: []string{"✓ done"}, open: true},
 		{id: "a progress line keeps its last state", script: `printf 'step 1\rstep 2\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"step 2"}, hides: "step 1", open: true},
 		{id: "colors are dropped", script: `printf '\033[32mgreen\033[0m\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"green"}, hides: "[32m", open: true},
+		{id: "tabs become spaces", script: `printf '\tgo: missing module\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"┃     go: missing module"}, hides: "\t", open: true},
+		{id: "other control characters are dropped", script: `printf 'ding\a dong\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"ding dong"}, hides: "\a", open: true},
 		{id: "the command can't reach the terminal", script: `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, keys: upgrade, ran: []string{brew},
 			shows: []string{"no-tty"}, hides: "has-tty", open: true},
 	}

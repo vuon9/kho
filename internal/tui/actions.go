@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -252,11 +253,23 @@ func (in *installing) stream(out io.Reader, output io.Writer) {
 	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
-		in.events <- outputMsg(ansi.Strip(line[strings.LastIndex(line, "\r")+1:]))
+		in.events <- outputMsg(printable(line[strings.LastIndex(line, "\r")+1:]))
 	}
 	// A line too long for the scanner stops it; read the rest so the command
 	// never blocks on a full pipe.
 	io.Copy(output, out)
+}
+
+// printable is a line of output as wide as the popup measures it: no
+// styles, tabs as spaces, and no other control characters, which ansi.Strip
+// keeps and the popup would count as no width at all.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.ReplaceAll(ansi.Strip(s), "\t", "    "))
 }
 
 // askLink offers to add or remove the selected agent's link to a skill.
