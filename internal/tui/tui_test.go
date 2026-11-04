@@ -108,8 +108,12 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 
 var opened, ran, copied, toggled []string
 
-// installScript stands in for the package manager an install runs.
-var installScript string
+// installScript stands in for the package manager an install runs, and
+// reran is the command t last ran in the terminal.
+var (
+	installScript string
+	reran         *exec.Cmd
+)
 
 // linkReads counts the times kho read a skill's links, and appeared puts a
 // newly installed agent first in what it reads next.
@@ -122,14 +126,15 @@ func loaded(t *testing.T) model {
 	th = themes[0]
 	opened, ran, copied, toggled = nil, nil, nil, nil
 	linkReads, appeared = 0, false
-	installScript = "echo fetched"
+	installScript, reran = "echo fetched", nil
 	installProcess = func(c *exec.Cmd) *exec.Cmd {
 		ran = append(ran, strings.Join(c.Args, " "))
 		return exec.Command("sh", "-c", installScript)
 	}
 	runExec = func(c tea.ExecCommand, fn tea.ExecCallback) tea.Cmd {
 		return func() tea.Msg {
-			ran = append(ran, strings.Join(c.(*terminalRun).cmd.Args, " "))
+			reran = c.(*terminalRun).cmd
+			ran = append(ran, strings.Join(reran.Args, " "))
 			return fn(nil)
 		}
 	}
@@ -1050,27 +1055,38 @@ func TestInstall(t *testing.T) {
 	tests := []struct {
 		id     string
 		script string
-		keys   []string
-		ran    []string
-		shows  []string
-		hides  string
-		open   bool
+		// missing makes the command one that can't start.
+		missing bool
+		keys    []string
+		ran     []string
+		shows   []string
+		hides   string
+		open    bool
 	}{
-		{"output streams into a popup", "echo fetched anvil; echo poured", upgrade, []string{brew},
-			[]string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, "", true},
-		{"a failure says so and offers the terminal", "echo no space left; exit 3", upgrade, []string{brew},
-			[]string{"no space left", "✗ exit status 3", "t run it in the terminal"}, "", true},
-		{"t runs a failed install in the terminal", "exit 3", append(upgrade, "t"), []string{brew, brew}, nil, "✗ exit status 3", false},
-		{"enter closes it once done", "echo fetched", append(upgrade, "enter"), []string{brew}, nil, "fetched", false},
-		{"t does nothing after a success", "echo fetched", append(upgrade, "t"), []string{brew}, []string{"✓ done"}, "", true},
-		{"a progress line keeps its last state", `printf 'step 1\rstep 2\n'`, upgrade, []string{brew}, []string{"step 2"}, "step 1", true},
-		{"colors are dropped", `printf '\033[32mgreen\033[0m\n'`, upgrade, []string{brew}, []string{"green"}, "[32m", true},
-		{"the command can't reach the terminal", `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, upgrade, []string{brew}, []string{"no-tty"}, "has-tty", true},
+		{id: "a command that can't start says so, with nothing left to stop", missing: true, keys: upgrade, ran: []string{brew},
+			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c"},
+		{id: "output streams into a popup", script: "echo fetched anvil; echo poured", keys: upgrade, ran: []string{brew},
+			shows: []string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, open: true},
+		{id: "a failure says so and offers the terminal", script: "echo no space left; exit 3", keys: upgrade, ran: []string{brew},
+			shows: []string{"no space left", "✗ exit status 3", "t run it in the terminal"}, open: true},
+		{id: "t runs a failed install in the terminal", script: "exit 3", keys: append(upgrade, "t"), ran: []string{brew, brew}, hides: "✗ exit status 3"},
+		{id: "enter closes it once done", script: "echo fetched", keys: append(upgrade, "enter"), ran: []string{brew}, hides: "fetched"},
+		{id: "t does nothing after a success", script: "echo fetched", keys: append(upgrade, "t"), ran: []string{brew}, shows: []string{"✓ done"}, open: true},
+		{id: "a progress line keeps its last state", script: `printf 'step 1\rstep 2\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"step 2"}, hides: "step 1", open: true},
+		{id: "colors are dropped", script: `printf '\033[32mgreen\033[0m\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"green"}, hides: "[32m", open: true},
+		{id: "the command can't reach the terminal", script: `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, keys: upgrade, ran: []string{brew},
+			shows: []string{"no-tty"}, hides: "has-tty", open: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := loaded(t)
 			installScript = tt.script
+			if tt.missing {
+				installProcess = func(c *exec.Cmd) *exec.Cmd {
+					ran = append(ran, strings.Join(c.Args, " "))
+					return exec.Command(filepath.Join(t.TempDir(), "missing"))
+				}
+			}
 			m = press(t, m, tt.keys...)
 			s := screen(m)
 			if !reflect.DeepEqual(ran, tt.ran) {
@@ -1095,6 +1111,17 @@ func TestInstall(t *testing.T) {
 	m = press(t, m, upgrade...)
 	if es := m.log.Entries(); len(es) != 1 || es[0].Kind != history.Change || strings.Join(es[0].Command, " ") != brew || es[0].Err != "exit status 3" || !strings.Contains(es[0].Output, "fetched") {
 		t.Errorf("logged %+v", es)
+	}
+
+	// t runs the very command the install ran, where it ran it.
+	cmd := exec.Command("pkgtool", "upgrade", "anvil")
+	cmd.Env, cmd.Dir = []string{"PKGTOOL_NO_AUTO_UPDATE=1"}, t.TempDir()
+	m = loaded(t)
+	installScript = "exit 3"
+	m = update(t, m, startInstall("⬆ Upgrade anvil", cmd, history.Open(""), installedMsg{"brew", "anvil", "v0.2.94", nil})())
+	m = press(t, m, "t")
+	if r := reran; r == nil || r.Path != cmd.Path || !slices.Equal(r.Args, cmd.Args) || !slices.Equal(r.Env, cmd.Env) || r.Dir != cmd.Dir {
+		t.Errorf("t ran %+v, want %+v", r, cmd)
 	}
 }
 

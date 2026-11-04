@@ -97,10 +97,11 @@ func (m *model) askInstall() {
 }
 
 // installing is a package manager running in a popup. Its output, and then
-// its installedMsg, arrive on events.
+// its installedMsg, arrive on events. cmd is the command as kho asked for
+// it, which t runs again in the terminal.
 type installing struct {
 	title      string
-	args       []string
+	cmd        *exec.Cmd
 	lines      []string
 	start, end time.Time
 	events     chan tea.Msg
@@ -113,15 +114,19 @@ type installStartedMsg struct{ *installing }
 
 type outputMsg string
 
+// startInstall runs cmd in a popup. A command that can't even start leaves
+// nothing to watch or stop, so it comes back as a failed installedMsg.
 func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
 	return func() tea.Msg {
-		in := &installing{title: title, args: cmd.Args, start: now(), events: make(chan tea.Msg, 64)}
-		cmd = installProcess(cmd)
-		out, err := detach(cmd)
-		if err == nil {
-			in.pid = cmd.Process.Pid
+		run := installProcess(cmd)
+		out, err := detach(run)
+		if err != nil {
+			done.err = err
+			log.Add(entry(history.Change, cmd.Args, 0, err, ""))
+			return done
 		}
-		go in.run(cmd, out, err, log, done)
+		in := &installing{title: title, cmd: cmd, start: now(), events: make(chan tea.Msg, 64), pid: run.Process.Pid}
+		go in.run(run, out, log, done)
 		return installStartedMsg{in}
 	}
 }
@@ -130,10 +135,38 @@ func (in *installing) next() tea.Cmd {
 	return func() tea.Msg { return <-in.events }
 }
 
+// The phases of an install. Its popup, its keys and the footer all go by
+// them.
+const (
+	instRunning = iota
+	instStopping
+	instFailed
+	instDone
+)
+
+func (in *installing) phase() int {
+	switch {
+	case in.done == nil && in.stopping:
+		return instStopping
+	case in.done == nil:
+		return instRunning
+	case in.done.err != nil:
+		return instFailed
+	}
+	return instDone
+}
+
 // running is whether the package manager is still going, so ctrl+c must stop
 // it before kho can quit.
 func (in *installing) running() bool {
-	return in != nil && in.done == nil && in.pid > 0
+	return in != nil && in.phase() <= instStopping
+}
+
+// again is a new command like c, which has run and can't be started twice.
+func again(c *exec.Cmd) *exec.Cmd {
+	r := exec.Command(c.Path, c.Args[1:]...)
+	r.Args, r.Env, r.Dir = c.Args, c.Env, c.Dir
+	return r
 }
 
 // stop interrupts the install and everything it started, or kills them when
@@ -165,14 +198,11 @@ func detach(cmd *exec.Cmd) (*os.File, error) {
 	return r, nil
 }
 
-func (in *installing) run(cmd *exec.Cmd, out *os.File, err error, log *history.Log, done installedMsg) {
+func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done installedMsg) {
 	var output tail
 	start := time.Now()
-	if err == nil {
-		err = in.stream(cmd, out, &output)
-	}
-	done.err = err
-	log.Add(entry(history.Change, in.args, time.Since(start), done.err, output.String()))
+	done.err = in.stream(cmd, out, &output)
+	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
 	in.events <- done
 }
 

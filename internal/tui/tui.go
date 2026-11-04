@@ -267,7 +267,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.inst != nil && m.inst.done == nil
+	return len(m.busy) > 0 || m.scanning > 0 || m.inst.running()
 }
 
 // startTicking runs the spinner while something is loading.
@@ -586,13 +586,13 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case popInstall:
 		in := m.inst
 		switch {
-		case in.done == nil:
+		case in.running():
 		case key == "enter" || key == "esc" || key == "q":
 			m.inst = nil
-		case key == "t" && in.done.err != nil:
+		case key == "t" && in.phase() == instFailed:
 			m.inst = nil
 			done := *in.done
-			return runExec(&terminalRun{cmd: exec.Command(in.args[0], in.args[1:]...), log: m.log}, func(err error) tea.Msg {
+			return runExec(&terminalRun{cmd: again(in.cmd), log: m.log}, func(err error) tea.Msg {
 				done.err = err
 				return done
 			}), false

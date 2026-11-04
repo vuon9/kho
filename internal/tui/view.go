@@ -76,21 +76,22 @@ func (m model) View() tea.View {
 func (m model) installLines(rows int) []string {
 	in := m.inst
 	end := in.end
-	if in.done == nil {
+	if in.running() {
 		end = now()
 	}
 	took := end.Sub(in.start).Round(time.Second).String()
-	status := accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
-	switch {
-	case in.done == nil && in.stopping:
+	var status string
+	switch in.phase() {
+	case instRunning:
+		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
+	case instStopping:
 		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" stopping after "+took)
-	case in.done == nil:
-	case in.done.err != nil:
+	case instFailed:
 		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
 	default:
 		status = green().Render("✓ done") + faint().Render(" in "+took)
 	}
-	lines := []string{faint().Render(" runs  ") + strings.Join(in.args, " "), ""}
+	lines := []string{faint().Render(" runs  ") + strings.Join(in.cmd.Args, " "), ""}
 	room := max(rows-len(lines)-2, 0)
 	for _, l := range in.lines[max(len(in.lines)-room, 0):] {
 		lines = append(lines, " "+l)
@@ -223,11 +224,11 @@ func (m model) footer() string {
 		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
 	case pop == popHelp:
 		line = keys("?", "close", "esc", "close")
-	case pop == popInstall && m.inst.running() && m.inst.stopping:
+	case pop == popInstall && m.inst.phase() == instStopping:
 		line = keys("ctrl+c", "kill it") + faint().Render("   stopping, the keys come back once it's done")
-	case pop == popInstall && m.inst.done == nil:
+	case pop == popInstall && m.inst.phase() == instRunning:
 		line = keys("ctrl+c", "stop it") + faint().Render("   the other keys come back once it's done")
-	case pop == popInstall && m.inst.done.err != nil:
+	case pop == popInstall && m.inst.phase() == instFailed:
 		line = keys("t", "run it in the terminal", "enter", "close")
 	case pop == popInstall:
 		line = keys("enter", "close")

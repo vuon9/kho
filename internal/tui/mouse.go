@@ -118,7 +118,7 @@ func (m *model) click(x, y int) tea.Cmd {
 		m.help = false
 		return nil
 	case popInstall:
-		if m.inst.done != nil {
+		if !m.inst.running() {
 			m.inst = nil
 		}
 		return nil
