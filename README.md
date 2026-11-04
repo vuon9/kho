@@ -69,33 +69,28 @@ Run `kho`. Press `?` at any time for every key.
 
 ## For agents
 
-Give your agent the `use-kho` skill:
+Give your agents the `use-kho` skill. `-g` installs it for your user, so it works in every project:
 
 ```bash
-npx skills add vuon9/kho --skill use-kho
+npx skills add vuon9/kho --skill use-kho -g
 ```
 
 Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
 
-Without the skill, paste a prompt like this into Claude Code, Hermes Agent, or any agent that can run shell commands:
+For a daily security report, paste a prompt like this into Claude Code, Hermes Agent, or any agent that can schedule tasks:
 
 ```text
-Use kho to check this machine. Run `kho check --json --require-complete`
-and read the JSON. Don't install or change anything yet.
+With the use-kho skill, set up a task that runs on this machine every
+morning at 9. It must run here, not in the cloud, because kho reads the
+packages installed on this machine.
 
-Report back:
-1. One line: safe or at risk, and whether the scan was complete.
-2. Each vulnerable package: name, installed version, worst severity,
-   the version that fixes it, and whether the latest version is clear.
-3. Skills that failed an audit, with their skills.sh report link.
-4. Vulnerable dependencies as "worth a look", and how many packages
-   are outdated.
-5. What wasn't checked: sources OSV doesn't cover, skipped managers,
-   and any errors.
+Each run, check the machine with kho and send me the report the skill
+describes: the verdict, each vulnerable package and the version that
+fixes it, skills that failed an audit, and what wasn't checked. List
+each fix as a dry run. Never install or change anything from the
+scheduled task. I'll approve updates in a conversation.
 
-Then list the updates you recommend, most urgent first, each with its
-dry run: `kho install <source>/<name>@<version>` without --yes. Run an
-install only after I say yes to that package, then check again.
+Run it once now so I can see a report, and tell me how to pause it.
 ```
 
 Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped or failed, an OSV or skills.sh lookup included. `kho help` lists the rest.
