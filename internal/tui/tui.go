@@ -19,7 +19,8 @@ import (
 )
 
 func Run(log *history.Log, version string) error {
-	m := newModel(provider.Available(), vuln.Path())
+	ready, _ := provider.Detect()
+	m := newModel(ready, vuln.Path())
 	m.log, m.version = log, version
 	m.themePath = filepath.Join(filepath.Dir(history.Path()), "theme")
 	if name, err := os.ReadFile(m.themePath); err == nil {

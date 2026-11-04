@@ -50,7 +50,9 @@ type Release struct {
 // Deps and Versions load one package's details on demand, newest version first.
 type Provider interface {
 	Name() string
-	Available() bool
+	// Missing is what this machine lacks for the provider, such as "uv not on
+	// PATH", or "" when it is set up.
+	Missing() string
 	List(ctx context.Context) ([]Package, error)
 	Latest(ctx context.Context, pkgs []Package) ([]Package, error)
 	Deps(ctx context.Context, p Package) ([]Dep, error)
@@ -69,51 +71,32 @@ func All() []Provider {
 	return []Provider{Brew{}, Npm{}, Pipx{}, Uv{}, GoBin{}, Mise{}, Skills{}}
 }
 
-// needs says what each provider looks for, so a provider that is not set up
-// can be named instead of skipped in silence. Homebrew answers from its local
-// package list, mise and cask are listed under their own names.
-var needs = map[string]string{
-	"brew":   "brew not on PATH",
-	"npm":    "npm not on PATH",
-	"pipx":   "pipx not on PATH",
-	"uv":     "uv not on PATH",
-	"go":     "no Go binary directory",
-	"mise":   "mise not on PATH",
-	"skills": "no ~/.agents/skills directory",
-}
-
-// Missing names every provider this machine is not set up for, with what was
-// looked for. A provider that is left out of a scan reads as "nothing
-// installed", which hides the packages it would have found, so callers report
-// these instead of dropping them.
-func Missing() map[string]string {
-	out := map[string]string{}
+// Detect splits All into the providers this machine is set up for and the
+// ones it is not, with what each was missing. A provider that is left out of
+// a scan reads as "nothing installed", which hides the packages it would have
+// found, so callers report skipped instead of dropping it.
+func Detect() (ready []Provider, skipped map[string]string) {
+	skipped = map[string]string{}
 	for _, p := range All() {
-		if p.Available() {
-			continue
-		}
-		reason, ok := needs[p.Name()]
-		if !ok {
-			reason = "not set up"
-		}
-		out[p.Name()] = reason
-	}
-	return out
-}
-
-func Available() []Provider {
-	var ps []Provider
-	for _, p := range All() {
-		if p.Available() {
-			ps = append(ps, p)
+		if why := p.Missing(); why != "" {
+			skipped[p.Name()] = why
+		} else {
+			ready = append(ready, p)
 		}
 	}
-	return ps
+	return ready, skipped
 }
 
 func onPath(bin string) bool {
 	_, err := exec.LookPath(bin)
 	return err == nil
+}
+
+func notOnPath(bin string) string {
+	if onPath(bin) {
+		return ""
+	}
+	return bin + " not on PATH"
 }
 
 // Record hears about every command a provider runs, for kho's history.

@@ -31,7 +31,7 @@ type fake struct {
 }
 
 func (f fake) Name() string                                     { return f.name }
-func (f fake) Available() bool                                  { return true }
+func (f fake) Missing() string                                  { return "" }
 func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, f.listErr }
 func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Package, error) {
 	return p, f.latestErr

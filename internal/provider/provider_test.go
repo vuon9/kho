@@ -458,17 +458,54 @@ func TestRunIsRecorded(t *testing.T) {
 	}
 }
 
-// A provider this machine lacks must be named by Missing, never dropped: a
-// silent skip reads as "nothing installed" and hides whatever it would hold.
-func TestMissingNamesEveryProviderThatIsNotSetUp(t *testing.T) {
-	missing := Missing()
-	for _, p := range All() {
-		reason, named := missing[p.Name()]
-		if available := p.Available(); available == named {
-			t.Errorf("%s: Available is %v but Missing says %v", p.Name(), available, named)
-		}
-		if named && reason == "" {
-			t.Errorf("%s is named without a reason", p.Name())
-		}
+// A provider this machine lacks must be skipped with a reason, never dropped:
+// a silent skip reads as "nothing installed" and hides whatever it would hold.
+// Each row builds its own PATH and home, so the developer's machine does not
+// decide the result.
+func TestDetect(t *testing.T) {
+	everything := []string{"brew", "npm", "pipx", "uv", "mise"}
+	tests := []struct {
+		id      string
+		bins    []string
+		dirs    []string
+		ready   []string
+		skipped map[string]string
+	}{
+		{"a machine with nothing set up names every provider and why", nil, nil, nil, map[string]string{
+			"brew": "brew not on PATH", "npm": "npm not on PATH", "pipx": "pipx not on PATH", "uv": "uv not on PATH",
+			"go": "no Go binary directory", "mise": "mise not on PATH", "skills": "no ~/.agents/skills directory",
+		}},
+		{"a machine with some set up skips the rest", []string{"uv"}, []string{"gobin"}, []string{"uv", "go"}, map[string]string{
+			"brew": "brew not on PATH", "npm": "npm not on PATH", "pipx": "pipx not on PATH",
+			"mise": "mise not on PATH", "skills": "no ~/.agents/skills directory",
+		}},
+		{"a machine with everything set up skips nothing", everything, []string{"gobin", ".agents/skills"},
+			[]string{"brew", "npm", "pipx", "uv", "go", "mise", "skills"}, map[string]string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			bin, home := t.TempDir(), t.TempDir()
+			t.Setenv("PATH", bin)
+			t.Setenv("HOME", home)
+			t.Setenv("GOBIN", filepath.Join(home, "gobin"))
+			for _, b := range tt.bins {
+				if err := os.WriteFile(filepath.Join(bin, b), nil, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, d := range tt.dirs {
+				if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ps, skipped := Detect()
+			var ready []string
+			for _, p := range ps {
+				ready = append(ready, p.Name())
+			}
+			if !reflect.DeepEqual(ready, tt.ready) || !reflect.DeepEqual(skipped, tt.skipped) {
+				t.Errorf("ready %v, skipped %v\nwant  %v, %v", ready, skipped, tt.ready, tt.skipped)
+			}
+		})
 	}
 }

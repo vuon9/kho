@@ -48,7 +48,7 @@ type Env struct {
 	// returns its combined output.
 	Run func(*exec.Cmd) (string, error)
 	// Skipped names the providers this machine is not set up for, with what
-	// was looked for. main fills it from provider.Missing.
+	// was looked for. main fills it from provider.Detect.
 	Skipped map[string]string
 }
 

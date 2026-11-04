@@ -14,7 +14,7 @@ import (
 type Pipx struct{}
 
 func (Pipx) Name() string    { return "pipx" }
-func (Pipx) Available() bool { return onPath("pipx") }
+func (Pipx) Missing() string { return notOnPath("pipx") }
 
 func (Pipx) List(ctx context.Context) ([]Package, error) {
 	out, err := run(ctx, "pipx", "list", "--json")
@@ -64,7 +64,7 @@ func parsePipx(data []byte) ([]Package, error) {
 type Uv struct{}
 
 func (Uv) Name() string    { return "uv" }
-func (Uv) Available() bool { return onPath("uv") }
+func (Uv) Missing() string { return notOnPath("uv") }
 
 func (Uv) List(ctx context.Context) ([]Package, error) {
 	out, err := run(ctx, "uv", "tool", "list")
