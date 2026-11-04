@@ -455,29 +455,54 @@ func TestMouse(t *testing.T) {
 // The package cursor is a row number, so a listing or a security result that
 // adds or moves rows must not swap the selected package for another.
 func TestKeepSelection(t *testing.T) {
-	brew := fakes(t)[0].(fake).pkgs
+	ps := fakes(t)
+	listed := func(i int, extra ...provider.Package) tea.Msg {
+		f := ps[i].(fake)
+		return listedMsg{f.name, append(slices.Clone(f.pkgs), extra...), nil}
+	}
+	brew, pipx, skills := 0, 1, 3
+	awl := provider.Package{Source: "brew", Name: "awl", Version: "1.0.0"}
+	all := []string{"anvil", "gust", "bramble", "inkwell", "pathmaker"}
+	withAwl := []string{"anvil", "awl", "gust", "bramble", "inkwell", "pathmaker"}
+	l := loaded(t).layout()
 	tests := []struct {
-		id      string
-		keys    []string
-		msgs    []tea.Msg
-		current string
+		id string
+		// fresh starts from a kho that has listed nothing yet.
+		fresh  bool
+		keys   []string
+		msgs   []tea.Msg
+		rows   []string
+		cursor int
 	}{
-		{id: "a listing that adds rows ahead keeps the package selected", keys: []string{"G"},
-			msgs: []tea.Msg{listedMsg{"brew", append(slices.Clone(brew), provider.Package{Source: "brew", Name: "awl", Version: "1.0.0"}), nil}}, current: "pathmaker"},
+		{id: "at startup the cursor stays on the first row while sources answer", fresh: true,
+			msgs: []tea.Msg{listed(skills), listed(pipx), listed(brew)}, rows: all},
+		{id: "and again after r", keys: []string{"j", "r"},
+			msgs: []tea.Msg{listed(skills), listed(pipx), listed(brew)}, rows: all},
+		{id: "a listing that adds rows ahead keeps the package picked", keys: []string{"G"}, msgs: []tea.Msg{listed(brew, awl)}, rows: withAwl, cursor: 5},
 		{id: "so does a security result that moves it", keys: []string{"s", "s", "s", "j", "j", "j"},
-			msgs: []tea.Msg{scanMsg{hits: map[string][]string{"PyPI/inkwell@9.0.2": {redos.ID}}, advisories: map[string]vuln.Advisory{redos.ID: redos}}}, current: "pathmaker"},
+			msgs: []tea.Msg{scanMsg{hits: map[string][]string{"PyPI/inkwell@9.0.2": {redos.ID}}, advisories: map[string]vuln.Advisory{redos.ID: redos}}},
+			rows: []string{"bramble", "inkwell", "anvil", "gust", "pathmaker"}, cursor: 4},
+		{id: "a filter is a pick too", keys: []string{"/", "i", "n", "k", "enter"},
+			msgs: []tea.Msg{listed(brew, provider.Package{Source: "brew", Name: "inkjet", Version: "2.0.0"})}, rows: []string{"inkjet", "inkwell"}, cursor: 1},
+		{id: "so is a click on a package", msgs: []tea.Msg{tea.MouseClickMsg{X: l.tableX + 5, Y: l.top + 3, Button: tea.MouseLeft}, listed(brew, awl)}, rows: withAwl, cursor: 2},
+		{id: "and the wheel over the packages", msgs: []tea.Msg{tea.MouseWheelMsg{X: l.tableX + 5, Y: l.top + 3, Button: tea.MouseWheelDown}, listed(brew, awl)},
+			rows: withAwl, cursor: 2},
 		{id: "a listing that drops it leaves the cursor where it was", keys: []string{"j"},
-			msgs: []tea.Msg{listedMsg{"brew", brew[:1], nil}}, current: "bramble"},
-		{id: "moving still moves", keys: []string{"j"}, current: "gust"},
+			msgs: []tea.Msg{listedMsg{"brew", ps[brew].(fake).pkgs[:1], nil}}, rows: []string{"anvil", "bramble", "inkwell", "pathmaker"}, cursor: 1},
+		{id: "moving still moves", keys: []string{"j"}, rows: all, cursor: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			m := press(t, loaded(t), tt.keys...)
+			m := loaded(t)
+			if tt.fresh {
+				m = update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
+			}
+			m = press(t, m, tt.keys...)
 			for _, msg := range tt.msgs {
 				m = update(t, m, msg)
 			}
-			if p, _ := m.current(); p.Name != tt.current {
-				t.Errorf("current %q, want %q:\n%s", p.Name, tt.current, screen(m))
+			if !slices.Equal(names(m), tt.rows) || m.cursor != tt.cursor {
+				t.Errorf("rows %v at %d, want %v at %d", names(m), m.cursor, tt.rows, tt.cursor)
 			}
 		})
 	}

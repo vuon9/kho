@@ -184,11 +184,15 @@ type model struct {
 	vulns    map[string][]vuln.Advisory
 	depVulns map[string][]depAdvisory
 
-	focus      int
-	tab        int
-	rail       int
-	cursor     int
-	offset     int
+	focus  int
+	tab    int
+	rail   int
+	cursor int
+	offset int
+	// picked is whether the person has done anything since kho started or
+	// rescanned. Until then the cursor stays on the first row as the
+	// sources answer; after, it stays on the package they are looking at.
+	picked     bool
 	selected   string
 	sidePart   int
 	sideCursor int
@@ -274,6 +278,7 @@ func (m *model) reset() {
 	m.versions = map[string]*lazy[[]provider.Release]{}
 	m.docs = map[string]*lazy[provider.SkillDoc]{}
 	m.advising = map[string]bool{}
+	m.picked = false
 	for _, p := range m.providers {
 		m.busy[p.Name()] = "listing"
 	}
@@ -337,6 +342,10 @@ func pkgKey(p provider.Package) string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
+		m.picked = true
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -470,7 +479,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.(type) {
 	case listedMsg, checkedMsg, scanMsg, auditMsg:
-		m.reselect()
+		if m.picked {
+			m.reselect()
+		}
 	}
 	m.clamp()
 	cmds = append(cmds, m.load())
