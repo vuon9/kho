@@ -1187,7 +1187,7 @@ func TestInstall(t *testing.T) {
 	}{
 		{id: "a command that can't start says so, with nothing left to stop", missing: true, keys: upgrade, ran: []string{brew},
 			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c", logged: []string{`change brew upgrade anvil: fork/exec {missing}: no such file or directory ""`}},
-		{id: "a child that keeps the output open can't hold the popup open", script: "set -m; (sleep 4; echo late) & echo $! > {pids}; echo started", keys: upgrade, ran: []string{brew},
+		{id: "a child that keeps the output open can't hold the popup open", script: "perl -e 'setpgrp(0,0); exec @ARGV' sh -c 'sleep 4; echo late' & echo $! > {pids}; echo started", keys: upgrade, ran: []string{brew},
 			shows: []string{"started", "✓ done"}, hides: "late", open: true, logged: []string{`change brew upgrade anvil:  "started\n"`}},
 		{id: "but one still writing is read to its end", script: "(for i in 1 2 3; do sleep 0.4; echo tick $i; done) & echo started", keys: upgrade, ran: []string{brew},
 			shows: []string{"started", "tick 3", "✓ done"}, open: true, logged: []string{`change brew upgrade anvil:  "started\ntick 1\ntick 2\ntick 3\n"`}},
@@ -1288,9 +1288,9 @@ func TestStopInstall(t *testing.T) {
 	}{
 		{"ctrl+c interrupts the install", "echo started; sleep 5; echo finished", 1, "signal: interrupt"},
 		{"a second ctrl+c kills one that ignores the first", "trap '' INT; echo started; sleep 5; echo finished", 2, "signal: killed"},
-		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; set -m; (sleep 4; echo finished) & echo $! > {pids}; set +m; echo started; sleep 5",
+		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; perl -e 'setpgrp(0,0); exec @ARGV' sh -c 'sleep 4; echo finished' & echo $! > {pids}; echo started; sleep 5",
 			2, "signal: killed"},
-		{"and lets go of one that keeps writing after the command is done", "echo started; set -m; (while :; do echo tick; sleep 0.3; done) & echo $! > {pids}",
+		{"and lets go of one that keeps writing after the command is done", "echo started; perl -e 'setpgrp(0,0); exec @ARGV' sh -c 'while :; do echo tick; sleep 0.3; done' & echo $! > {pids}",
 			2, ""},
 	}
 	for _, tt := range tests {
@@ -1592,7 +1592,7 @@ func TestSignal(t *testing.T) {
 		{id: "a crash in the screen comes back as an error", crash: true, err: tea.ErrProgramPanic},
 		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
 			ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: killed"}},
-		{id: "and so is a child out of reach that keeps writing", script: "trap '' INT; echo started; set -m; (while :; do echo tick; sleep 0.3; done) & echo $! > {pids}; set +m; sleep 30",
+		{id: "and so is a child out of reach that keeps writing", script: "trap '' INT; echo started; perl -e 'setpgrp(0,0); exec @ARGV' sh -c 'while :; do echo tick; sleep 0.3; done' & echo $! > {pids}; sleep 30",
 			patience: 50 * time.Millisecond, ran: []string{"brew upgrade anvil"}, logged: []string{"brew upgrade anvil: signal: killed"}},
 		{id: "with nothing running a hangup still says it was one", err: ErrHangup},
 	}
