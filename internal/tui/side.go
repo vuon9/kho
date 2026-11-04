@@ -165,7 +165,7 @@ func (m model) sideListLen() int {
 		}
 		return len(m.securityEntries())
 	case tabLinks:
-		return len(m.links(p))
+		return len(m.links)
 	}
 	return -1
 }
@@ -223,11 +223,12 @@ func (m model) sideBox(w, h int, focused bool) string {
 			if j < len(bottoms) {
 				text = bottoms[j].text
 			}
-			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
-				text = highlight(text, from, to)
-			}
+			// The selected row is drawn plain, so a drag over it is lit after.
 			if j == m.depCursor && j < len(deps) {
 				text = selected(text, inner, focused)
+			}
+			if from, to, ok := m.sel.span(areaBottom, j, inner); ok {
+				text = highlight(text, from, to)
 			}
 			out = append(out, row(text))
 		}
@@ -254,7 +255,7 @@ func (m model) topLines(inner int) []line {
 	case tabReadme:
 		return m.readmeLines(p, inner)
 	case tabLinks:
-		return m.linkLines(p)
+		return linkLines(m.links)
 	}
 	return m.infoLines(p)
 }
@@ -275,21 +276,21 @@ func (m model) bottomTitle() string {
 	case tabSkill:
 		return "📄 SKILL.md"
 	case tabLinks:
-		if l, ok := at(m.links(p), m.sideCursor); ok {
+		if l, ok := at(m.links, m.sideCursor); ok {
 			return "🔗 " + agentName(l)
 		}
 		return "🔗 Link"
 	}
 	if p.Source == "skills" {
 		linked := 0
-		for _, l := range skillLinks(p, false) {
-			if l.Kind == "link" || l.Kind == "copy" || l.Shared || l.Kind == "shared" {
+		for _, l := range installed(m.links) {
+			if l.Sees() {
 				linked++
 			}
 		}
 		return fmt.Sprintf("🔗 Seen by %d agents", linked)
 	}
-	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return fmt.Sprintf("🔗 Dependencies · %d", len(d.val))
 	}
 	return "🔗 Dependencies"
@@ -303,7 +304,7 @@ func (m model) bottomLines(inner int) []line {
 	case tabSecurity:
 		return m.advisoryLines(p, inner)
 	case tabSkill:
-		d := m.docs[pkgKey(p)]
+		d := m.docs[cacheKey(p)]
 		switch {
 		case d == nil || !d.done:
 			return plain(faint().Render(" loading…"))
@@ -315,7 +316,7 @@ func (m model) bottomLines(inner int) []line {
 		return m.linkDetail(p)
 	}
 	if p.Source == "skills" {
-		return m.linkLines(p)
+		return linkLines(installed(m.links))
 	}
 	return m.depLines(p, inner)
 }
@@ -421,34 +422,43 @@ func (m model) depList() []provider.Dep {
 	if !ok || p.Source == "skills" || m.activeTab() != tabInfo {
 		return nil
 	}
-	if d := m.deps[pkgKey(p)]; d != nil && d.done && d.err == nil {
+	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return d.val
 	}
 	return nil
 }
 
-// depPopup shows one dependency's advisories over the screen.
+// depPopup shows one of a package's dependencies and its advisories over the
+// screen.
 type depPopup struct {
+	pkg provider.Package
 	dep provider.Dep
 	top int
 }
 
 func (m *model) openDep(i int) {
+	p, _ := m.current()
 	if d, ok := at(m.depList(), i); ok {
-		m.depPop, m.sel = &depPopup{dep: d}, nil
+		m.depPop, m.sel = &depPopup{pkg: p, dep: d}, nil
 	}
 }
 
-func (m model) depPopTitle() string {
-	p, _ := m.current()
-	d, n := m.depPop.dep, 0
-	for _, da := range m.depVulns[pkgKey(p)] {
-		if da.dep.Name == d.Name {
-			n++
-		}
+// depAdvisories is what the security cache holds for one of p's
+// dependencies: its advisories, and whether osv.dev was asked about it.
+func (m model) depAdvisories(p provider.Package, d provider.Dep) ([]vuln.Advisory, bool) {
+	q, ok := provider.DepQuery(p, d)
+	if !ok {
+		return nil, false
 	}
+	_, checked := m.db.Checked[q.Key()]
+	return m.db.For(q), checked
+}
+
+func (m model) depPopTitle() string {
+	p, d := m.depPop.pkg, m.depPop.dep
+	advs, _ := m.depAdvisories(p, d)
 	title := "◆ " + d.Name + " " + d.Version
-	switch {
+	switch n := len(advs); {
 	case n == 1:
 		title += " · 1 advisory"
 	case n > 1:
@@ -457,35 +467,52 @@ func (m model) depPopTitle() string {
 	return title
 }
 
-// depPopView is the dependency popup's text, wrapped to fit it.
+// depPopView is the dependency popup's text, wrapped to fit it. It calls a
+// dependency clean only once osv.dev has answered for that very version.
 func (m model) depPopView() []line {
-	_, _, w, _ := m.depRect()
-	inner := w - 2
-	p, _ := m.current()
-	d := m.depPop.dep
+	inner := popupText(m.depRect()).w
+	p, d := m.depPop.pkg, m.depPop.dep
+	advs, checked := m.depAdvisories(p, d)
+	_, asked := provider.DepQuery(p, d)
 	var lines []line
-	for _, da := range m.depVulns[pkgKey(p)] {
-		if da.dep.Name != d.Name {
-			continue
-		}
+	for _, a := range advs {
 		if len(lines) > 0 {
-			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", inner-2))), line{})
+			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", max(inner-2, 0)))), line{})
 		}
-		lines = append(lines, row(" "+accent().Render(da.adv.ID)))
-		lines = append(lines, m.advisoryDetail(da.adv, "", d.Version, "", inner)...)
+		lines = append(lines, row(" "+accent().Render(a.ID)))
+		lines = append(lines, m.advisoryDetail(a, "", d.Version, "", inner)...)
 	}
 	switch {
 	case len(lines) > 0:
 	case provider.Ecosystem(p) == "":
 		lines = plain("", faint().Render(" OSV has no data for "+p.Source+", so kho can't check "+d.Name+"."))
-	default:
+	case checked:
 		lines = plain("", green().Render(" ✓ No known advisories for "+d.Name+" "+d.Version))
+	case !provider.Released(d.Version):
+		lines = plain("", faint().Render(" "+d.Name+" has no release version to check on osv.dev."))
+	case !asked:
+		lines = plain("", faint().Render(" kho doesn't check "+p.Source+" dependencies on osv.dev, so "+d.Name+" isn't checked."))
+	default:
+		lines = m.unchecked(d.Name)
 	}
 	return wrapLines(lines, inner)
 }
 
+// unchecked says why osv.dev hasn't answered for something kho asked it
+// about.
+func (m model) unchecked(name string) []line {
+	again := faint().Render(" R checks again.")
+	switch {
+	case m.scanning > 0:
+		return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+	case m.secErr != nil:
+		return plain("", red().Render(" security check failed: "+m.secErr.Error()), again)
+	}
+	return plain("", faint().Render(" "+name+" isn't checked yet."), again)
+}
+
 func (m model) depLines(p provider.Package, inner int) []line {
-	d := m.deps[pkgKey(p)]
+	d := m.deps[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))
@@ -493,10 +520,6 @@ func (m model) depLines(p provider.Package, inner int) []line {
 		return plain(red().Render(" " + d.err.Error()))
 	case len(d.val) == 0:
 		return plain(faint().Render(" no dependencies"))
-	}
-	flagged := map[string][]string{}
-	for _, da := range m.depVulns[pkgKey(p)] {
-		flagged[da.dep.Name] = append(flagged[da.dep.Name], da.adv.ID)
 	}
 	nameW := max(inner-24, 12)
 	var lines []line
@@ -506,8 +529,8 @@ func (m model) depLines(p provider.Package, inner int) []line {
 			mark = accent().Render("•")
 		}
 		text := fmt.Sprintf(" %s %s %s", mark, pad(dep.Name, nameW), faint().Render(dep.Version))
-		if ids := flagged[dep.Name]; len(ids) > 0 {
-			text = fmt.Sprintf(" %s %s %s %s", red().Render("⚠"), pad(dep.Name, nameW), dep.Version, red().Render(fmt.Sprintf("%d vuln", len(ids))))
+		if advs, _ := m.depAdvisories(p, dep); len(advs) > 0 {
+			text = fmt.Sprintf(" %s %s %s %s", red().Render("⚠"), pad(dep.Name, nameW), dep.Version, red().Render(fmt.Sprintf("%d vuln", len(advs))))
 		}
 		lines = append(lines, row(text))
 	}
@@ -515,7 +538,7 @@ func (m model) depLines(p provider.Package, inner int) []line {
 }
 
 func (m model) versionLines(p provider.Package, inner int) []line {
-	v := m.versions[pkgKey(p)]
+	v := m.versions[cacheKey(p)]
 	switch {
 	case v == nil || !v.done:
 		return plain(faint().Render(" " + spinner[m.frame%len(spinner)] + " loading versions…"))
@@ -619,7 +642,7 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	es := m.securityEntries()
 	if len(es) == 0 {
 		if _, checked := m.db.Checked[q.Key()]; !checked {
-			return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+			return m.unchecked(p.Name)
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+" on osv.dev"))
 	}
@@ -714,7 +737,7 @@ func (m model) auditLines(p provider.Package) []line {
 }
 
 func (m model) skillMetaLines(p provider.Package) []line {
-	d := m.docs[pkgKey(p)]
+	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))
@@ -732,7 +755,7 @@ func (m model) skillMetaLines(p provider.Package) []line {
 }
 
 func (m model) readmeLines(p provider.Package, inner int) []line {
-	d := m.docs[pkgKey(p)]
+	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
 		return plain(faint().Render(" loading…"))
@@ -751,29 +774,53 @@ func (m model) readmeLines(p provider.Package, inner int) []line {
 
 func linkState(l provider.SkillLink) string {
 	switch {
-	case l.Kind == "link":
+	case l.Kind == provider.LinkSymlink && l.Own:
 		return green().Render("🔗 linked")
-	case l.Kind == "copy":
+	case l.Kind == provider.LinkSymlink:
+		return yellow().Render("⚠ broken")
+	case l.Kind == provider.LinkCopy && l.Own:
 		return cyan().Render("📁 copy")
-	case l.Kind == "shared", l.Shared:
+	case l.Kind == provider.LinkCopy:
+		return yellow().Render("⚠ no SKILL.md")
+	case l.Shared:
 		return faint().Render("≈ shared")
 	}
 	return faint().Render("· none")
 }
 
-// links is the agents the Links tab lists: the installed ones, or with A
-// every agent the skills CLI supports.
-func (m model) links(p provider.Package) []provider.SkillLink {
-	return skillLinks(p, m.allAgents)
+// readLinks reads the selected skill's agents into the model: the installed
+// ones, or with A every agent the skills CLI supports. The Links tab draws
+// and acts on these rows, so enter always works on the row on screen.
+func (m *model) readLinks() {
+	p, _ := m.current()
+	if pkgKey(p) == m.linksOf {
+		return
+	}
+	m.links, m.linksOf = nil, pkgKey(p)
+	if p.Source == "skills" {
+		m.links = skillLinks(p, m.allAgents)
+	}
+}
+
+// installed keeps the agents that are installed. The Info tab lists only
+// those, whatever A shows on the Links tab.
+func installed(links []provider.SkillLink) []provider.SkillLink {
+	var out []provider.SkillLink
+	for _, l := range links {
+		if l.Installed {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
 
-func (m model) linkLines(p provider.Package) []line {
+func linkLines(links []provider.SkillLink) []line {
 	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
-	for _, l := range m.links(p) {
+	for _, l := range links {
 		state := linkState(l)
-		if !l.Installed && l.Kind == "missing" {
+		if !l.Installed && l.Kind == provider.LinkMissing {
 			state = faint().Render("· not installed")
 		}
 		lines = append(lines, row("  "+pad(agentName(l), 16)+" "+pad(state, 15)+" "+faint().Render(tilde(l.Path))))
@@ -782,28 +829,43 @@ func (m model) linkLines(p provider.Package) []line {
 }
 
 func (m model) linkDetail(p provider.Package) []line {
-	l, ok := at(m.links(p), m.sideCursor)
+	l, ok := at(m.links, m.sideCursor)
 	if !ok {
 		return nil
 	}
 	name := agentName(l)
 	lines := []line{field("path", tilde(l.Path), ""), field("skill", tilde(provider.RealPath(p)), ""), {}}
-	switch l.Kind {
-	case "link":
-		lines = append(lines, field("points to", tilde(l.Target), ""), line{},
-			line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
-	case "copy":
-		lines = append(lines, line{text: faint().Render(" A copied folder, not a link. kho won't delete it.")})
-	case "shared":
-		lines = append(lines, line{text: faint().Render(" " + name + " reads ~/.agents/skills directly, so it always sees this skill.")})
-	default:
-		if l.Shared {
-			lines = append(lines, line{text: faint().Render(" " + name + " already sees it through ~/.agents/skills.")})
-		}
+	say := func(s string) { lines = append(lines, line{text: faint().Render(" " + s)}) }
+	switch {
+	case l.CanLink():
 		if !l.Installed {
-			lines = append(lines, line{text: faint().Render(" " + name + " isn't installed yet; the link waits for it.")})
+			say(name + " isn't installed yet; the link waits for it.")
 		}
 		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" links it into "+name+"'s own folder.")})
+	case l.Kind == provider.LinkSymlink:
+		if l.Target != "" {
+			lines = append(lines, field("points to", tilde(l.Target), ""), line{})
+		}
+		switch {
+		case !l.Own:
+			say("This link leads to no SKILL.md, so " + name + " doesn't load the skill from it.")
+			if l.Shared {
+				say(name + " still sees the skill through ~/.agents/skills.")
+			}
+		case l.Shared:
+			say(name + " also reads ~/.agents/skills, so it loads this skill twice.")
+		}
+		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
+	case l.Kind == provider.LinkCopy && l.Own:
+		say("A copied folder, not a link. kho won't delete it.")
+	case l.Kind == provider.LinkCopy:
+		say("A folder with no SKILL.md, so " + name + " doesn't load the skill from it. kho won't delete it.")
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		say(name + " reads ~/.agents/skills directly, so it always sees this skill.")
+	case l.Kind == provider.LinkNoFolder:
+		say(name + " reads only ~/.agents/skills, and this skill isn't there.")
+	default:
+		say(name + " already sees it through ~/.agents/skills, so there is nothing to link.")
 	}
 	return lines
 }

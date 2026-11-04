@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/format"
 	"io"
@@ -17,13 +18,20 @@ import (
 
 var (
 	envHome = regexp.MustCompile(`(?s)const (\w+) =\s*process\.env\.(\w+)\?\.trim\(\) \|\|[^;]*?join\(home, '([^']+)'\)\)?;`)
-	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\n\}`)
+	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\) \{\n(.*?)\n\}`)
+	picker  = regexp.MustCompile(`(?s)export function (get\w+GlobalSkillsDir)\(.*?\) \{\n(.*?)\n\}`)
+	returns = regexp.MustCompile(`return (join\([^()]*\));`)
 	entry   = regexp.MustCompile(`\n  '?([a-z0-9-]+)'?: \{\n`)
 	display = regexp.MustCompile(`displayName: '([^']+)'`)
+	project = regexp.MustCompile(`\bskillsDir: '([^']*)',`)
 	global  = regexp.MustCompile(`globalSkillsDir: (.+?),\n`)
-	join    = regexp.MustCompile(`join\((\w+), ((?:'[^']*'(?:, )?)+)\)`)
-	exists  = regexp.MustCompile(`(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
-	call    = regexp.MustCompile(`(is\w+Installed)\(\)`)
+	comment = regexp.MustCompile(`//[^\n]*`)
+	calls   = regexp.MustCompile(`([\w.]+)\(`)
+	env     = regexp.MustCompile(`process\.env\.\w+`)
+	exists  = regexp.MustCompile(`^(?:existsSync|pathExists)\((join\([^()]*\)|\w+|'[^']*')\)`)
+	abs     = regexp.MustCompile(`^'(/[^']*)'$`)
+	join    = regexp.MustCompile(`^join\((\w+), ((?:'[^']*'(?:, )?)+)\)$`)
+	ident   = regexp.MustCompile(`^\w+$`)
 )
 
 func main() {
@@ -42,13 +50,28 @@ func main() {
 }
 
 func generate(src, version string) ([]byte, error) {
-	bases := map[string]string{"home": "~", "homeDir": "~", "configHome": "${XDG_CONFIG_HOME:-~/.config}"}
+	bases := map[string]string{"home": "~", "homeDir": "~", "configHome": "${XDG_CONFIG_HOME:-~/.config}",
+		// Left out on purpose, since kho ships for macOS and Linux: APPDATA is
+		// Windows only, and FLATPAK_XDG_CONFIG_HOME is set only inside a Flatpak.
+		"zedAppDataHome": "", "zedFlatpakConfigHome": ""}
 	for _, m := range envHome.FindAllStringSubmatch(src, -1) {
 		bases[m[1]] = "${" + m[2] + ":-~/" + m[3] + "}"
 	}
 	helpers := map[string][]string{}
 	for _, m := range helper.FindAllStringSubmatch(src, -1) {
-		helpers[m[1]] = paths(m[0], bases, nil)
+		ps, err := paths(m[2], bases, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", m[1], err)
+		}
+		helpers[m[1]] = ps
+	}
+	picks := map[string][]string{}
+	for _, m := range picker.FindAllStringSubmatch(src, -1) {
+		dirs, err := firstFound(m[2], bases)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", m[1], err)
+		}
+		picks[m[1]+"()"] = dirs
 	}
 
 	table := src[strings.Index(src, "export const agents"):]
@@ -66,50 +89,133 @@ func generate(src, version string) ([]byte, error) {
 		if id == "universal" || g == nil || g[1] == "undefined" {
 			continue
 		}
-		dir := "~/.openclaw/skills"
-		if g[1] != "getOpenClawGlobalSkillsDir()" {
-			dir = path(g[1], bases)
+		dirs, ok := picks[g[1]]
+		if !ok {
+			dir, err := path(g[1], bases)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", id, err)
+			}
+			dirs = []string{dir}
 		}
-		if dir == "" {
-			return nil, fmt.Errorf("%s: can't read globalSkillsDir %s", id, g[1])
+		name, skillsDir, at := display.FindStringSubmatch(body), project.FindStringSubmatch(body), strings.Index(body, "detectInstalled")
+		switch {
+		case name == nil:
+			return nil, fmt.Errorf("%s: can't read displayName", id)
+		case skillsDir == nil:
+			return nil, fmt.Errorf("%s: can't read skillsDir", id)
+		case at < 0:
+			return nil, fmt.Errorf("%s: has no detectInstalled", id)
 		}
-		detect := body[strings.Index(body, "detectInstalled"):]
-		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v},\n", id, display.FindStringSubmatch(body)[1], dir, paths(detect, bases, helpers))
+		detect, err := paths(body[at:], bases, helpers)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", id, err)
+		}
+		if len(detect) == 0 && !strings.Contains(body[at:], "process.cwd()") {
+			return nil, fmt.Errorf("%s: detectInstalled checks no folder", id)
+		}
+		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dirs: %#v, Detect: %#v", id, name[1], dirs, detect)
+		// Like the CLI: an agent whose project folder is .agents/skills reads
+		// ~/.agents/skills too, so a global skill never needs a link of its own.
+		if skillsDir[1] == ".agents/skills" {
+			b.WriteString(", Universal: true")
+		}
+		b.WriteString("},\n")
 	}
 	b.WriteString("}\n")
 	return format.Source(b.Bytes())
 }
 
-// paths lists the folders whose existence shows an agent is installed,
-// leaving out project ones under process.cwd().
-func paths(code string, bases map[string]string, helpers map[string][]string) []string {
+// paths lists the folders whose existence shows an agent is installed, from
+// the existsSync and pathExists calls in code and the is*Installed helpers it
+// calls. It leaves out project folders under process.cwd() and the bases left
+// out on purpose, and fails on any other call, so a new way of finding an
+// agent can't be dropped without notice.
+func paths(code string, bases map[string]string, helpers map[string][]string) ([]string, error) {
+	code = comment.ReplaceAllString(code, "")
+	if e := env.FindString(code); e != "" {
+		return nil, fmt.Errorf("can't read %s", e)
+	}
 	out := []string{}
-	for _, m := range exists.FindAllStringSubmatch(code, -1) {
-		if p := path(m[1], bases); p != "" {
-			out = append(out, p)
+	for _, m := range calls.FindAllStringSubmatchIndex(code, -1) {
+		name, rest := code[m[2]:m[3]], code[m[0]:]
+		helped, isHelper := helpers[name]
+		switch {
+		case name == "join" || name == "process.cwd":
+			// Read as part of the call they sit in.
+		case isHelper:
+			out = append(out, helped...)
+		case name == "existsSync" || name == "pathExists":
+			e := exists.FindStringSubmatch(rest)
+			if e == nil && strings.HasPrefix(rest, name+"(join(process.cwd(), ") {
+				continue
+			}
+			if e == nil {
+				return nil, fmt.Errorf("can't read %s", strings.TrimSuffix(strings.SplitN(rest, "\n", 2)[0], ";"))
+			}
+			p, err := path(e[1], bases)
+			if err != nil {
+				return nil, err
+			}
+			if p != "" {
+				out = append(out, p)
+			}
+		default:
+			return nil, fmt.Errorf("can't read %s", strings.TrimSuffix(strings.SplitN(rest, "\n", 2)[0], ";"))
 		}
 	}
-	for _, m := range call.FindAllStringSubmatch(code, -1) {
-		out = append(out, helpers[m[1]]...)
+	return out, nil
+}
+
+// firstFound reads a function like getOpenClawGlobalSkillsDir, which returns
+// the first folder whose parent exists, or else the first. That is how kho
+// reads Dirs, so any other shape fails rather than mean something else.
+func firstFound(code string, bases map[string]string) ([]string, error) {
+	checks, err := paths(code, bases, nil)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	var dirs []string
+	for _, m := range returns.FindAllStringSubmatch(code, -1) {
+		d, err := path(m[1], bases)
+		if err != nil {
+			return nil, err
+		}
+		dirs = append(dirs, d)
+	}
+	shape := errors.New("must return the first folder whose parent exists, or else the first")
+	n := len(checks)
+	if len(dirs) != n+1 || dirs[n] != dirs[0] {
+		return nil, shape
+	}
+	for i, c := range checks {
+		if c != dirs[i][:strings.LastIndex(dirs[i], "/")] {
+			return nil, shape
+		}
+	}
+	return dirs[:max(n, 1)], nil
 }
 
 // path turns join(base, 'a', 'b'), a base on its own, or a quoted absolute
-// path into kho's form: ~/a/b, ${ENV:-~/default}/a, or /abs.
-func path(expr string, bases map[string]string) string {
+// path into kho's form: ~/a/b, ${ENV:-~/default}/a, or /abs. It is "" for a
+// base left out on purpose.
+func path(expr string, bases map[string]string) (string, error) {
+	if m := abs.FindStringSubmatch(expr); m != nil {
+		return m[1], nil
+	}
+	name, rest := expr, ""
 	if m := join.FindStringSubmatch(expr); m != nil {
-		base, ok := bases[m[1]]
-		if !ok {
-			return ""
-		}
-		parts := strings.Split(strings.ReplaceAll(m[2], "'", ""), ", ")
-		return base + "/" + strings.Join(parts, "/")
+		name, rest = m[1], "/"+strings.Join(strings.Split(strings.ReplaceAll(m[2], "'", ""), ", "), "/")
 	}
-	if strings.HasPrefix(expr, "'/") {
-		return strings.Trim(expr, "'")
+	base, ok := bases[name]
+	switch {
+	case !ident.MatchString(name):
+		return "", fmt.Errorf("can't read %s", expr)
+	case !ok:
+		return "", fmt.Errorf("unknown base %s in %s", name, expr)
+	case base == "":
+		return "", nil
 	}
-	return bases[expr]
+	return base + rest, nil
 }
 
 func check(err error) {

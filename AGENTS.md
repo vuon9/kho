@@ -25,14 +25,14 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 ## Conventions
 
-**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes.
+**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes. An agent whose project `skillsDir` is `.agents/skills` is `Universal`: like the CLI, kho counts it as reading `~/.agents/skills` on top of its own folder, and never links a skill it already sees there. A folder the CLI picks at run time, like OpenClaw's, becomes a list in `Dirs` that kho picks from the same way. The generator stops on any field, path, call or env setting it can't read, and on a `detectInstalled` that checks no folder, rather than drop it or guess.
 
 **Providers.** To add one: implement `Provider` (its `Missing` says what this machine lacks for it, and `Detect` reports that as skipped), register it in `All()`, add its row to `TestDetect`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
 - Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`.
-- Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`.
+- Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it before kho exits, so kho never quits with one cut off and unlogged.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.
 - Index a cursor through `at(slice, i)`, which is safe for any `i`. `clamp()` runs after every message and pulls the package cursor in first, because the layout depends on it.
 - Sidebar text goes through `wrapLines`: labeled values with `field`, list entries with `row` so they never wrap.

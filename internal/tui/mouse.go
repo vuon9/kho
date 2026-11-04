@@ -75,63 +75,62 @@ func (l layout) row(y int) int {
 	return y - l.top - 1
 }
 
-func (m model) confirmRect() (x, y, w, h int) {
-	w = 40
+type rect struct{ x, y, w, h int }
+
+func (r rect) has(x, y int) bool {
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+func (m model) centered(w, h int) rect {
+	return rect{(m.width - w) / 2, (m.height - h) / 2, w, h}
+}
+
+func (m model) confirmRect() rect {
+	w := 40
 	for _, l := range m.confirm.lines {
 		w = max(w, lipgloss.Width(l)+4)
 	}
-	w = min(w, m.width-8)
-	h = len(m.confirm.lines) + 3
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+	return m.centered(min(w, m.width-8), len(m.confirm.lines)+popupFrame)
 }
 
-func (m model) helpRect() (x, y, w, h int) {
-	w = min(m.width-8, 96)
-	h = min(len(helpLines())+3, m.height-2)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) helpRect() rect {
+	return m.centered(min(m.width-8, 96), min(len(helpLines())+popupFrame, m.height-2))
 }
 
 // helpHidden is how many lines of help don't fit on the screen.
 func (m model) helpHidden() int {
-	_, _, _, h := m.helpRect()
-	return len(helpLines()) - (h - 3)
+	return len(helpLines()) - popupText(m.helpRect()).h
 }
 
-func (m model) installRect() (x, y, w, h int) {
-	w, h = min(m.width-8, 110), min(m.height-4, 24)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) installRect() rect {
+	return m.centered(min(m.width-8, 110), min(m.height-4, 24))
 }
 
-func (m model) depRect() (x, y, w, h int) {
-	w, h = min(m.width-8, 100), min(m.height-4, 30)
-	return (m.width - w) / 2, (m.height - h) / 2, w, h
+func (m model) depRect() rect {
+	return m.centered(min(m.width-8, 100), min(m.height-4, 30))
 }
 
 func (m *model) click(x, y int) tea.Cmd {
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		m.help = false
 		return nil
-	}
-	if m.inst != nil {
-		if m.inst.done != nil {
+	case popInstall:
+		if !m.inst.running() {
 			m.inst = nil
 		}
 		return nil
-	}
-	if m.depPop != nil {
+	case popDep:
 		if area, p, ok := m.textAt(x, y); ok && area == areaPopup {
 			m.startSelect(area, p)
 			return nil
 		}
-		px, py, w, h := m.depRect()
-		if x < px || x >= px+w || y < py || y >= py+h {
+		if !m.depRect().has(x, y) {
 			m.depPop, m.sel = nil, nil
 		}
 		return nil
-	}
-	if m.confirm != nil {
-		cx, cy, cw, ch := m.confirmRect()
-		if x < cx || x >= cx+cw || y < cy || y >= cy+ch {
+	case popConfirm:
+		if !m.confirmRect().has(x, y) {
 			m.confirm = nil
 		}
 		return nil
@@ -276,15 +275,14 @@ func (m model) columnAt(x int) int {
 }
 
 func (m *model) wheel(x, y, delta int) {
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		m.helpTop += delta
 		return
-	}
-	if m.inst != nil {
-		return
-	}
-	if m.depPop != nil {
+	case popDep:
 		m.depPop.top += delta
+		return
+	case popInstall, popConfirm:
 		return
 	}
 	if m.showHistory {
@@ -302,6 +300,8 @@ func (m *model) wheel(x, y, delta int) {
 		m.bodyOffset = 0
 	case l.row(y) < l.topRows:
 		m.sideOffset += delta
+	case m.depList() != nil:
+		m.depCursor += delta
 	default:
 		m.bodyOffset += delta
 	}

@@ -40,8 +40,9 @@ func (m model) historyEntries() []history.Entry {
 	return out
 }
 
-// pressHistory handles keys on the history screen. It reports false for keys
-// the screen leaves to the rest of kho, like ? and q.
+// pressHistory handles keys on the history screen. It reports false only for
+// the keys it leaves to the rest of kho, like ? and q; every other key would
+// act on the panels hidden behind it, so it takes them and does nothing.
 func (m *model) pressHistory(key string) (tea.Cmd, bool) {
 	page := max(m.layout().rows-1, 1)
 	switch key {
@@ -75,7 +76,7 @@ func (m *model) pressHistory(key string) (tea.Cmd, bool) {
 		m.hCursor = 0
 	case "end", "G":
 		m.hCursor = len(m.historyEntries()) - 1
-	default:
+	case "q", "?", "/", "t", "T", "r", "R":
 		return nil, false
 	}
 	return nil, true
@@ -239,7 +240,9 @@ func (m model) historyDetail(inner int) []string {
 	}
 	if e.Output != "" {
 		lines = append(lines, line{}, line{text: " " + accent().Render("output")})
-		lines = append(lines, plain(wrap(e.Output, inner-1)...)...)
+		for _, l := range wrap(tidy(e.Output), inner-1) {
+			lines = append(lines, line{text: " " + l})
+		}
 	}
 	var out []string
 	for _, l := range wrapLines(lines, inner) {

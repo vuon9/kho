@@ -39,32 +39,33 @@ func (m model) View() tea.View {
 	}
 	rule := edge(false).Render(strings.Repeat("─", m.width))
 	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + rule + "\n" + ansi.Truncate(m.footer(), m.width, "…")
-	switch {
-	case m.help:
-		x, y, w, h := m.helpRect()
-		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], w, h), x, y, w)
-	case m.inst != nil:
-		x, y, w, h := m.installRect()
-		screen = overlay(screen, popupBox(m.inst.title, m.installLines(h-3), w, h), x, y, w)
-	case m.depPop != nil:
-		x, y, w, h := m.depRect()
+	switch m.popup() {
+	case popHelp:
+		r := m.helpRect()
+		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
+	case popInstall:
+		r := m.installRect()
+		screen = overlay(screen, popupBox(m.inst.title, m.installLines(popupText(r).h), r), r.x, r.y, r.w)
+	case popDep:
+		r := m.depRect()
+		t := popupText(r)
 		view := m.depPopView()
 		var lines []string
-		for i := m.depPop.top; i < min(len(view), m.depPop.top+h-3); i++ {
+		for i := m.depPop.top; i < min(len(view), m.depPop.top+t.h); i++ {
 			text := view[i].text
-			if from, to, ok := m.sel.span(areaPopup, i, w-2); ok {
+			if from, to, ok := m.sel.span(areaPopup, i, t.w); ok {
 				text = highlight(text, from, to)
 			}
 			lines = append(lines, text)
 		}
-		screen = overlay(screen, popupBox(m.depPopTitle(), lines, w, h), x, y, w)
-	case m.confirm != nil:
-		x, y, w, h := m.confirmRect()
+		screen = overlay(screen, popupBox(m.depPopTitle(), lines, r), r.x, r.y, r.w)
+	case popConfirm:
+		r := m.confirmRect()
 		var lines []string
 		for _, l := range m.confirm.lines {
 			lines = append(lines, " "+l)
 		}
-		screen = overlay(screen, popupBox(m.confirm.title, lines, w, h), x, y, w)
+		screen = overlay(screen, popupBox(m.confirm.title, lines, r), r.x, r.y, r.w)
 	}
 	v.SetContent(screen)
 	return v
@@ -75,19 +76,22 @@ func (m model) View() tea.View {
 func (m model) installLines(rows int) []string {
 	in := m.inst
 	end := in.end
-	if in.done == nil {
+	if in.running() {
 		end = now()
 	}
 	took := end.Sub(in.start).Round(time.Second).String()
-	status := accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
-	switch {
-	case in.done == nil:
-	case in.done.err != nil:
+	var status string
+	switch in.phase() {
+	case instRunning:
+		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
+	case instStopping:
+		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" stopping after "+took)
+	case instFailed:
 		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
 	default:
 		status = green().Render("✓ done") + faint().Render(" in "+took)
 	}
-	lines := []string{faint().Render(" runs  ") + strings.Join(in.args, " "), ""}
+	lines := []string{faint().Render(" runs  ") + strings.Join(in.cmd.Args, " "), ""}
 	room := max(rows-len(lines)-2, 0)
 	for _, l := range in.lines[max(len(in.lines)-room, 0):] {
 		lines = append(lines, " "+l)
@@ -215,22 +219,24 @@ func keys(pairs ...string) string {
 
 func (m model) footer() string {
 	var line string
-	switch {
-	case m.help && m.helpHidden() > 0:
+	switch pop := m.popup(); {
+	case pop == popHelp && m.helpHidden() > 0:
 		line = keys("↑↓", "scroll", "?", "close", "esc", "close")
-	case m.help:
+	case pop == popHelp:
 		line = keys("?", "close", "esc", "close")
-	case m.inst != nil && m.inst.done == nil:
-		line = faint().Render("running, the keys come back once it's done")
-	case m.inst != nil && m.inst.done.err != nil:
+	case pop == popInstall && m.inst.phase() == instStopping:
+		line = keys("ctrl+c", "kill it") + faint().Render("   stopping, the keys come back once it's done")
+	case pop == popInstall && m.inst.phase() == instRunning:
+		line = keys("ctrl+c", "stop it") + faint().Render("   the other keys come back once it's done")
+	case pop == popInstall && m.inst.phase() == instFailed:
 		line = keys("t", "run it in the terminal", "enter", "close")
-	case m.inst != nil:
+	case pop == popInstall:
 		line = keys("enter", "close")
-	case m.depPop != nil:
+	case pop == popDep:
 		line = keys("↑↓", "scroll", "drag", "select and copy", "c", "copy all", "esc", "close")
-	case m.confirm != nil && m.confirm.run != nil:
+	case pop == popConfirm && m.confirm.run != nil:
 		line = keys("y", "yes", "n", "no")
-	case m.confirm != nil:
+	case pop == popConfirm:
 		line = keys("esc", "close")
 	case m.filtering:
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")
@@ -249,7 +255,7 @@ func (m model) footer() string {
 	case m.sideListLen() >= 0 && m.sidePart == 0:
 		line = keys("↑↓", "select", "enter", "read", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
 	case m.depList() != nil:
-		line = keys("↑↓", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
+		line = keys("↑↓ J K", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
 	default:
 		line = keys("↑↓", "scroll", "J K", "scroll detail", "esc", "back", "[ ]", "tabs", "w", "home", "?", "help")
 	}
@@ -443,8 +449,33 @@ func overlay(screen, boxed string, x, y, w int) string {
 }
 
 func wrap(text string, w int) []string {
-	text = strings.NewReplacer("\r\n", "\n", "\t", "    ").Replace(strings.TrimSpace(text))
+	text = expandTabs(strings.ReplaceAll(strings.TrimSpace(text), "\r\n", "\n"))
 	return strings.Split(ansi.Wrap(text, max(w, 10), ""), "\n")
+}
+
+// expandTabs turns each tab into spaces up to the next multiple of 8
+// columns, as a terminal lines them up.
+func expandTabs(s string) string {
+	if !strings.Contains(s, "\t") {
+		return s
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		switch r {
+		case '\t':
+			n := 8 - col%8
+			b.WriteString(strings.Repeat(" ", n))
+			col += n
+		case '\n':
+			b.WriteRune(r)
+			col = 0
+		default:
+			b.WriteRune(r)
+			col += ansi.StringWidth(string(r))
+		}
+	}
+	return b.String()
 }
 
 func edge(focused bool) lipgloss.Style {
@@ -461,21 +492,31 @@ func boxTitle(title string, focused bool) string {
 	return bold().Foreground(th.muted).Render(title)
 }
 
+// popupFrame is how many rows a popup's frame takes: the top border, the
+// title bar and the bottom border.
+const popupFrame = 3
+
+// popupText is where popupBox puts lines in a popup at r: inside its
+// one-column border, under the top border and the title bar.
+func popupText(r rect) rect {
+	return rect{r.x + 1, r.y + 2, r.w - 2, r.h - popupFrame}
+}
+
 // popupBox draws a dialog so it can't be taken for a panel: a heavy border and
-// a filled title bar, which leave h-3 rows for lines.
-func popupBox(title string, lines []string, w, h int) string {
+// a filled title bar.
+func popupBox(title string, lines []string, r rect) string {
 	e := fg(th.accent)
-	inner := w - 2
-	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, inner))
-	out := []string{e.Render("┏" + strings.Repeat("━", inner) + "┓"), e.Render("┃") + bar + e.Render("┃")}
+	t := popupText(r)
+	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, t.w))
+	out := []string{e.Render("┏" + strings.Repeat("━", t.w) + "┓"), e.Render("┃") + bar + e.Render("┃")}
 	lines = slices.Clone(lines)
-	for len(lines) < h-3 {
+	for len(lines) < t.h {
 		lines = append(lines, "")
 	}
-	for _, l := range lines[:max(h-3, 0)] {
-		out = append(out, e.Render("┃")+pad(l, inner)+e.Render("┃"))
+	for _, l := range lines[:max(t.h, 0)] {
+		out = append(out, e.Render("┃")+pad(l, t.w)+e.Render("┃"))
 	}
-	out = append(out, e.Render("┗"+strings.Repeat("━", inner)+"┛"))
+	out = append(out, e.Render("┗"+strings.Repeat("━", t.w)+"┛"))
 	return strings.Join(out, "\n")
 }
 

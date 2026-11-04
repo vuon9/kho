@@ -7,9 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -96,97 +100,348 @@ func (m *model) askInstall() {
 	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider.ProviderOf(p), p.Name, r.Version, nil})}
 }
 
-// installing is a package manager running in a popup. Its output, and then
-// its installedMsg, arrive on events.
+// installing is a package manager running in a popup. cmd is the command as
+// kho asked for it, which t runs again in the terminal, and lines are the
+// output the popup shows.
+//
+// The output is read as fast as the command writes it, whatever the
+// screen's pace: the reader keeps the lines a terminal would show in shown,
+// and says so on changed. Once the install is logged, logged closes and its
+// installedMsg comes on over.
 type installing struct {
 	title      string
-	args       []string
+	cmd        *exec.Cmd
 	lines      []string
 	start, end time.Time
-	events     chan tea.Msg
 	done       *installedMsg
+	pid        int
+	stopping   bool
+
+	mu      sync.Mutex
+	shown   []string
+	changed chan struct{}
+	logged  chan struct{}
+	over    chan installedMsg
+	cut     chan struct{}
 }
 
 type installStartedMsg struct{ *installing }
 
-type outputMsg string
+// outputMsg is the output the popup shows, newest last.
+type outputMsg []string
 
+// live is the install kho started last. serve stops it if it is still going
+// when kho leaves, even if the screen never heard it started. Starting one
+// holds the lock, so serve can't miss one on its way, and once kho is
+// leaving none starts.
+var live struct {
+	sync.Mutex
+	in      *installing
+	leaving bool
+}
+
+// startInstall runs cmd in a popup. A command that can't even start leaves
+// nothing to watch or stop, so it comes back as a failed installedMsg.
 func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
 	return func() tea.Msg {
-		in := &installing{title: title, args: cmd.Args, start: now(), events: make(chan tea.Msg, 64)}
-		go in.run(installProcess(cmd), log, done)
+		live.Lock()
+		defer live.Unlock()
+		if live.leaving {
+			return nil
+		}
+		run := installProcess(cmd)
+		out, err := detach(run)
+		if err != nil {
+			done.err = err
+			log.Add(entry(history.Change, cmd.Args, 0, err, ""))
+			return done
+		}
+		in := &installing{title: title, cmd: cmd, start: now(), pid: run.Process.Pid,
+			changed: make(chan struct{}, 1), logged: make(chan struct{}), over: make(chan installedMsg, 1), cut: make(chan struct{}, 1)}
+		live.in = in
+		go in.run(run, out, log, done)
 		return installStartedMsg{in}
 	}
 }
 
+// next waits for new output or the result, which brings the last lines on
+// its own.
 func (in *installing) next() tea.Cmd {
-	return func() tea.Msg { return <-in.events }
+	return func() tea.Msg {
+		select {
+		case <-in.changed:
+			return outputMsg(in.screen())
+		case done := <-in.over:
+			return done
+		}
+	}
 }
 
-func (in *installing) run(cmd *exec.Cmd, log *history.Log, done installedMsg) {
-	var output tail
-	start := time.Now()
-	done.err = in.stream(cmd, &output)
-	log.Add(entry(history.Change, in.args, time.Since(start), done.err, output.String()))
-	in.events <- done
+func (in *installing) screen() []string {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return slices.Clone(in.shown)
 }
 
-// stream runs cmd in a session of its own, with no terminal: a password
+// show adds a line to the output, or puts it over the last one when a \r
+// went back over that.
+func (in *installing) show(text string, redraw bool) {
+	in.mu.Lock()
+	if n := len(in.shown); redraw && n > 0 {
+		in.shown[n-1] = text
+	} else {
+		in.shown = append(in.shown, text)
+	}
+	if over := len(in.shown) - 500; over > 0 {
+		in.shown = in.shown[over:]
+	}
+	in.mu.Unlock()
+	select {
+	case in.changed <- struct{}{}:
+	default:
+	}
+}
+
+// The phases of an install. Its popup, its keys and the footer all go by
+// them.
+const (
+	instRunning = iota
+	instStopping
+	instFailed
+	instDone
+)
+
+func (in *installing) phase() int {
+	switch {
+	case in.done == nil && in.stopping:
+		return instStopping
+	case in.done == nil:
+		return instRunning
+	case in.done.err != nil:
+		return instFailed
+	}
+	return instDone
+}
+
+// running is whether the package manager is still going, so ctrl+c must stop
+// it before kho can quit.
+func (in *installing) running() bool {
+	return in != nil && in.phase() <= instStopping
+}
+
+// again is a new command like c, which has run and can't be started twice.
+func again(c *exec.Cmd) *exec.Cmd {
+	r := exec.Command(c.Path, c.Args[1:]...)
+	r.Args, r.Env, r.Dir = c.Args, c.Env, c.Dir
+	return r
+}
+
+// stop interrupts the install and everything it started, or when an
+// interrupt didn't do it, kills them and stops reading what a child out of
+// reach still writes.
+func (in *installing) stop() {
+	if !in.stopping {
+		in.stopping = true
+		syscall.Kill(-in.pid, syscall.SIGINT)
+		return
+	}
+	syscall.Kill(-in.pid, syscall.SIGKILL)
+	select {
+	case in.cut <- struct{}{}:
+	default:
+	}
+}
+
+// finish stops an install kho is leaving, and kills it when it is still
+// going after patience. It returns once the install is logged.
+func (in *installing) finish(patience time.Duration) {
+	in.stop()
+	select {
+	case <-in.logged:
+		return
+	case <-time.After(patience):
+	}
+	in.stop()
+	<-in.logged
+}
+
+// detach starts cmd in a session of its own, with no terminal: a password
 // prompt then fails instead of drawing over kho, and t can rerun it in the
-// terminal. Each line keeps only what follows its last \r, as a progress bar
-// would leave it on screen.
-func (in *installing) stream(cmd *exec.Cmd, output io.Writer) error {
+// terminal. Being its own process group, it can be stopped as a whole.
+func detach(cmd *exec.Cmd) (*os.File, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer r.Close()
+	defer w.Close()
 	cmd.Stdout, cmd.Stderr = w, w
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	err = cmd.Start()
-	w.Close()
-	if err != nil {
-		return err
+	if err := cmd.Start(); err != nil {
+		r.Close()
+		return nil, err
 	}
-	sc := bufio.NewScanner(io.TeeReader(r, output))
-	sc.Buffer(nil, 1<<20)
-	for sc.Scan() {
-		line := strings.TrimRight(sc.Text(), "\r")
-		in.events <- outputMsg(ansi.Strip(line[strings.LastIndex(line, "\r")+1:]))
+	return r, nil
+}
+
+// After the command exits, kho stops reading its output once it has been
+// quiet for outputGrace, or at the latest after outputLimit.
+const (
+	outputGrace = time.Second
+	outputLimit = 10 * time.Second
+)
+
+// run reads cmd's output while it runs, and sends its installedMsg once it
+// has exited and is logged.
+func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done installedMsg) {
+	var output tail
+	var got counter
+	start := time.Now()
+	read := make(chan struct{})
+	go func() {
+		in.stream(io.TeeReader(out, io.MultiWriter(&output, &got)))
+		close(read)
+	}()
+	done.err = cmd.Wait()
+	// A child the command left behind, maybe in a process group of its own
+	// that a stop can't reach, can hold the output open, and write to it, for
+	// as long as it likes. kho closes it once it goes quiet, after a while
+	// at the latest, or on a kill, and the child gets SIGPIPE if it writes
+	// again.
+	quiet(read, in.cut, &got, outputGrace, outputLimit)
+	out.Close()
+	<-read
+	log.Add(entry(history.Change, in.cmd.Args, time.Since(start), done.err, output.String()))
+	close(in.logged)
+	in.over <- done
+}
+
+// quiet waits until the output ends, nothing has come on it for grace, limit
+// has passed, or the install is cut short.
+func quiet(read, cut <-chan struct{}, got *counter, grace, limit time.Duration) {
+	end := time.After(limit)
+	for {
+		seen := got.Load()
+		select {
+		case <-read:
+			return
+		case <-cut:
+			return
+		case <-end:
+			return
+		case <-time.After(grace):
+			if got.Load() == seen {
+				return
+			}
+		}
 	}
-	// A line too long for the scanner stops it; read the rest so the command
-	// never blocks on a full pipe.
-	io.Copy(output, r)
-	return cmd.Wait()
+}
+
+type counter struct{ atomic.Int64 }
+
+func (c *counter) Write(p []byte) (int, error) {
+	c.Add(int64(len(p)))
+	return len(p), nil
+}
+
+// stream reads what the command prints until the output ends or is closed,
+// and shows it as a terminal would after each read, the line still being
+// written included. A \r goes back to the start of the line, so the text
+// after it draws the line again, as a progress bar does.
+func (in *installing) stream(r io.Reader) {
+	// line is the line being written. shown says it is on screen, back that
+	// a \r went back over it, and drawn that it changed since it was shown.
+	var line []byte
+	shown, back, drawn := false, false, false
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := r.Read(buf)
+		for _, b := range buf[:n] {
+			switch b {
+			case '\r':
+				back = true
+			case '\n':
+				// The line ends as it stands, an empty one included.
+				if drawn || !shown {
+					in.show(printable(string(line)), shown)
+				}
+				line, shown, back, drawn = line[:0], false, false, false
+			default:
+				if back {
+					line, back = line[:0], false
+				}
+				// A line that never ends keeps its last part.
+				if len(line) >= 1<<20 {
+					line = line[:copy(line, line[len(line)/2:])]
+				}
+				line, drawn = append(line, b), true
+			}
+		}
+		if drawn {
+			in.show(printable(string(line)), shown)
+			shown, drawn = true, false
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// printable is a line of output as wide as the popup measures it: no
+// styles, tabs as spaces, and no other control characters, which ansi.Strip
+// keeps and the popup would count as no width at all.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, expandTabs(ansi.Strip(s)))
+}
+
+// tidy is what an install printed as its popup showed it: each line as a
+// terminal leaves it after its last \r, then printable.
+func tidy(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, l := range lines {
+		l = strings.TrimRight(l, "\r")
+		lines[i] = printable(l[strings.LastIndex(l, "\r")+1:])
+	}
+	return strings.Join(lines, "\n")
 }
 
 // askLink offers to add or remove the selected agent's link to a skill.
 func (m *model) askLink() {
 	p, ok := m.current()
-	l, ok2 := at(m.links(p), m.sideCursor)
+	l, ok2 := at(m.links, m.sideCursor)
 	if !ok || !ok2 {
 		return
 	}
-	switch l.Kind {
-	case "missing":
-		target := tilde(provider.RealPath(p))
-		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + agentName(l) + "?", lines: []string{
-			"creates  " + tilde(l.Path), "      →  " + target, "",
+	name := agentName(l)
+	nothing := func(lines ...string) { m.confirm = &confirm{title: "Nothing to link", lines: lines} }
+	switch {
+	case l.CanLink():
+		target := provider.LinkTarget(p)
+		m.confirm = &confirm{title: "🔗 Link " + p.Name + " into " + name + "?", lines: []string{
+			"creates  " + tilde(l.Path), "      →  " + tilde(target), "",
 			accent().Render("y") + faint().Render(" link it   ") + accent().Render("n") + faint().Render(" cancel"),
-		}, run: m.logged([]string{"ln", "-s", provider.RealPath(p), l.Path}, func() tea.Msg {
-			return linkedMsg{"linked " + p.Name + " into " + agentName(l), linkSkill(l, p)}
+		}, run: m.logged([]string{"ln", "-s", target, l.Path}, func() tea.Msg {
+			return linkedMsg{"linked " + p.Name + " into " + name, linkSkill(l, p)}
 		})}
-	case "link":
-		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + agentName(l) + "?", lines: []string{
+	case l.Kind == provider.LinkSymlink:
+		m.confirm = &confirm{title: "✂ Unlink " + p.Name + " from " + name + "?", lines: []string{
 			"removes  " + tilde(l.Path), faint().Render("the skill itself stays in ") + tilde(provider.RealPath(p)), "",
 			accent().Render("y") + faint().Render(" remove the link   ") + accent().Render("n") + faint().Render(" cancel"),
 		}, run: m.logged([]string{"rm", l.Path}, func() tea.Msg {
-			return linkedMsg{"removed " + p.Name + " from " + agentName(l), unlinkSkill(l)}
+			return linkedMsg{"removed " + p.Name + " from " + name, unlinkSkill(l)}
 		})}
-	case "copy":
-		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a copied folder, not a link.", "kho won't delete it."}}
+	case l.Kind == provider.LinkCopy:
+		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a folder, not a link.", "kho won't delete it."}}
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		nothing(name+" reads ~/.agents/skills directly,", "so it always sees "+p.Name+".")
+	case l.Kind == provider.LinkNoFolder:
+		nothing(name+" reads only ~/.agents/skills,", "and "+p.Name+" isn't there.")
 	default:
-		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{agentName(l) + " reads ~/.agents/skills directly,", "so it always sees " + p.Name + "."}}
+		nothing(name+" already sees "+p.Name+" through ~/.agents/skills,", "so a link of its own would load it twice.")
 	}
 }
 

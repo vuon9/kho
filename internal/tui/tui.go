@@ -2,13 +2,18 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -28,7 +33,54 @@ func Run(log *history.Log, version string) error {
 			th, m.themePicked = t, true
 		}
 	}
-	_, err := tea.NewProgram(m).Run()
+	return serve(m, listen(), os.Stderr)
+}
+
+// listen hears the signals that would end kho. Bubble Tea quits on the
+// first SIGINT or SIGTERM, ignores them while a command runs in the
+// terminal, and then stops listening, and Go's default for SIGHUP, as when
+// the terminal closes, kills kho on the spot. Listening to all three for as
+// long as kho runs keeps a later signal from killing it before an install
+// is stopped and logged.
+func listen() chan os.Signal {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	return sigs
+}
+
+// ErrHangup is what Run returns when the terminal went away, so kho can
+// exit the way a hung-up program does.
+var ErrHangup = errors.New("the terminal hung up")
+
+// serve runs the program until it quits, which a hangup on sigs makes it
+// do, then stops an install still running and waits until it is logged.
+func serve(m tea.Model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
+	p := tea.NewProgram(m, opts...)
+	var hung atomic.Bool
+	go func() {
+		for s := range sigs {
+			if s == syscall.SIGHUP {
+				hung.Store(true)
+				p.Quit()
+			}
+		}
+	}()
+	_, err := p.Run()
+	if hung.Load() {
+		err = ErrHangup
+	}
+	live.Lock()
+	live.leaving = true
+	in := live.in
+	live.Unlock()
+	if in != nil {
+		select {
+		case <-in.logged:
+		default:
+			fmt.Fprintf(stderr, "kho: stopping %s\n", strings.Join(in.cmd.Args, " "))
+			in.finish(5 * time.Second)
+		}
+	}
 	return err
 }
 
@@ -128,6 +180,10 @@ type model struct {
 	deps      map[string]*lazy[[]provider.Dep]
 	versions  map[string]*lazy[[]provider.Release]
 	docs      map[string]*lazy[provider.SkillDoc]
+	// links are the selected skill's agents as the Links tab lists them,
+	// read again by readLinks when linksOf stops naming the selection.
+	links   []provider.SkillLink
+	linksOf string
 
 	db       *vuln.DB
 	dbPath   string
@@ -138,11 +194,15 @@ type model struct {
 	vulns    map[string][]vuln.Advisory
 	depVulns map[string][]depAdvisory
 
-	focus      int
-	tab        int
-	rail       int
-	cursor     int
-	offset     int
+	focus  int
+	tab    int
+	rail   int
+	cursor int
+	offset int
+	// picked is whether the person has done anything since kho started or
+	// rescanned. Until then the cursor stays on the first row as the
+	// sources answer; after, it stays on the package they are looking at.
+	picked     bool
 	selected   string
 	sidePart   int
 	sideCursor int
@@ -228,27 +288,35 @@ func (m *model) reset() {
 	m.versions = map[string]*lazy[[]provider.Release]{}
 	m.docs = map[string]*lazy[provider.SkillDoc]{}
 	m.advising = map[string]bool{}
+	m.picked = false
 	for _, p := range m.providers {
 		m.busy[p.Name()] = "listing"
 	}
 	m.reindex()
 }
 
-// relist scans one provider again after kho changed something it manages,
-// and drops what was cached about its packages.
+// relist scans one provider again after kho changed something it manages.
 func (m *model) relist(name string) tea.Cmd {
 	p := m.provider(name)
 	if p == nil {
 		return nil
 	}
-	for _, pkg := range m.pkgs[name] {
-		delete(m.deps, pkgKey(pkg))
-		delete(m.versions, pkgKey(pkg))
-	}
 	m.busy[name] = "listing"
 	return func() tea.Msg {
 		pkgs, err := p.List(context.Background())
 		return listedMsg{name, pkgs, err}
+	}
+}
+
+// forget drops the dependencies and releases kho loaded for a provider's
+// packages, which a new listing can change while a package's own version
+// stays: a brew formula's dependencies have versions of their own, and its
+// newest version can move. A load still on its way for an older version
+// lands under that version's key, never on the new one.
+func (m *model) forget(name string) {
+	for _, p := range m.pkgs[name] {
+		delete(m.deps, cacheKey(p))
+		delete(m.versions, cacheKey(p))
 	}
 }
 
@@ -264,7 +332,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.inst != nil && m.inst.done == nil
+	return len(m.busy) > 0 || m.scanning > 0 || m.inst.running()
 }
 
 // startTicking runs the spinner while something is loading.
@@ -289,8 +357,18 @@ func pkgKey(p provider.Package) string {
 	return p.Source + "\x00" + p.Name
 }
 
+// cacheKey names what kho loaded about one version of a package: its
+// dependencies, releases and skill files.
+func cacheKey(p provider.Package) string {
+	return pkgKey(p) + "\x00" + p.Version
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
+		m.picked = true
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -305,7 +383,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, tick())
 		}
 	case listedMsg:
+		m.forget(msg.name)
 		m.pkgs[msg.name] = msg.pkgs
+		if msg.name == "skills" {
+			m.linksOf = ""
+		}
 		if msg.err != nil {
 			m.errs[msg.name] = msg.err
 			delete(m.busy, msg.name)
@@ -355,15 +437,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inst = msg.installing
 		cmds = append(cmds, m.inst.next(), m.startTicking())
 	case outputMsg:
-		m.inst.lines = append(m.inst.lines, string(msg))
-		if over := len(m.inst.lines) - 500; over > 0 {
-			m.inst.lines = m.inst.lines[over:]
-		}
+		m.inst.lines = msg
 		cmds = append(cmds, m.inst.next())
 	case installedMsg:
 		// A rerun in the terminal comes back after its popup has closed.
 		if m.inst != nil {
-			m.inst.done, m.inst.end = &msg, now()
+			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
 		}
 		m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		if msg.err != nil {
@@ -371,7 +450,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 	case linkedMsg:
-		m.notice = msg.done
+		m.notice, m.linksOf = msg.done, ""
 		if msg.err != nil {
 			m.notice = msg.err.Error()
 		}
@@ -415,6 +494,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.wheel(msg.X, msg.Y, -1)
 		case tea.MouseWheelDown:
 			m.wheel(msg.X, msg.Y, 1)
+		}
+	}
+	switch msg.(type) {
+	case listedMsg, checkedMsg, scanMsg, auditMsg:
+		if m.picked {
+			m.reselect()
 		}
 	}
 	m.clamp()
@@ -484,8 +569,8 @@ func (m *model) reindex() {
 				}
 			}
 			for _, d := range p.Deps {
-				q := vuln.Query{Ecosystem: provider.Ecosystem(p), Name: d.Name, Version: d.Version}
-				for _, a := range m.db.For(q) {
+				advs, _ := m.depAdvisories(p, d)
+				for _, a := range advs {
 					m.depVulns[pkgKey(p)] = append(m.depVulns[pkgKey(p)], depAdvisory{d, a})
 				}
 			}
@@ -505,7 +590,7 @@ func (m *model) load() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	prov, key := m.provider(provider.ProviderOf(p)), pkgKey(p)
+	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if prov == nil {
 		return nil
 	}
@@ -547,9 +632,14 @@ func (m *model) load() tea.Cmd {
 func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	key := msg.String()
 	if key == "ctrl+c" {
+		if m.inst.running() {
+			m.inst.stop()
+			return nil, false
+		}
 		return nil, true
 	}
-	if m.help {
+	switch m.popup() {
+	case popHelp:
 		switch key {
 		case "?", "esc", "q", "enter":
 			m.help = false
@@ -559,30 +649,29 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.helpTop++
 		}
 		return nil, false
-	}
-	if in := m.inst; in != nil {
+	case popInstall:
+		in := m.inst
 		switch {
-		case in.done == nil:
+		case in.running():
 		case key == "enter" || key == "esc" || key == "q":
 			m.inst = nil
-		case key == "t" && in.done.err != nil:
+		case key == "t" && in.phase() == instFailed:
 			m.inst = nil
 			done := *in.done
-			return runExec(&terminalRun{cmd: exec.Command(in.args[0], in.args[1:]...), log: m.log}, func(err error) tea.Msg {
+			return runExec(&terminalRun{cmd: again(in.cmd), log: m.log}, func(err error) tea.Msg {
 				done.err = err
 				return done
 			}), false
 		}
 		return nil, false
-	}
-	if pop := m.depPop; pop != nil {
+	case popDep:
 		switch key {
 		case "esc", "enter", "q":
 			m.depPop, m.sel = nil, nil
 		case "up", "k":
-			pop.top--
+			m.depPop.top--
 		case "down", "j":
-			pop.top++
+			m.depPop.top++
 		case "c":
 			if m.sel != nil {
 				return m.copy(m.selectedText()), false
@@ -590,8 +679,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return m.copyArea(), false
 		}
 		return nil, false
-	}
-	if c := m.confirm; c != nil {
+	case popConfirm:
+		c := m.confirm
 		switch key {
 		case "y", "enter":
 			m.confirm = nil
@@ -620,7 +709,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.showHistory = true
 	case "A":
 		if m.activeTab() == tabLinks {
-			m.allAgents, m.sideCursor, m.sideOffset = !m.allAgents, 0, 0
+			m.allAgents, m.sideCursor, m.sideOffset, m.linksOf = !m.allAgents, 0, 0, ""
 		}
 	case "t":
 		m.setTheme(themeIndex() + 1)
@@ -707,6 +796,31 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
+const (
+	popNone = iota
+	popHelp
+	popInstall
+	popDep
+	popConfirm
+)
+
+// popup names the dialog on top. It takes every key, click and turn of the
+// wheel until it closes, so press, click, wheel, View and the footer all ask
+// it which one that is.
+func (m model) popup() int {
+	switch {
+	case m.help:
+		return popHelp
+	case m.inst != nil:
+		return popInstall
+	case m.depPop != nil:
+		return popDep
+	case m.confirm != nil:
+		return popConfirm
+	}
+	return popNone
+}
+
 // setTheme switches to the i-th theme and remembers it for next time.
 func (m *model) setTheme(i int) {
 	th = themes[(i+len(themes))%len(themes)]
@@ -791,12 +905,17 @@ func (m *model) moveSide(key string, step int) {
 }
 
 // scrollDetail scrolls the sidebar's reading area: the bottom half, or the
-// whole sidebar for a tab that has no bottom.
+// whole sidebar for a tab that has no bottom. A dependency list scrolls with
+// its cursor, so the cursor moves instead.
 func (m *model) scrollDetail(n int) {
-	if m.hasBottom() {
-		m.bodyOffset += max(abs(n), 1) * sign(n)
-	} else {
-		m.sideOffset += max(abs(n), 1) * sign(n)
+	n = max(abs(n), 1) * sign(n)
+	switch {
+	case m.depList() != nil:
+		m.depCursor += n
+	case m.hasBottom():
+		m.bodyOffset += n
+	default:
+		m.sideOffset += n
 	}
 }
 
@@ -880,7 +999,8 @@ func (m *model) openReleasePage() tea.Cmd {
 }
 
 // clamp pulls every cursor and offset back in range after a move. The
-// package cursor goes first, since the layout depends on what it selects.
+// package cursor goes first, since the layout and the links depend on what
+// it selects.
 func (m *model) clamp() {
 	m.clampHistory()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
@@ -890,6 +1010,7 @@ func (m *model) clamp() {
 		m.selected, m.sel = pkgKey(p), nil
 		m.sidePart, m.sideCursor, m.sideOffset, m.bodyOffset, m.depCursor = 0, 0, 0, 0, 0
 	}
+	m.readLinks()
 	if n := m.sideListLen(); n >= 0 {
 		m.sideCursor = max(min(m.sideCursor, n-1), 0)
 		m.sideOffset = scroll(m.sideOffset, m.sideCursor, l.topRows-1)
@@ -903,8 +1024,19 @@ func (m *model) clamp() {
 		m.bodyOffset = scroll(m.bodyOffset, m.depCursor, l.bottomRows)
 	}
 	if m.depPop != nil {
-		_, _, _, h := m.depRect()
-		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-(h-3)), 0)
+		m.depPop.top = max(min(m.depPop.top, len(m.depPopView())-popupText(m.depRect()).h), 0)
+	}
+}
+
+// reselect puts the cursor back on the selected package after a listing or a
+// security result has added or moved rows. The cursor is a row number, so
+// otherwise it would land on whichever package took that row.
+func (m *model) reselect() {
+	for i, p := range m.rows() {
+		if pkgKey(p) == m.selected {
+			m.cursor = i
+			return
+		}
 	}
 }
 
@@ -948,18 +1080,18 @@ func (m model) activeTab() int {
 
 func (m model) currentDeps() []provider.Dep {
 	p, ok := m.current()
-	if !ok || m.deps[pkgKey(p)] == nil {
+	if !ok || m.deps[cacheKey(p)] == nil {
 		return nil
 	}
-	return m.deps[pkgKey(p)].val
+	return m.deps[cacheKey(p)].val
 }
 
 func (m model) currentVersions() []provider.Release {
 	p, ok := m.current()
-	if !ok || m.versions[pkgKey(p)] == nil {
+	if !ok || m.versions[cacheKey(p)] == nil {
 		return nil
 	}
-	return m.versions[pkgKey(p)].val
+	return m.versions[cacheKey(p)].val
 }
 
 // visible applies the dependency, status and keyword filters.
