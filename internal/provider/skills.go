@@ -469,10 +469,29 @@ func skillLinks(home string, p Package, all bool) []SkillLink {
 	return links
 }
 
-// LinkSkill gives an agent its own symlink to the skill's entry, relative
-// like the ones the skills CLI makes, so removing the entry removes the skill
-// for every agent.
+// LinkTarget is what a new link to the skill points at. A skill in
+// ~/.agents/skills is linked at its entry there, as the CLI's links are, so
+// removing it there removes it for every agent. Any other skill sits in an
+// agent's own folder, maybe as that agent's link, so it is linked at its real
+// folder and outlives that agent's link.
+func LinkTarget(p Package) string {
+	return linkTarget(homeDir(), p)
+}
+
+func linkTarget(home string, p Package) string {
+	if filepath.Dir(p.Path) == filepath.Join(home, ".agents", "skills") {
+		return p.Path
+	}
+	return RealPath(p)
+}
+
+// LinkSkill gives an agent its own symlink to LinkTarget, relative like the
+// ones the skills CLI makes.
 func LinkSkill(l SkillLink, p Package) error {
+	return linkSkill(homeDir(), l, p)
+}
+
+func linkSkill(home string, l SkillLink, p Package) error {
 	switch {
 	case l.CanLink():
 	case l.Kind == LinkNoFolder:
@@ -492,7 +511,7 @@ func LinkSkill(l SkillLink, p Package) error {
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(realDir, p.Path)
+	rel, err := filepath.Rel(realDir, linkTarget(home, p))
 	if err != nil {
 		return err
 	}

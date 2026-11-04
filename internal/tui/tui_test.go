@@ -577,9 +577,9 @@ func TestLinkStates(t *testing.T) {
 			seen:    "🔗 Seen by 0 agents",
 			row:     "Cursor · none /h/.cursor/skills/pathmaker",
 			detail:  []string{"enter links it into Cursor's own folder."},
-			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {skill}", "", "y link it   n cancel"},
+			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
 			toggled: []string{"link cursor"},
-			logged:  []string{"ln -s {skill} /h/.cursor/skills/pathmaker"},
+			logged:  []string{"ln -s {real} /h/.cursor/skills/pathmaker"},
 		},
 		{
 			id:      "a link can be removed",

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"io/fs"
@@ -629,9 +630,11 @@ func TestLinkSkill(t *testing.T) {
 	skill := []string{".agents/skills/workflow/SKILL.md", ".config/goose/", ".config/opencode/", ".codex/", ".cursor/skills/workflow/SKILL.md"}
 	tests := []struct {
 		id, agent string
-		files     []string
-		added     []string
-		err       string
+		// skill is the listed skill's path, ~/.agents/skills/workflow if empty.
+		skill string
+		files []string
+		added []string
+		err   string
 	}{
 		{id: "an agent that sees the skill through ~/.agents/skills gets no link of its own", agent: "opencode", files: skill,
 			err: "opencode already sees workflow through ~/.agents/skills"},
@@ -642,6 +645,12 @@ func TestLinkSkill(t *testing.T) {
 		{id: "the link goes through the skill's entry in ~/.agents/skills, not to where that leads", agent: "goose",
 			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".config/goose/"},
 			added: []string{".config/goose/skills/", ".config/goose/skills/workflow -> ../../../.agents/skills/workflow"}},
+		{id: "a skill only in another agent's folder is linked at its real folder, not through that agent's link", agent: "goose",
+			skill: ".claude/skills/mine", files: []string{"dev/mine/SKILL.md", ".claude/skills/mine -> ../../dev/mine", ".config/goose/"},
+			added: []string{".config/goose/skills/", ".config/goose/skills/mine -> ../../../dev/mine"}},
+		{id: "and one whose files are in that folder is linked there", agent: "goose",
+			skill: ".claude/skills/mine", files: []string{".claude/skills/mine/SKILL.md", ".config/goose/"},
+			added: []string{".config/goose/skills/", ".config/goose/skills/mine -> ../../../.claude/skills/mine"}},
 		{id: "a link from a folder under a symlink still reaches the skill", agent: "goose",
 			files: []string{".agents/skills/workflow/SKILL.md", "dotfiles/config/goose/", ".config -> dotfiles/config"},
 			added: []string{"dotfiles/config/goose/skills/", "dotfiles/config/goose/skills/workflow -> ../../../../.agents/skills/workflow"}},
@@ -654,11 +663,12 @@ func TestLinkSkill(t *testing.T) {
 			home, _ := filepath.EvalSymlinks(t.TempDir())
 			build(t, home, tt.files...)
 			before := tree(home)
-			p := Package{Name: "workflow", Path: filepath.Join(home, ".agents/skills/workflow")}
+			skill := cmp.Or(tt.skill, ".agents/skills/workflow")
+			p := Package{Name: filepath.Base(skill), Path: filepath.Join(home, skill)}
 			links := skillLinks(home, p, true)
 			i := slices.IndexFunc(links, func(l SkillLink) bool { return l.Agent == tt.agent })
 			gotErr := ""
-			if err := LinkSkill(links[i], p); err != nil {
+			if err := linkSkill(home, links[i], p); err != nil {
 				gotErr = strings.ReplaceAll(err.Error(), home, "~")
 			}
 			added := slices.DeleteFunc(tree(home), func(e string) bool { return slices.Contains(before, e) })
