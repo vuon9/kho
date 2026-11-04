@@ -51,6 +51,10 @@ func fakes(t *testing.T) []provider.Provider {
 	skill := t.TempDir()
 	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: pathmaker\ndescription: Plan big work\n---\n# Pathmaker\nSplit the work into tickets.\n"), 0o644)
 	os.WriteFile(filepath.Join(skill, "README.md"), []byte("# Read me first\nHow to use it.\n"), 0o644)
+	// The skill is listed through a link, so its path and the folder its
+	// files live in differ on every system, not only where TMPDIR is a link.
+	path := filepath.Join(t.TempDir(), "pathmaker")
+	os.Symlink(skill, path)
 	return []provider.Provider{
 		fake{name: "brew", pkgs: []provider.Package{
 			{Source: "brew", Name: "anvil", Version: "0.2.89", Latest: "0.2.94", Outdated: true, Homepage: "https://anvil.example", Repo: "example/anvil",
@@ -71,7 +75,7 @@ func fakes(t *testing.T) []provider.Provider {
 		}}},
 		fake{name: "mise", err: errors.New("mise ls: boom")},
 		fake{name: "skills", pkgs: []provider.Package{
-			{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills", Path: skill, Agents: []string{"claude", "pi"}},
+			{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills", Path: path, Agents: []string{"claude", "pi"}},
 		}},
 	}
 }
@@ -540,6 +544,7 @@ func TestLinkStates(t *testing.T) {
 		detail  []string
 		dialog  []string
 		toggled []string
+		logged  []string
 	}{
 		{
 			id:     "an agent that sees the shared copy has nothing to link, since a link would load it twice",
@@ -573,6 +578,7 @@ func TestLinkStates(t *testing.T) {
 			detail:  []string{"enter links it into Cursor's own folder."},
 			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {skill}", "", "y link it   n cancel"},
 			toggled: []string{"link cursor"},
+			logged:  []string{"ln -s {skill} /h/.cursor/skills/pathmaker"},
 		},
 		{
 			id:      "a link can be removed",
@@ -582,6 +588,7 @@ func TestLinkStates(t *testing.T) {
 			detail:  []string{"enter removes this link. The skill's files stay where they are."},
 			dialog:  unlink("Goose"),
 			toggled: []string{"unlink goose"},
+			logged:  []string{"rm /h/.config/goose/skills/pathmaker"},
 		},
 		{
 			id: "a link next to the shared copy loads the skill twice",
@@ -592,6 +599,7 @@ func TestLinkStates(t *testing.T) {
 			detail:  []string{"OpenCode also reads ~/.agents/skills, so it loads this skill twice.", "enter removes this link. The skill's files stay where they are."},
 			dialog:  unlink("OpenCode"),
 			toggled: []string{"unlink opencode"},
+			logged:  []string{"rm /h/.config/opencode/skills/pathmaker"},
 		},
 		{
 			id:     "a copied folder stays",
@@ -625,14 +633,24 @@ func TestLinkStates(t *testing.T) {
 					dialog = append(dialog, ansi.Strip(l))
 				}
 			}
-			press(t, m, "y")
-			want := slices.Clone(tt.dialog)
-			for i := range want {
-				want[i] = strings.NewReplacer("{real}", provider.RealPath(p), "{skill}", p.Path).Replace(want[i])
+			m = press(t, m, "y")
+			var logged []string
+			for _, e := range m.log.Entries() {
+				if e.Kind == history.Change {
+					logged = append(logged, strings.Join(e.Command, " "))
+				}
 			}
-			if seen != tt.seen || row != tt.row || !slices.Equal(detail, tt.detail) || !slices.Equal(dialog, want) || !slices.Equal(toggled, tt.toggled) {
-				t.Errorf("got  %q\n     %q\n     %q\n     %q\n     %q\nwant %q\n     %q\n     %q\n     %q\n     %q",
-					seen, row, detail, dialog, toggled, tt.seen, tt.row, tt.detail, want, tt.toggled)
+			fill := strings.NewReplacer("{real}", provider.RealPath(p), "{skill}", p.Path)
+			want, wantLogged := slices.Clone(tt.dialog), slices.Clone(tt.logged)
+			for _, s := range [][]string{want, wantLogged} {
+				for i := range s {
+					s[i] = fill.Replace(s[i])
+				}
+			}
+			if seen != tt.seen || row != tt.row || !slices.Equal(detail, tt.detail) || !slices.Equal(dialog, want) ||
+				!slices.Equal(toggled, tt.toggled) || !slices.Equal(logged, wantLogged) {
+				t.Errorf("got  %q\n     %q\n     %q\n     %q\n     %q\n     %q\nwant %q\n     %q\n     %q\n     %q\n     %q\n     %q",
+					seen, row, detail, dialog, toggled, logged, tt.seen, tt.row, tt.detail, want, tt.toggled, wantLogged)
 			}
 		})
 	}
