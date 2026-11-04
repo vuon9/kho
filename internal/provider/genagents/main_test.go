@@ -92,6 +92,16 @@ func TestGenerate(t *testing.T) {
 			err: "kelp: can't read process.platform === 'win32' ? join(home, 'AppData', 'kelp') : join(home, '.kelp/skills')",
 		},
 		{
+			id:   "a quoted absolute skills folder is kept as it is",
+			src:  agentsTS("", agent("mint", ".mint/skills", "'/opt/mint/skills'", "existsSync('/opt/mint')")),
+			want: file(`{Name: "mint", Display: "Mint", Dirs: []string{"/opt/mint/skills"}, Detect: []string{"/opt/mint"}}`),
+		},
+		{
+			id:  "one built onto a quoted path fails",
+			src: agentsTS("", agent("mint", ".mint/skills", "'/opt/mint/' + name", "existsSync('/opt/mint')")),
+			err: "mint: can't read '/opt/mint/' + name",
+		},
+		{
 			id: "a project folder that isn't a quoted literal fails",
 			src: agentsTS("", strings.Replace(agent("lark", ".lark/skills", "join(home, '.lark/skills')", "existsSync(join(home, '.lark'))"),
 				"skillsDir: '.lark/skills'", "skillsDir: join('.lark', 'skills')", 1)),
