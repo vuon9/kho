@@ -254,7 +254,7 @@ func (m model) topLines(inner int) []line {
 	case tabReadme:
 		return m.readmeLines(p, inner)
 	case tabLinks:
-		return m.linkLines(p)
+		return linkLines(m.links(p))
 	}
 	return m.infoLines(p)
 }
@@ -315,7 +315,7 @@ func (m model) bottomLines(inner int) []line {
 		return m.linkDetail(p)
 	}
 	if p.Source == "skills" {
-		return m.linkLines(p)
+		return linkLines(skillLinks(p, false))
 	}
 	return m.depLines(p, inner)
 }
@@ -769,9 +769,9 @@ func (m model) links(p provider.Package) []provider.SkillLink {
 
 func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
 
-func (m model) linkLines(p provider.Package) []line {
+func linkLines(links []provider.SkillLink) []line {
 	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
-	for _, l := range m.links(p) {
+	for _, l := range links {
 		state := linkState(l)
 		if !l.Installed && l.Kind == provider.LinkMissing {
 			state = faint().Render("· not installed")

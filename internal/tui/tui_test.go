@@ -284,6 +284,8 @@ func TestView(t *testing.T) {
 		{id: "n cancels", keys: []string{"l", "v", "enter", "n"}, lacks: []string{"⬆ Upgrade anvil?"}},
 		{id: "links list every agent", keys: []string{"G", "5"}, want: []string{"AGENT", "claude", "🔗 linked", "cursor", "· none", "codex", "≈ shared"}},
 		{id: "skill info shows who sees it", keys: []string{"G"}, want: []string{"🔗 Seen by 2 agents"}},
+		{id: "and lists installed agents only, even after A on the Links tab", keys: []string{"G", "5", "A", "i"}, want: []string{"🔗 Seen by 2 agents", "claude", "codex"},
+			lacks: []string{"Goose", "not installed"}},
 		{id: "enter on a link asks to remove it", keys: []string{"G", "5", "l", "enter"}, want: []string{"✂ Unlink pathmaker from claude?", "removes  /h/.claude/skills/pathmaker"}},
 		{id: "a shared agent has nothing to link", keys: []string{"G", "5", "l", "j", "j", "enter"}, want: []string{"Nothing to link", "codex reads ~/.agents/skills directly,"}},
 		{id: "? shows every key", keys: []string{"?"}, want: []string{"⌨ Keys", "show or hide these keys", "Sidebar", "check security again"}},
@@ -558,7 +560,7 @@ func TestLinkStates(t *testing.T) {
 			p, _ := m.current()
 			seen := m.bottomTitle()
 			m = press(t, m, "5")
-			row := strings.Join(strings.Fields(ansi.Strip(m.linkLines(p)[1].text)), " ")
+			row := strings.Join(strings.Fields(ansi.Strip(linkLines(m.links(p))[1].text)), " ")
 			var detail []string
 			for _, l := range m.linkDetail(p) {
 				if l.label == "" && l.text != "" {
