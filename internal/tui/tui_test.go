@@ -51,9 +51,11 @@ func fakes(t *testing.T) []provider.Provider {
 	skill := t.TempDir()
 	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: pathmaker\ndescription: Plan big work\n---\n# Pathmaker\nSplit the work into tickets.\n"), 0o644)
 	os.WriteFile(filepath.Join(skill, "README.md"), []byte("# Read me first\nHow to use it.\n"), 0o644)
-	// The skill is listed through a link, so its path and the folder its
-	// files live in differ on every system, not only where TMPDIR is a link.
-	path := filepath.Join(t.TempDir(), "pathmaker")
+	// The skill is listed from a home's ~/.agents/skills through a link, so
+	// its path and the folder its files live in differ on every system, not
+	// only where TMPDIR is a link.
+	path := filepath.Join(t.TempDir(), ".agents", "skills", "pathmaker")
+	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.Symlink(skill, path)
 	return []provider.Provider{
 		fake{name: "brew", pkgs: []provider.Package{
@@ -543,8 +545,11 @@ func TestLinkStates(t *testing.T) {
 	}
 	const removes = "enter removes this link. The skill's files stay where they are."
 	tests := []struct {
-		id      string
-		link    provider.SkillLink
+		id   string
+		link provider.SkillLink
+		// atHome makes the skill's home HOME, so it is listed from
+		// ~/.agents/skills. Otherwise HOME is an empty folder.
+		atHome  bool
 		seen    string
 		row     string
 		detail  []string
@@ -585,6 +590,17 @@ func TestLinkStates(t *testing.T) {
 			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
 			toggled: []string{"link cursor"},
 			logged:  []string{"ln -s {real} /h/.cursor/skills/pathmaker"},
+		},
+		{
+			id:      "a skill whose entry in ~/.agents/skills is a link is linked through the entry, as the CLI does",
+			link:    provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
+			atHome:  true,
+			seen:    "🔗 Seen by 0 agents",
+			row:     "Cursor · none /h/.cursor/skills/pathmaker",
+			detail:  at("/h/.cursor/skills/pathmaker", "enter links it into Cursor's own folder."),
+			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  ~/.agents/skills/pathmaker", "", "y link it   n cancel"},
+			toggled: []string{"link cursor"},
+			logged:  []string{"ln -s {skill} /h/.cursor/skills/pathmaker"},
 		},
 		{
 			id:      "a link can be removed",
@@ -647,6 +663,11 @@ func TestLinkStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := loaded(t)
+			home := t.TempDir()
+			if tt.atHome {
+				home = filepath.Dir(filepath.Dir(filepath.Dir(m.pkgs["skills"][0].Path)))
+			}
+			t.Setenv("HOME", home)
 			skillLinks = func(provider.Package, bool) []provider.SkillLink { return []provider.SkillLink{tt.link} }
 			m = press(t, m, "G")
 			p, _ := m.current()
