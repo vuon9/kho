@@ -485,6 +485,7 @@ func TestSkillLinks(t *testing.T) {
 	agents := []string{".codex/", ".pi/agent/", ".config/goose/", ".config/opencode/", ".cursor/"}
 	tests := []struct {
 		id    string
+		env   map[string]string
 		files []string
 		skill string
 		want  map[string]string
@@ -503,11 +504,22 @@ func TestSkillLinks(t *testing.T) {
 			want: map[string]string{"claude-code": "link to .agents/skills/workflow, sees", "codex": "no folder, sees", "cursor": "copy, sees",
 				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
 		},
+		{
+			id:    "an agent whose folder an env setting moves to ~/.agents/skills reads the shared skills",
+			env:   map[string]string{"CLAUDE_CONFIG_DIR": "{home}/.agents"},
+			files: []string{".agents/skills/workflow/SKILL.md"},
+			skill: ".agents/skills/workflow",
+			want: map[string]string{"claude-code": "no folder, sees", "codex": "no folder, sees", "cursor": "missing, sees",
+				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			clearAgentEnv(t)
 			home := t.TempDir()
+			for k, v := range tt.env {
+				t.Setenv(k, strings.ReplaceAll(v, "{home}", home))
+			}
 			build(t, home, slices.Concat(agents, tt.files)...)
 			p := Package{Name: filepath.Base(tt.skill), Path: filepath.Join(home, tt.skill)}
 			real, _ := filepath.EvalSymlinks(home)
