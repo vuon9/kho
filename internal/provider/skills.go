@@ -78,7 +78,7 @@ var envDefault = regexp.MustCompile(`^\$\{(\w+):-([^}]*)\}`)
 
 func expandPath(home, p string) string {
 	if m := envDefault.FindStringSubmatch(p); m != nil {
-		base := os.Getenv(m[1])
+		base := strings.TrimSpace(os.Getenv(m[1]))
 		if base == "" {
 			base = expandPath(home, m[2])
 		}

@@ -181,6 +181,8 @@ func TestExpandPath(t *testing.T) {
 		{"home", "~/.cursor/skills", "", "/h/.cursor/skills"},
 		{"env unset falls back to its default", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "", "/h/.config/goose/skills"},
 		{"env set wins", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", "/x", "/x/goose/skills"},
+		{"a blank env setting falls back to its default, as in the CLI", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", " ", "/h/.config/goose/skills"},
+		{"spaces around an env setting are dropped", "${XDG_CONFIG_HOME:-~/.config}/goose/skills", " /x\n", "/x/goose/skills"},
 		{"absolute", "/etc/codex", "", "/etc/codex"},
 	}
 	for _, tt := range tests {
