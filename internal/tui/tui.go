@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -40,18 +42,27 @@ func Run(log *history.Log, version string) error {
 	return serve(m, sigs, os.Stderr)
 }
 
+// ErrHangup is what Run returns when the terminal went away, so kho can
+// exit the way a hung-up program does.
+var ErrHangup = errors.New("the terminal hung up")
+
 // serve runs the program until it quits, which a hangup on sigs makes it
 // do, then stops an install still running and waits until it is logged.
 func serve(m tea.Model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
 	p := tea.NewProgram(m, opts...)
+	var hung atomic.Bool
 	go func() {
 		for s := range sigs {
 			if s == syscall.SIGHUP {
+				hung.Store(true)
 				p.Quit()
 			}
 		}
 	}()
 	_, err := p.Run()
+	if hung.Load() {
+		err = ErrHangup
+	}
 	if in := live.Load(); in != nil {
 		select {
 		case <-in.logged:

@@ -1384,13 +1384,13 @@ func TestSignal(t *testing.T) {
 		err      error
 	}{
 		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30",
-			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}},
+			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
 		{id: "so does one that comes before the screen heard the install started", script: "echo started; sleep 30", unseen: true,
-			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}},
+			said: "kho: stopping brew upgrade anvil\n", logged: []string{"brew upgrade anvil: signal: interrupt"}, err: ErrHangup},
 		{id: "a crash in the screen comes back as an error", crash: true, err: tea.ErrProgramPanic},
 		{id: "one that ignores the interrupt is killed once kho runs out of patience", script: "trap '' INT; echo started; sleep 30", patience: 50 * time.Millisecond,
 			logged: []string{"brew upgrade anvil: signal: killed"}},
-		{id: "with nothing running kho just leaves"},
+		{id: "with nothing running a hangup still says it was one", err: ErrHangup},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

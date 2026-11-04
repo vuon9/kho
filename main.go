@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -39,6 +40,10 @@ func main() {
 	}
 	if len(os.Args) == 1 {
 		if err := tui.Run(log, appVersion()); err != nil {
+			// 128 plus SIGHUP's number, as a shell reports a hung-up program.
+			if errors.Is(err, tui.ErrHangup) {
+				os.Exit(129)
+			}
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
