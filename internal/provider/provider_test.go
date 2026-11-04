@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -167,7 +168,7 @@ func TestParseOutdated(t *testing.T) {
 // test sees only the home it builds.
 func clearAgentEnv(t *testing.T) {
 	for _, a := range skillAgents {
-		for _, p := range append([]string{a.Dir}, a.Detect...) {
+		for _, p := range slices.Concat(a.Dirs, a.Detect) {
 			if m := envDefault.FindStringSubmatch(p); m != nil {
 				t.Setenv(m[1], "")
 			}
@@ -192,6 +193,38 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
+func TestAgentDir(t *testing.T) {
+	tests := []struct {
+		id, agent string
+		dirs      []string
+		want      string
+	}{
+		{"OpenClaw keeps its skills in ~/.clawdbot when only that exists", "openclaw", []string{".clawdbot"}, ".clawdbot/skills"},
+		{"and in ~/.moltbot when only that exists", "openclaw", []string{".moltbot"}, ".moltbot/skills"},
+		{"~/.openclaw wins over the old names", "openclaw", []string{".moltbot", ".clawdbot", ".openclaw"}, ".openclaw/skills"},
+		{"~/.clawdbot wins over ~/.moltbot", "openclaw", []string{".moltbot", ".clawdbot"}, ".clawdbot/skills"},
+		{"with none of them it is ~/.openclaw", "openclaw", nil, ".openclaw/skills"},
+		{"an agent whose folder is ~/.agents/skills has none of its own", "codex", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home := t.TempDir()
+			for _, d := range tt.dirs {
+				os.Mkdir(filepath.Join(home, d), 0o755)
+			}
+			i := slices.IndexFunc(skillAgents, func(a skillAgent) bool { return a.Name == tt.agent })
+			want := ""
+			if tt.want != "" {
+				want = filepath.Join(home, tt.want)
+			}
+			if got := skillAgents[i].dir(home); got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestScanSkills(t *testing.T) {
 	clearAgentEnv(t)
 	home := t.TempDir()
@@ -211,7 +244,7 @@ func TestScanSkills(t *testing.T) {
 	skills(
 		".agents/skills/tracked", ".agents/skills/untracked", ".agents/skills/claude-off",
 		".claude/skills/tracked", ".claude/skills/untracked", ".claude/skills/agent-only",
-		".cursor/skills/cursor-only", ".cursor/skills/agent-only",
+		".cursor/skills/cursor-only", ".cursor/skills/agent-only", ".clawdbot/skills/claw-only",
 	)
 	mkdirs(".pi/agent", ".config/opencode")
 	// Not skills: a link left behind after its skill was removed, and a
@@ -233,6 +266,8 @@ func TestScanSkills(t *testing.T) {
 			Note: "only in claude-code, cursor, not managed by the skills CLI"},
 		{Source: "skills", Name: "claude-off", Version: "8295b8e", Pinned: true, Origin: "someone/skills", Path: filepath.Join(shared, "claude-off"),
 			Agents: []string{"cursor", "opencode", "pi"}, Note: "pinned to v1.3.1", Repo: "someone/skills"},
+		{Source: "skills", Name: "claw-only", Version: "-", Path: filepath.Join(home, ".clawdbot/skills/claw-only"), Agents: []string{"openclaw"},
+			Note: "only in openclaw, not managed by the skills CLI"},
 		{Source: "skills", Name: "cursor-only", Version: "-", Path: filepath.Join(home, ".cursor/skills/cursor-only"), Agents: []string{"cursor"},
 			Note: "only in cursor, not managed by the skills CLI"},
 		{Source: "skills", Name: "tracked", Version: "cd509ae", Origin: "someone/skills", Path: filepath.Join(shared, "tracked"), Agents: []string{"claude-code", "cursor", "opencode", "pi"}, Repo: "someone/skills"},

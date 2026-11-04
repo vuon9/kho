@@ -34,23 +34,31 @@ func (Skills) Available() bool {
 
 //go:generate go run ./genagents v1.7.6
 
-// skillAgent is one agent the skills CLI supports. Dir is its global skills
-// folder, and any Detect path existing means it is installed. A universal
-// agent reads ~/.agents/skills as well as Dir. Paths start with ~/, a
+// skillAgent is one agent the skills CLI supports. Its global skills folder
+// is the first of Dirs whose parent folder exists, or else the first, and any
+// Detect path existing means it is installed. A universal agent reads
+// ~/.agents/skills as well as its own folder. Paths start with ~/, a
 // ${VAR:-default} the agent's own env setting overrides, or /.
 type skillAgent struct {
-	Name, Display, Dir string
-	Detect             []string
-	Universal          bool
+	Name, Display string
+	Dirs, Detect  []string
+	Universal     bool
 }
 
-// dir is the agent's skills folder, or "" when it reads ~/.agents/skills
-// itself and so has no links of its own.
+// dir is the agent's skills folder, or "" when that is ~/.agents/skills
+// itself and so it has no links of its own.
 func (a skillAgent) dir(home string) string {
-	if d := expandPath(home, a.Dir); d != filepath.Join(home, ".agents", "skills") {
-		return d
+	d := expandPath(home, a.Dirs[0])
+	for _, p := range a.Dirs {
+		if _, err := os.Stat(filepath.Dir(expandPath(home, p))); err == nil {
+			d = expandPath(home, p)
+			break
+		}
 	}
-	return ""
+	if d == filepath.Join(home, ".agents", "skills") {
+		return ""
+	}
+	return d
 }
 
 func (a skillAgent) readsShared(home string) bool {

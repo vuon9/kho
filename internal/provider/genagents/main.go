@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/format"
 	"io"
@@ -18,6 +19,8 @@ import (
 var (
 	envHome = regexp.MustCompile(`(?s)const (\w+) =\s*process\.env\.(\w+)\?\.trim\(\) \|\|[^;]*?join\(home, '([^']+)'\)\)?;`)
 	helper  = regexp.MustCompile(`(?s)export function (is\w+Installed)\(.*?\n\}`)
+	picker  = regexp.MustCompile(`(?s)export function (get\w+GlobalSkillsDir)\(.*?\n\}`)
+	returns = regexp.MustCompile(`return (join\([^()]*\));`)
 	entry   = regexp.MustCompile(`\n  '?([a-z0-9-]+)'?: \{\n`)
 	display = regexp.MustCompile(`displayName: '([^']+)'`)
 	project = regexp.MustCompile(`\bskillsDir: '([^']*)'`)
@@ -58,6 +61,14 @@ func generate(src, version string) ([]byte, error) {
 		}
 		helpers[m[1]] = ps
 	}
+	picks := map[string][]string{}
+	for _, m := range picker.FindAllStringSubmatch(src, -1) {
+		dirs, err := firstFound(m[0], bases)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", m[1], err)
+		}
+		picks[m[1]+"()"] = dirs
+	}
 
 	table := src[strings.Index(src, "export const agents"):]
 	table = table[:strings.Index(table, "\n};")]
@@ -74,19 +85,19 @@ func generate(src, version string) ([]byte, error) {
 		if id == "universal" || g == nil || g[1] == "undefined" {
 			continue
 		}
-		dir := "~/.openclaw/skills"
-		var err error
-		if g[1] != "getOpenClawGlobalSkillsDir()" {
-			dir, err = path(g[1], bases)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", id, err)
+		dirs, ok := picks[g[1]]
+		if !ok {
+			dir, err := path(g[1], bases)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", id, err)
+			}
+			dirs = []string{dir}
 		}
 		detect, err := paths(body[strings.Index(body, "detectInstalled"):], bases, helpers)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
-		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dir: %q, Detect: %#v", id, display.FindStringSubmatch(body)[1], dir, detect)
+		fmt.Fprintf(&b, "\t{Name: %q, Display: %q, Dirs: %#v, Detect: %#v", id, display.FindStringSubmatch(body)[1], dirs, detect)
 		// Like the CLI: an agent whose project folder is .agents/skills reads
 		// ~/.agents/skills too, so a global skill never needs a link of its own.
 		if project.FindStringSubmatch(body)[1] == ".agents/skills" {
@@ -116,6 +127,35 @@ func paths(code string, bases map[string]string, helpers map[string][]string) ([
 		out = append(out, helpers[m[1]]...)
 	}
 	return out, nil
+}
+
+// firstFound reads a function like getOpenClawGlobalSkillsDir, which returns
+// the first folder whose parent exists, or else the first. That is how kho
+// reads Dirs, so any other shape fails rather than mean something else.
+func firstFound(code string, bases map[string]string) ([]string, error) {
+	checks, err := paths(code, bases, nil)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, m := range returns.FindAllStringSubmatch(code, -1) {
+		d, err := path(m[1], bases)
+		if err != nil {
+			return nil, err
+		}
+		dirs = append(dirs, d)
+	}
+	shape := errors.New("must return the first folder whose parent exists, or else the first")
+	n := len(checks)
+	if len(dirs) != n+1 || dirs[n] != dirs[0] {
+		return nil, shape
+	}
+	for i, c := range checks {
+		if c != dirs[i][:strings.LastIndex(dirs[i], "/")] {
+			return nil, shape
+		}
+	}
+	return dirs[:n], nil
 }
 
 // path turns join(base, 'a', 'b'), a base on its own, or a quoted absolute
