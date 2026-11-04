@@ -60,17 +60,40 @@ func (a skillAgent) dir(home string) string {
 	return d
 }
 
+// placed is an agent with its folder and install state worked out once per
+// scan, not once per skill.
+type placed struct {
+	skillAgent
+	dir       string
+	installed bool
+}
+
+// place lists the installed agents, or every agent when all is set.
+func place(home string, all bool) []placed {
+	var out []placed
+	for _, a := range skillAgents {
+		if installed := a.installed(home); installed || all {
+			out = append(out, placed{a, a.dir(home), installed})
+		}
+	}
+	return out
+}
+
+// shared says whether the agent sees a skill through ~/.agents/skills, given
+// whether that folder holds it.
+func (a placed) shared(inShared bool) bool {
+	return inShared && (a.Universal || a.dir == "")
+}
+
 // link is how the agent sees the skill called name, where inShared says
-// whether ~/.agents/skills holds it. Both the Links tab and the agents a
-// listed skill names come from here, so they always agree.
-func (a skillAgent) link(home, name string, inShared bool) SkillLink {
-	d := a.dir(home)
-	l := SkillLink{Agent: a.Name, Display: a.Display, Shared: inShared && (a.Universal || d == "")}
-	if d == "" {
+// whether ~/.agents/skills holds it.
+func (a placed) link(home, name string, inShared bool) SkillLink {
+	l := SkillLink{Agent: a.Name, Display: a.Display, Installed: a.installed, Shared: a.shared(inShared)}
+	if a.dir == "" {
 		l.Path, l.Kind = filepath.Join(home, ".agents", "skills", name), LinkNoFolder
 		return l
 	}
-	l.Path = filepath.Join(d, name)
+	l.Path = filepath.Join(a.dir, name)
 	info, err := os.Lstat(l.Path)
 	switch {
 	case err != nil:
@@ -178,25 +201,26 @@ func skillNames(dir string) map[string]bool {
 func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 	shared := filepath.Join(home, ".agents", "skills")
 	canonical := skillNames(shared)
-	var agents []skillAgent
+	agents := place(home, false)
+	own := make([]map[string]bool, len(agents))
 	unmanaged := map[string]string{}
-	for _, a := range skillAgents {
-		if !a.installed(home) {
+	for i, a := range agents {
+		if a.dir == "" {
 			continue
 		}
-		agents = append(agents, a)
-		if d := a.dir(home); d != "" {
-			for name := range skillNames(d) {
-				if !canonical[name] {
-					unmanaged[name] = cmp.Or(unmanaged[name], filepath.Join(d, name))
-				}
+		own[i] = skillNames(a.dir)
+		for name := range own[i] {
+			if !canonical[name] {
+				unmanaged[name] = cmp.Or(unmanaged[name], filepath.Join(a.dir, name))
 			}
 		}
 	}
+	// Each agent's folder is read once above. Own comes from the same
+	// SKILL.md test link makes, and Sees decides, as on the Links tab.
 	seenBy := func(name string) []string {
 		var as []string
-		for _, a := range agents {
-			if a.link(home, name, canonical[name]).Sees() {
+		for i, a := range agents {
+			if (SkillLink{Shared: a.shared(canonical[name]), Own: own[i][name]}).Sees() {
 				as = append(as, a.Name)
 			}
 		}
@@ -457,14 +481,8 @@ func SkillLinks(p Package, all bool) []SkillLink {
 func skillLinks(home string, p Package, all bool) []SkillLink {
 	inShared := isSkill(filepath.Join(home, ".agents", "skills", p.Name))
 	var links []SkillLink
-	for _, a := range skillAgents {
-		installed := a.installed(home)
-		if !installed && !all {
-			continue
-		}
-		l := a.link(home, p.Name, inShared)
-		l.Installed = installed
-		links = append(links, l)
+	for _, a := range place(home, all) {
+		links = append(links, a.link(home, p.Name, inShared))
 	}
 	return links
 }
