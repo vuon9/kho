@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -1153,54 +1154,86 @@ func TestHelp(t *testing.T) {
 func TestInstall(t *testing.T) {
 	upgrade := []string{"l", "v", "enter", "y"}
 	brew := "brew upgrade anvil"
+	pkgtool := exec.Command("pkgtool", "upgrade", "anvil")
+	pkgtool.Env, pkgtool.Dir = []string{"PKGTOOL_NO_AUTO_UPDATE=1"}, t.TempDir()
 	tests := []struct {
-		id     string
+		id string
+		// script stands in for the command; {pids} in it is a file for the
+		// pids of children it leaves behind, killed once the row is done.
 		script string
 		// missing makes the command one that can't start.
 		missing bool
-		keys    []string
-		ran     []string
-		shows   []string
-		hides   string
-		open    bool
+		// cmd starts the install with this command instead of through the
+		// dialog.
+		cmd   *exec.Cmd
+		keys  []string
+		ran   []string
+		shows []string
+		hides string
+		open  bool
+		// logged is the history entry: its kind, command, error and output.
+		logged []string
 	}{
 		{id: "a command that can't start says so, with nothing left to stop", missing: true, keys: upgrade, ran: []string{brew},
-			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c"},
-		{id: "a child that keeps the output open can't hold the popup open", script: "set -m; (sleep 4; echo late) & echo started", keys: upgrade, ran: []string{brew},
-			shows: []string{"started", "✓ done"}, hides: "late", open: true},
+			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c", logged: []string{`change brew upgrade anvil: fork/exec {missing}: no such file or directory ""`}},
+		{id: "a child that keeps the output open can't hold the popup open", script: "set -m; (sleep 4; echo late) & echo $! > {pids}; echo started", keys: upgrade, ran: []string{brew},
+			shows: []string{"started", "✓ done"}, hides: "late", open: true, logged: []string{`change brew upgrade anvil:  "started\n"`}},
 		{id: "but one still writing is read to its end", script: "(for i in 1 2 3; do sleep 0.4; echo tick $i; done) & echo started", keys: upgrade, ran: []string{brew},
-			shows: []string{"started", "tick 3", "✓ done"}, open: true},
+			shows: []string{"started", "tick 3", "✓ done"}, open: true, logged: []string{`change brew upgrade anvil:  "started\ntick 1\ntick 2\ntick 3\n"`}},
 		{id: "output streams into a popup", script: "echo fetched anvil; echo poured", keys: upgrade, ran: []string{brew},
-			shows: []string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, open: true},
+			shows: []string{"⬆ Upgrade anvil", "runs  brew upgrade anvil", "fetched anvil", "poured", "✓ done", "enter close"}, open: true,
+			logged: []string{`change brew upgrade anvil:  "fetched anvil\npoured\n"`}},
 		{id: "a failure says so and offers the terminal", script: "echo no space left; exit 3", keys: upgrade, ran: []string{brew},
-			shows: []string{"no space left", "✗ exit status 3", "t run it in the terminal"}, open: true},
-		{id: "t runs a failed install in the terminal", script: "exit 3", keys: append(upgrade, "t"), ran: []string{brew, brew}, hides: "✗ exit status 3"},
-		{id: "enter closes it once done", script: "echo fetched", keys: append(upgrade, "enter"), ran: []string{brew}, hides: "fetched"},
-		{id: "t does nothing after a success", script: "echo fetched", keys: append(upgrade, "t"), ran: []string{brew}, shows: []string{"✓ done"}, open: true},
-		{id: "a progress line keeps its last state", script: `printf 'step 1\rstep 2\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"step 2"}, hides: "step 1", open: true},
-		{id: "colors are dropped", script: `printf '\033[32mgreen\033[0m\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"green"}, hides: "[32m", open: true},
-		{id: "tabs become spaces", script: `printf '\tgo: missing module\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"┃         go: missing module"}, hides: "\t", open: true},
-		{id: "other control characters are dropped", script: `printf 'ding\a dong\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"ding dong"}, hides: "\a", open: true},
+			shows: []string{"no space left", "✗ exit status 3", "t run it in the terminal"}, open: true, logged: []string{`change brew upgrade anvil: exit status 3 "no space left\n"`}},
+		{id: "t runs a failed install in the terminal", script: "exit 3", keys: append(upgrade, "t"), ran: []string{brew, brew}, hides: "✗ exit status 3",
+			logged: []string{`change brew upgrade anvil: exit status 3 ""`}},
+		{id: "t runs the very command again, where it ran", script: "exit 3", cmd: pkgtool, keys: []string{"t"}, ran: []string{"pkgtool upgrade anvil", "pkgtool upgrade anvil"},
+			logged: []string{`change pkgtool upgrade anvil: exit status 3 ""`}},
+		{id: "enter closes it once done", script: "echo fetched", keys: append(upgrade, "enter"), ran: []string{brew}, hides: "fetched",
+			logged: []string{`change brew upgrade anvil:  "fetched\n"`}},
+		{id: "t does nothing after a success", script: "echo fetched", keys: append(upgrade, "t"), ran: []string{brew}, shows: []string{"✓ done"}, open: true,
+			logged: []string{`change brew upgrade anvil:  "fetched\n"`}},
+		{id: "a progress line keeps its last state", script: `printf 'step 1\rstep 2\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"step 2"}, hides: "step 1", open: true,
+			logged: []string{`change brew upgrade anvil:  "step 1\rstep 2\n"`}},
+		{id: "colors are dropped", script: `printf '\033[32mgreen\033[0m\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"green"}, hides: "[32m", open: true,
+			logged: []string{`change brew upgrade anvil:  "\x1b[32mgreen\x1b[0m\n"`}},
+		{id: "tabs become spaces", script: `printf '\tgo: missing module\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"┃         go: missing module"}, hides: "\t", open: true,
+			logged: []string{`change brew upgrade anvil:  "\tgo: missing module\n"`}},
+		{id: "other control characters are dropped", script: `printf 'ding\a dong\n'`, keys: upgrade, ran: []string{brew}, shows: []string{"ding dong"}, hides: "\a", open: true,
+			logged: []string{`change brew upgrade anvil:  "ding\a dong\n"`}},
 		{id: "the command can't reach the terminal", script: `(exec 3</dev/tty) 2>/dev/null && echo has-tty || echo no-tty`, keys: upgrade, ran: []string{brew},
-			shows: []string{"no-tty"}, hides: "has-tty", open: true},
+			shows: []string{"no-tty"}, hides: "has-tty", open: true, logged: []string{`change brew upgrade anvil:  "no-tty\n"`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := loaded(t)
-			installScript = tt.script
+			pids, missing := filepath.Join(t.TempDir(), "pids"), filepath.Join(t.TempDir(), "missing")
+			t.Cleanup(func() { reap(pids) })
+			installScript = strings.ReplaceAll(tt.script, "{pids}", pids)
 			if tt.missing {
 				installProcess = func(c *exec.Cmd) *exec.Cmd {
 					ran = append(ran, strings.Join(c.Args, " "))
-					return exec.Command(filepath.Join(t.TempDir(), "missing"))
+					return exec.Command(missing)
 				}
+			}
+			if tt.cmd != nil {
+				m = update(t, m, startInstall("⬆ Upgrade anvil", tt.cmd, m.log, installedMsg{"brew", "anvil", "v0.2.94", nil})())
 			}
 			m = press(t, m, tt.keys...)
 			s := screen(m)
-			if !reflect.DeepEqual(ran, tt.ran) {
-				t.Errorf("ran %v, want %v", ran, tt.ran)
+			var logged []string
+			for _, e := range m.log.Entries() {
+				logged = append(logged, fmt.Sprintf("%s %s: %s %q", e.Kind, strings.Join(e.Command, " "), e.Err, e.Output))
 			}
-			if (m.inst != nil) != tt.open {
-				t.Errorf("popup open is %v, want %v", m.inst != nil, tt.open)
+			want := slices.Clone(tt.logged)
+			for i := range want {
+				want[i] = strings.ReplaceAll(want[i], "{missing}", missing)
+			}
+			if !slices.Equal(ran, tt.ran) || (m.inst != nil) != tt.open || !slices.Equal(logged, want) {
+				t.Errorf("ran %q, popup open %v, logged %q\nwant %q, %v, %q", ran, m.inst != nil, logged, tt.ran, tt.open, want)
+			}
+			if r := reran; tt.cmd != nil && (r == nil || r.Path != tt.cmd.Path || !slices.Equal(r.Args, tt.cmd.Args) || !slices.Equal(r.Env, tt.cmd.Env) || r.Dir != tt.cmd.Dir) {
+				t.Errorf("t ran %+v, want %+v", r, tt.cmd)
 			}
 			for _, want := range tt.shows {
 				if !strings.Contains(s, want) {
@@ -1212,23 +1245,17 @@ func TestInstall(t *testing.T) {
 			}
 		})
 	}
+}
 
-	m := loaded(t)
-	installScript = "echo fetched; exit 3"
-	m = press(t, m, upgrade...)
-	if es := m.log.Entries(); len(es) != 1 || es[0].Kind != history.Change || strings.Join(es[0].Command, " ") != brew || es[0].Err != "exit status 3" || !strings.Contains(es[0].Output, "fetched") {
-		t.Errorf("logged %+v", es)
-	}
-
-	// t runs the very command the install ran, where it ran it.
-	cmd := exec.Command("pkgtool", "upgrade", "anvil")
-	cmd.Env, cmd.Dir = []string{"PKGTOOL_NO_AUTO_UPDATE=1"}, t.TempDir()
-	m = loaded(t)
-	installScript = "exit 3"
-	m = update(t, m, startInstall("⬆ Upgrade anvil", cmd, history.Open(""), installedMsg{"brew", "anvil", "v0.2.94", nil})())
-	m = press(t, m, "t")
-	if r := reran; r == nil || r.Path != cmd.Path || !slices.Equal(r.Args, cmd.Args) || !slices.Equal(r.Env, cmd.Env) || r.Dir != cmd.Dir {
-		t.Errorf("t ran %+v, want %+v", r, cmd)
+// reap kills the children a test's script left behind on purpose, and their
+// process groups, from the pids it wrote to path.
+func reap(path string) {
+	data, _ := os.ReadFile(path)
+	for _, f := range strings.Fields(string(data)) {
+		if pid, err := strconv.Atoi(f); err == nil {
+			syscall.Kill(-pid, syscall.SIGKILL)
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
 	}
 }
 
@@ -1250,12 +1277,15 @@ func TestStopInstall(t *testing.T) {
 	}{
 		{"ctrl+c interrupts the install", "echo started; sleep 5; echo finished", 1, "signal: interrupt"},
 		{"a second ctrl+c kills one that ignores the first", "trap '' INT; echo started; sleep 5; echo finished", 2, "signal: killed"},
-		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; set -m; (sleep 4; echo finished) & echo started; sleep 5", 2, "signal: killed"},
+		{"and ends it even when a child it left behind keeps the output open", "trap '' INT; set -m; (sleep 4; echo finished) & echo $! > {pids}; set +m; echo started; sleep 5",
+			2, "signal: killed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			m := loaded(t)
-			installScript = tt.script
+			pids := filepath.Join(t.TempDir(), "pids")
+			t.Cleanup(func() { reap(pids) })
+			installScript = strings.ReplaceAll(tt.script, "{pids}", pids)
 			m = press(t, m, "l", "v", "enter")
 			tm, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 			tm, _ = tm.Update(cmd())
@@ -1809,6 +1839,7 @@ func TestDependencyPopup(t *testing.T) {
 	}{
 		{id: "a listing that adds rows ahead leaves the popup on its package", keys: pick("tidyup", "j", "enter"),
 			after: []tea.Msg{listedMsg{"brew", []provider.Package{{Source: "brew", Name: "tidyup", Version: "3.0.0"}}, nil}}, text: netAdvisory},
+		{id: "so does one that drops the package", keys: pick("tidyup", "j", "enter"), after: []tea.Msg{listedMsg{"go", nil, nil}}, text: netAdvisory},
 		{id: "a uv tool's dependency, never sent to osv.dev, isn't called clean", keys: pick("quill", "enter"),
 			text: []string{"◆ inkpot 3.1.0", "", " kho doesn't check uv dependencies on osv.dev, so inkpot isn't checked."}},
 		{id: "a dependency osv.dev hasn't answered for is still being checked", scan: "pending", keys: pick("tidyup", "j", "enter"),
