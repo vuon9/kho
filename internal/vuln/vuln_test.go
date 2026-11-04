@@ -3,8 +3,10 @@ package vuln
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -258,11 +260,11 @@ func TestOldCacheIsDropped(t *testing.T) {
 }
 
 // A cache from an older build that still loads reads as clean wherever a
-// field moved, so any change to what DB stores must bump format. This fills
-// every field, marshals the DB and compares its JSON paths with stored.
+// field moved or changed kind, so the shape must never change under an old
+// format.
 func TestStoredShapeMatchesFormat(t *testing.T) {
 	db := NewDB()
-	fill(reflect.ValueOf(db).Elem())
+	fill(t, reflect.ValueOf(db).Elem())
 	data, err := json.Marshal(db)
 	if err != nil {
 		t.Fatal(err)
@@ -275,41 +277,56 @@ func TestStoredShapeMatchesFormat(t *testing.T) {
 	jsonPaths(v, "", &got)
 	slices.Sort(got)
 	if !slices.Equal(got, stored) {
-		t.Errorf("the cache now stores\n\t%s\nbut format %d is for\n\t%s\nbump format in cache.go and set stored to the new paths",
-			strings.Join(got, "\n\t"), format, strings.Join(stored, "\n\t"))
+		t.Errorf("the cache now stores\n\t%s\nbut stored in cache.go says\n\t%s\nbump format, set stored to the new paths and add the new format to formats",
+			strings.Join(got, "\n\t"), strings.Join(stored, "\n\t"))
+	}
+	if sum := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(stored, "\n")))); formats[format] != sum {
+		t.Errorf("formats[%d] is %q but stored's checksum is %q: when stored changes, bump format and add the new one to formats with this checksum, leaving the old lines as they are",
+			format, formats[format], sum)
 	}
 }
 
 // fill gives every field a value, so omitempty hides none of them, and every
-// map one entry under "*".
-func fill(v reflect.Value) {
-	switch v.Kind() {
-	case reflect.Struct:
-		if v.Type() == reflect.TypeFor[time.Time]() {
-			v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
-			return
-		}
+// map one entry under "*". A kind it does not know fails the test, so a new
+// field cannot slip past it.
+func fill(t *testing.T, v reflect.Value) {
+	switch {
+	case v.Type() == reflect.TypeFor[time.Time]():
+		v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
+	case v.Kind() == reflect.Struct:
 		for i := range v.NumField() {
-			fill(v.Field(i))
+			fill(t, v.Field(i))
 		}
-	case reflect.Map:
+	case v.Kind() == reflect.Pointer:
+		e := reflect.New(v.Type().Elem())
+		fill(t, e.Elem())
+		v.Set(e)
+	case v.Kind() == reflect.Map:
 		e := reflect.New(v.Type().Elem()).Elem()
-		fill(e)
+		fill(t, e)
 		v.Set(reflect.MakeMap(v.Type()))
 		v.SetMapIndex(reflect.ValueOf("*"), e)
-	case reflect.Slice:
+	case v.Kind() == reflect.Slice:
 		e := reflect.New(v.Type().Elem()).Elem()
-		fill(e)
+		fill(t, e)
 		v.Set(reflect.Append(reflect.MakeSlice(v.Type(), 0, 1), e))
-	case reflect.String:
+	case v.Kind() == reflect.String:
 		v.SetString("x")
-	case reflect.Int:
-		v.SetInt(1)
-	case reflect.Bool:
+	case v.Kind() == reflect.Bool:
 		v.SetBool(true)
+	case v.CanInt():
+		v.SetInt(1)
+	case v.CanUint():
+		v.SetUint(1)
+	case v.CanFloat():
+		v.SetFloat(1.5)
+	default:
+		t.Fatalf("fill does not know how to fill a %s", v.Type())
 	}
 }
 
+// jsonPaths lists every leaf with the Go type JSON decodes it to, so a field
+// that changes kind changes its path.
 func jsonPaths(v any, path string, out *[]string) {
 	switch v := v.(type) {
 	case map[string]any:
@@ -321,7 +338,7 @@ func jsonPaths(v any, path string, out *[]string) {
 			jsonPaths(e, path+"[]", out)
 		}
 	default:
-		*out = append(*out, path)
+		*out = append(*out, fmt.Sprintf("%s %T", path, v))
 	}
 }
 

@@ -27,33 +27,40 @@ type DB struct {
 const MaxAge = 12 * time.Hour
 
 // format changes whenever what kho stores changes, so a cache from an older
-// build is dropped instead of misread. stored is that shape as JSON paths;
-// TestStoredShapeMatchesFormat fails when the DB no longer marshals to it.
+// build is dropped instead of misread.
 const format = 3
 
+// stored is the shape format holds: each JSON path with the type its value
+// decodes to. formats keeps a checksum of stored for every format, so stored
+// cannot change without a new one: add a line for each new format and never
+// edit an old one. TestStoredShapeMatchesFormat checks both.
 var stored = []string{
-	"advisories.*.aliases[]",
-	"advisories.*.details",
-	"advisories.*.id",
-	"advisories.*.package",
-	"advisories.*.published",
-	"advisories.*.ranges[].fixed",
-	"advisories.*.ranges[].introduced",
-	"advisories.*.ranges[].last_affected",
-	"advisories.*.severity",
-	"advisories.*.summary",
-	"advisories.*.versions[]",
-	"auditedAt.*",
-	"audits.*.analyzed",
-	"audits.*.gen",
-	"audits.*.snyk",
-	"audits.*.socket",
-	"audits.*.socketAlerts",
-	"checked.*",
-	"format",
-	"history.*[]",
-	"historyAt.*",
-	"hits.*[]",
+	"advisories.*.aliases[] string",
+	"advisories.*.details string",
+	"advisories.*.id string",
+	"advisories.*.package string",
+	"advisories.*.published string",
+	"advisories.*.ranges[].fixed string",
+	"advisories.*.ranges[].introduced string",
+	"advisories.*.ranges[].last_affected string",
+	"advisories.*.severity string",
+	"advisories.*.summary string",
+	"advisories.*.versions[] string",
+	"auditedAt.* string",
+	"audits.*.analyzed string",
+	"audits.*.gen string",
+	"audits.*.snyk string",
+	"audits.*.socket string",
+	"audits.*.socketAlerts float64",
+	"checked.* string",
+	"format float64",
+	"history.*[] string",
+	"historyAt.* string",
+	"hits.*[] string",
+}
+
+var formats = map[int]string{
+	3: "21601456804166155faf4d9de5de86a90d6f46b0ca8f263fe6a214cf176ee11c",
 }
 
 func NewDB() *DB {
