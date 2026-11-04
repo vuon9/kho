@@ -439,16 +439,23 @@ func (m *model) openDep(i int) {
 	}
 }
 
+// depAdvisories is what the security cache holds for one of p's
+// dependencies: its advisories, and whether osv.dev was asked about it.
+func (m model) depAdvisories(p provider.Package, d provider.Dep) ([]vuln.Advisory, bool) {
+	q, ok := provider.DepQuery(p, d)
+	if !ok {
+		return nil, false
+	}
+	_, checked := m.db.Checked[q.Key()]
+	return m.db.For(q), checked
+}
+
 func (m model) depPopTitle() string {
 	p, _ := m.current()
-	d, n := m.depPop.dep, 0
-	for _, da := range m.depVulns[pkgKey(p)] {
-		if da.dep.Name == d.Name {
-			n++
-		}
-	}
+	d := m.depPop.dep
+	advs, _ := m.depAdvisories(p, d)
 	title := "◆ " + d.Name + " " + d.Version
-	switch {
+	switch n := len(advs); {
 	case n == 1:
 		title += " · 1 advisory"
 	case n > 1:
@@ -457,29 +464,40 @@ func (m model) depPopTitle() string {
 	return title
 }
 
-// depPopView is the dependency popup's text, wrapped to fit it.
+// depPopView is the dependency popup's text, wrapped to fit it. It calls a
+// dependency clean only once osv.dev has answered for that very version.
 func (m model) depPopView() []line {
 	_, _, w, _ := m.depRect()
 	inner := w - 2
 	p, _ := m.current()
 	d := m.depPop.dep
+	advs, checked := m.depAdvisories(p, d)
+	_, asked := provider.DepQuery(p, d)
 	var lines []line
-	for _, da := range m.depVulns[pkgKey(p)] {
-		if da.dep.Name != d.Name {
-			continue
-		}
+	for _, a := range advs {
 		if len(lines) > 0 {
 			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", inner-2))), line{})
 		}
-		lines = append(lines, row(" "+accent().Render(da.adv.ID)))
-		lines = append(lines, m.advisoryDetail(da.adv, "", d.Version, "", inner)...)
+		lines = append(lines, row(" "+accent().Render(a.ID)))
+		lines = append(lines, m.advisoryDetail(a, "", d.Version, "", inner)...)
 	}
+	again := faint().Render(" R checks again.")
 	switch {
 	case len(lines) > 0:
 	case provider.Ecosystem(p) == "":
 		lines = plain("", faint().Render(" OSV has no data for "+p.Source+", so kho can't check "+d.Name+"."))
-	default:
+	case checked:
 		lines = plain("", green().Render(" ✓ No known advisories for "+d.Name+" "+d.Version))
+	case !provider.Released(d.Version):
+		lines = plain("", faint().Render(" "+d.Name+" has no release version to check on osv.dev."))
+	case !asked:
+		lines = plain("", faint().Render(" kho doesn't check "+p.Source+" dependencies on osv.dev, so "+d.Name+" isn't checked."))
+	case m.scanning > 0:
+		lines = plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+	case m.secErr != nil:
+		lines = plain("", red().Render(" security check failed: "+m.secErr.Error()), again)
+	default:
+		lines = plain("", faint().Render(" "+d.Name+" isn't checked yet."), again)
 	}
 	return wrapLines(lines, inner)
 }
@@ -494,10 +512,6 @@ func (m model) depLines(p provider.Package, inner int) []line {
 	case len(d.val) == 0:
 		return plain(faint().Render(" no dependencies"))
 	}
-	flagged := map[string][]string{}
-	for _, da := range m.depVulns[pkgKey(p)] {
-		flagged[da.dep.Name] = append(flagged[da.dep.Name], da.adv.ID)
-	}
 	nameW := max(inner-24, 12)
 	var lines []line
 	for _, dep := range d.val {
@@ -506,8 +520,8 @@ func (m model) depLines(p provider.Package, inner int) []line {
 			mark = accent().Render("•")
 		}
 		text := fmt.Sprintf(" %s %s %s", mark, pad(dep.Name, nameW), faint().Render(dep.Version))
-		if ids := flagged[dep.Name]; len(ids) > 0 {
-			text = fmt.Sprintf(" %s %s %s %s", red().Render("⚠"), pad(dep.Name, nameW), dep.Version, red().Render(fmt.Sprintf("%d vuln", len(ids))))
+		if advs, _ := m.depAdvisories(p, dep); len(advs) > 0 {
+			text = fmt.Sprintf(" %s %s %s %s", red().Render("⚠"), pad(dep.Name, nameW), dep.Version, red().Render(fmt.Sprintf("%d vuln", len(advs))))
 		}
 		lines = append(lines, row(text))
 	}

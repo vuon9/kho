@@ -1124,6 +1124,26 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
+// TestFooter reads the key hints under the panels, which change with what
+// has focus and what is open.
+func TestFooter(t *testing.T) {
+	tests := []struct {
+		id   string
+		keys []string
+		want string
+	}{
+		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ dependency  enter its advisories  [ ] tabs  w home  ? help"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			lines := strings.Split(screen(press(t, withDeps(t, ""), tt.keys...)), "\n")
+			if got := strings.TrimSpace(lines[len(lines)-1]); got != tt.want {
+				t.Errorf("footer %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChrome(t *testing.T) {
 	for _, size := range [][2]int{{100, 30}, {160, 40}, {220, 50}} {
 		m := update(t, loaded(t), tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -1144,63 +1164,149 @@ func TestChrome(t *testing.T) {
 	}
 }
 
-// withDeps adds a go binary whose second dependency has an advisory.
-func withDeps(t *testing.T) model {
+// withDeps adds a go binary with a clean dependency, one with an advisory, one
+// with two and one with no release version, and a uv tool whose dependencies
+// kho never asks osv.dev about. scan is how osv.dev answers for them:
+// "" answers, "failed" fails, and "pending" hasn't come back yet.
+func withDeps(t *testing.T, scan string) model {
 	m := loaded(t)
 	loop := vuln.Advisory{ID: "GO-TEST-0001", Summary: "Header parsing can loop forever", Severity: "HIGH", Package: "example.org/net",
 		Details: "A crafted header makes the parser loop.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "0.52.0"}}}
+	leak := vuln.Advisory{ID: "GO-TEST-0002", Summary: "Keys leak through timing", Severity: "LOW", Package: "example.org/crypto",
+		Details: "Comparing keys takes longer when more of them match.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "0.21.0"}}}
+	spill := vuln.Advisory{ID: "GO-TEST-0003", Summary: "A short read panics", Severity: "MODERATE", Package: "example.org/crypto",
+		Details: "A truncated block makes the reader panic.", Ranges: []vuln.Range{{Introduced: "0"}}}
 	scanOSV = func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+		if scan == "failed" {
+			return nil, nil, errors.New("osv.dev answered 503")
+		}
 		hits := map[string][]string{}
 		for _, q := range qs {
 			hits[q.Key()] = nil
-			if q.Name == loop.Package {
+			switch q.Name {
+			case loop.Package:
 				hits[q.Key()] = []string{loop.ID}
+			case leak.Package:
+				hits[q.Key()] = []string{leak.ID, spill.ID}
 			}
 		}
-		return hits, map[string]vuln.Advisory{loop.ID: loop}, nil
+		return hits, map[string]vuln.Advisory{loop.ID: loop, leak.ID: leak, spill.ID: spill}, nil
 	}
 	tidy := fake{name: "go", pkgs: []provider.Package{{Source: "go", Name: "tidyup", Version: "v1.2.0", Latest: "v1.2.0", Origin: "example.com/tidyup",
-		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.50.0"}}}}}
-	m.providers = append(m.providers, tidy)
-	m = update(t, m, listedMsg{"go", tidy.pkgs, nil})
-	m = update(t, m, checkedMsg{"go", tidy.pkgs, nil})
-	return press(t, m, "/", "t", "i", "d", "y", "enter", "l")
+		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.50.0"},
+			{Name: "example.org/crypto", Version: "v0.20.0"}, {Name: "example.org/local", Version: "(devel)"}}}}}
+	quill := fake{name: "uv", pkgs: []provider.Package{{Source: "uv", Name: "quill", Version: "2.4.0", Latest: "2.4.0",
+		Deps: []provider.Dep{{Name: "inkpot", Version: "3.1.0"}}}}}
+	for _, f := range []fake{tidy, quill} {
+		m.providers = append(m.providers, f)
+		if scan == "pending" {
+			tm, _ := m.Update(listedMsg{f.name, f.pkgs, nil})
+			m = tm.(model)
+			continue
+		}
+		m = update(t, m, listedMsg{f.name, f.pkgs, nil})
+		m = update(t, m, checkedMsg{f.name, f.pkgs, nil})
+	}
+	return m
+}
+
+// pick filters the packages down to name, moves to the sidebar, then presses
+// keys.
+func pick(name string, keys ...string) []string {
+	ks := []string{"/"}
+	for _, r := range name {
+		ks = append(ks, string(r))
+	}
+	return append(append(ks, "enter", "l"), keys...)
+}
+
+// popupText is the dependency popup's title, then its lines as drawn.
+func popupText(m model) []string {
+	if m.depPop == nil {
+		return nil
+	}
+	out := []string{ansi.Strip(m.depPopTitle())}
+	for _, l := range m.depPopView() {
+		out = append(out, strings.TrimRight(ansi.Strip(l.text), " "))
+	}
+	return out
 }
 
 func TestDependencyPopup(t *testing.T) {
+	sep := " " + strings.Repeat("─", 96)
+	netAdvisory := []string{"◆ example.org/net v0.50.0 · 1 advisory",
+		" GO-TEST-0001",
+		"  HIGH  Header parsing can loop forever",
+		"",
+		" affects   v0.50.0",
+		" fixed in  0.52.0",
+		" details   https://osv.dev/vulnerability/GO-TEST-0001",
+		"",
+		"  A crafted header makes the parser loop.",
+	}
 	tests := []struct {
-		id     string
-		keys   []string
-		open   bool
-		shows  []string
-		copied string
+		id, scan string
+		msgs     []tea.Msg
+		keys     []string
+		text     []string
+		copied   []string
 	}{
-		{"enter opens the selected dependency's advisories", []string{"j", "enter"}, true,
-			[]string{"◆ example.org/net v0.50.0", "GO-TEST-0001", "Header parsing can loop forever", "0.52.0", "A crafted header", "c copy all"}, ""},
-		{"a clean dependency says so", []string{"enter"}, true, []string{"No known advisories for example.org/text v0.30.0"}, ""},
-		{"esc closes it", []string{"j", "enter", "esc"}, false, nil, ""},
-		{"c copies all of it", []string{"j", "enter", "c"}, true, nil, "GO-TEST-0001"},
-		{"the Info footer says how to open one", nil, false, []string{"↑↓ dependency", "enter its advisories"}, ""},
+		{id: "a uv tool's dependency, never sent to osv.dev, isn't called clean", keys: pick("quill", "enter"),
+			text: []string{"◆ inkpot 3.1.0", "", " kho doesn't check uv dependencies on osv.dev, so inkpot isn't checked."}},
+		{id: "a dependency osv.dev hasn't answered for is still being checked", scan: "pending", keys: pick("tidyup", "j", "enter"),
+			text: []string{"◆ example.org/net v0.50.0", "", " ⣾ checking osv.dev…"}},
+		{id: "a lookup that failed says so", scan: "failed", keys: pick("tidyup", "j", "enter"),
+			text: []string{"◆ example.org/net v0.50.0", "", " security check failed: osv.dev answered 503", " R checks again."}},
+		{id: "a dependency with no release version can't be checked", keys: pick("tidyup", "j", "j", "j", "enter"),
+			text: []string{"◆ example.org/local (devel)", "", " example.org/local has no release version to check on osv.dev."}},
+		{id: "the advisories are the shown version's, not another version's", keys: pick("tidyup", "j", "enter"),
+			msgs: []tea.Msg{depsMsg{"go\x00tidyup", []provider.Dep{{Name: "example.org/text", Version: "v0.30.0"}, {Name: "example.org/net", Version: "v0.53.0"}}, nil}},
+			text: []string{"◆ example.org/net v0.53.0", "", " example.org/net isn't checked yet.", " R checks again."}},
+		{id: "OSV has no data for a brew dependency", keys: pick("anvil", "enter"),
+			text: []string{"◆ openssl@4 4.1.0", "", " OSV has no data for brew, so kho can't check openssl@4."}},
+		{id: "a checked dependency with no advisories says so", keys: pick("tidyup", "enter"),
+			text: []string{"◆ example.org/text v0.30.0", "", " ✓ No known advisories for example.org/text v0.30.0"}},
+		{id: "enter opens a dependency's advisory", keys: pick("tidyup", "j", "enter"), text: netAdvisory},
+		{id: "two advisories have a line between them", keys: pick("tidyup", "j", "j", "enter"),
+			text: []string{"◆ example.org/crypto v0.20.0 · 2 advisories",
+				" GO-TEST-0003",
+				"  MED   A short read panics",
+				"",
+				" affects   v0.20.0",
+				" fixed in  no fix published yet",
+				" details   https://osv.dev/vulnerability/GO-TEST-0003",
+				"",
+				"  A truncated block makes the reader panic.",
+				"",
+				sep,
+				"",
+				" GO-TEST-0002",
+				"  LOW   Keys leak through timing",
+				"",
+				" affects   v0.20.0",
+				" fixed in  0.21.0",
+				" details   https://osv.dev/vulnerability/GO-TEST-0002",
+				"",
+				"  Comparing keys takes longer when more of them match.",
+			}},
+		{id: "esc closes it", keys: pick("tidyup", "j", "enter", "esc")},
+		{id: "c copies all of it", keys: pick("tidyup", "j", "enter", "c"), text: netAdvisory,
+			copied: []string{strings.TrimSpace(strings.Join(netAdvisory[1:], "\n"))}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			m := press(t, withDeps(t), tt.keys...)
-			s := screen(m)
-			if (m.depPop != nil) != tt.open {
-				t.Errorf("popup open is %v, want %v:\n%s", m.depPop != nil, tt.open, s)
+			m := withDeps(t, tt.scan)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
 			}
-			for _, want := range tt.shows {
-				if !strings.Contains(s, want) {
-					t.Errorf("screen lacks %q:\n%s", want, s)
-				}
-			}
-			if tt.copied != "" && (len(copied) != 1 || !strings.Contains(copied[0], tt.copied)) {
-				t.Errorf("copied %q, want it to hold %q", copied, tt.copied)
+			m = press(t, m, tt.keys...)
+			if got := popupText(m); !slices.Equal(got, tt.text) || !slices.Equal(copied, tt.copied) {
+				t.Errorf("popup\n%s\ncopied %q\nwant\n%s\ncopied %q", strings.Join(got, "\n"), copied, strings.Join(tt.text, "\n"), tt.copied)
 			}
 		})
 	}
 
-	m := press(t, withDeps(t), "j", "enter")
+	m := press(t, withDeps(t, ""), pick("tidyup", "j", "enter")...)
 	x, y, _, _ := m.depRect()
 	first := strings.TrimRight(ansi.Cut(ansi.Strip(m.depPopView()[0].text), 0, 12), " ")
 	m = update(t, m, tea.MouseClickMsg{X: x + 1, Y: y + 2, Button: tea.MouseLeft})

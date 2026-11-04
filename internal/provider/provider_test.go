@@ -394,6 +394,31 @@ func TestQueries(t *testing.T) {
 	}
 }
 
+func TestDepQuery(t *testing.T) {
+	tests := []struct {
+		id     string
+		source string
+		dep    Dep
+		want   vuln.Query
+		ok     bool
+	}{
+		{"a pipx dependency is never asked about", "pipx", Dep{Name: "inkpot", Version: "3.1.0"}, vuln.Query{}, false},
+		{"nor a uv one", "uv", Dep{Name: "inkpot", Version: "3.1.0"}, vuln.Query{}, false},
+		{"a module built from a local checkout has no version to ask about", "go", Dep{Name: "example.com/local", Version: "(devel)"}, vuln.Query{}, false},
+		{"nor one with no version", "go", Dep{Name: "example.com/local"}, vuln.Query{}, false},
+		{"brew has no OSV ecosystem", "brew", Dep{Name: "openssl@4", Version: "4.1.0"}, vuln.Query{}, false},
+		{"a go module", "go", Dep{Name: "example.org/net", Version: "v0.50.0"}, vuln.Query{Ecosystem: "Go", Name: "example.org/net", Version: "v0.50.0"}, true},
+		{"an npm dependency", "npm", Dep{Name: "left-trim", Version: "1.0.2"}, vuln.Query{Ecosystem: "npm", Name: "left-trim", Version: "1.0.2"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got, ok := DepQuery(Package{Source: tt.source, Name: "tool", Version: "1.0.0"}, tt.dep); got != tt.want || ok != tt.ok {
+				t.Errorf("got %+v %v, want %+v %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestEscapeModule(t *testing.T) {
 	if got := escapeModule("github.com/BurntSushi/toml"); got != "github.com/!burnt!sushi/toml" {
 		t.Errorf("got %s", got)

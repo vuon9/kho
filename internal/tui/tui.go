@@ -499,8 +499,8 @@ func (m *model) reindex() {
 				}
 			}
 			for _, d := range p.Deps {
-				q := vuln.Query{Ecosystem: provider.Ecosystem(p), Name: d.Name, Version: d.Version}
-				for _, a := range m.db.For(q) {
+				advs, _ := m.depAdvisories(p, d)
+				for _, a := range advs {
 					m.depVulns[pkgKey(p)] = append(m.depVulns[pkgKey(p)], depAdvisory{d, a})
 				}
 			}
