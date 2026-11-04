@@ -473,25 +473,48 @@ func TestDefaultRail(t *testing.T) {
 }
 
 func TestResize(t *testing.T) {
-	m := update(t, loaded(t), tea.WindowSizeMsg{Width: 80, Height: 20})
-	if s := screen(m); !strings.Contains(s, "kho needs at least 100x16, this terminal is 80x20.") {
-		t.Errorf("small screen:\n%s", s)
+	tests := []struct {
+		id   string
+		deps bool
+		keys []string
+		// split are what a split-pane width must still show.
+		split []string
+	}{
+		{id: "a dependency popup with two advisories", deps: true, keys: pick("tidyup", "j", "j", "enter")},
+		{id: "the packages", split: []string{"LATEST", "STATUS", "↑ outdated"}},
 	}
-	m = update(t, m, tea.WindowSizeMsg{Width: 110, Height: 30})
-	if s := screen(m); !strings.Contains(s, "LATEST") || !strings.Contains(s, "STATUS") || !strings.Contains(s, "↑ outdated") {
-		t.Errorf("a split-pane width should keep every status visible:\n%s", s)
-	}
-	for _, size := range [][2]int{{100, 16}, {110, 30}, {220, 50}} {
-		m = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-		lines := strings.Split(screen(m), "\n")
-		if len(lines) != size[1] {
-			t.Errorf("got %d lines at %v, want %d", len(lines), size, size[1])
-		}
-		for i, line := range lines {
-			if w := ansi.StringWidth(line); w != size[0] && i > 0 && i < size[1]-1 {
-				t.Errorf("line %d is %d wide at %v", i, w, size)
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			if tt.deps {
+				m = withDeps(t, "")
 			}
-		}
+			m = press(t, m, tt.keys...)
+			for _, size := range [][2]int{{1, 1}, {10, 10}, {80, 20}, {100, 16}, {110, 30}, {220, 50}} {
+				m = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+				s := screen(m)
+				if size[0] < minWidth {
+					if want := fmt.Sprintf("kho needs at least 100x16, this terminal is %dx%d.", size[0], size[1]); !strings.Contains(s, want) {
+						t.Errorf("small screen:\n%s", s)
+					}
+					continue
+				}
+				lines := strings.Split(s, "\n")
+				if len(lines) != size[1] {
+					t.Errorf("got %d lines at %v, want %d", len(lines), size, size[1])
+				}
+				for i, line := range lines {
+					if w := ansi.StringWidth(line); w != size[0] && i > 0 && i < size[1]-1 {
+						t.Errorf("line %d is %d wide at %v", i, w, size)
+					}
+				}
+				for _, want := range tt.split {
+					if size == [2]int{110, 30} && !strings.Contains(s, want) {
+						t.Errorf("a split-pane width should still show %q:\n%s", want, s)
+					}
+				}
+			}
+		})
 	}
 }
 

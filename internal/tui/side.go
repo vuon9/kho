@@ -477,7 +477,7 @@ func (m model) depPopView() []line {
 	var lines []line
 	for _, a := range advs {
 		if len(lines) > 0 {
-			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", inner-2))), line{})
+			lines = append(lines, line{}, row(faint().Render(" "+strings.Repeat("─", max(inner-2, 0)))), line{})
 		}
 		lines = append(lines, row(" "+accent().Render(a.ID)))
 		lines = append(lines, m.advisoryDetail(a, "", d.Version, "", inner)...)
