@@ -5,9 +5,13 @@
 
 **One place for every package manager on your machine, with security checks.**
 
-https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
+![kho listing packages from several managers, with a vulnerable npm package selected and its advisory open](docs/screenshot.png)
 
 *Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, pipx, uv, `go install`, mise and the skills CLI have put on your machine, tells you which of those packages have known vulnerabilities, and upgrades them only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
+
+See it run:
+
+https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
