@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -201,6 +203,74 @@ func TestOldCacheIsDropped(t *testing.T) {
 	os.WriteFile(path, []byte(`{"checked":{"PyPI/bramble@1.0":"2026-11-03T12:00:00Z"},"hits":{"PyPI/bramble@1.0":["X"]}}`), 0o644)
 	if db := Load(path); len(db.Checked) != 0 || len(db.Hits) != 0 {
 		t.Errorf("a cache without the current format was kept: %+v", db)
+	}
+}
+
+// A cache from an older build that still loads reads as clean wherever a
+// field moved, so any change to what DB stores must bump format. This fills
+// every field, marshals the DB and compares its JSON paths with stored.
+func TestStoredShapeMatchesFormat(t *testing.T) {
+	db := NewDB()
+	fill(reflect.ValueOf(db).Elem())
+	data, err := json.Marshal(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	jsonPaths(v, "", &got)
+	slices.Sort(got)
+	if !slices.Equal(got, stored) {
+		t.Errorf("the cache now stores\n\t%s\nbut format %d is for\n\t%s\nbump format in cache.go and set stored to the new paths",
+			strings.Join(got, "\n\t"), format, strings.Join(stored, "\n\t"))
+	}
+}
+
+// fill gives every field a value, so omitempty hides none of them, and every
+// map one entry under "*".
+func fill(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Struct:
+		if v.Type() == reflect.TypeFor[time.Time]() {
+			v.Set(reflect.ValueOf(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)))
+			return
+		}
+		for i := range v.NumField() {
+			fill(v.Field(i))
+		}
+	case reflect.Map:
+		e := reflect.New(v.Type().Elem()).Elem()
+		fill(e)
+		v.Set(reflect.MakeMap(v.Type()))
+		v.SetMapIndex(reflect.ValueOf("*"), e)
+	case reflect.Slice:
+		e := reflect.New(v.Type().Elem()).Elem()
+		fill(e)
+		v.Set(reflect.Append(reflect.MakeSlice(v.Type(), 0, 1), e))
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Int:
+		v.SetInt(1)
+	case reflect.Bool:
+		v.SetBool(true)
+	}
+}
+
+func jsonPaths(v any, path string, out *[]string) {
+	switch v := v.(type) {
+	case map[string]any:
+		for k, e := range v {
+			jsonPaths(e, strings.TrimPrefix(path+"."+k, "."), out)
+		}
+	case []any:
+		for _, e := range v {
+			jsonPaths(e, path+"[]", out)
+		}
+	default:
+		*out = append(*out, path)
 	}
 }
 

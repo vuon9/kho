@@ -27,8 +27,34 @@ type DB struct {
 const MaxAge = 12 * time.Hour
 
 // format changes whenever what kho stores changes, so a cache from an older
-// build is dropped instead of misread.
+// build is dropped instead of misread. stored is that shape as JSON paths;
+// TestStoredShapeMatchesFormat fails when the DB no longer marshals to it.
 const format = 3
+
+var stored = []string{
+	"advisories.*.aliases[]",
+	"advisories.*.details",
+	"advisories.*.id",
+	"advisories.*.package",
+	"advisories.*.published",
+	"advisories.*.ranges[].fixed",
+	"advisories.*.ranges[].introduced",
+	"advisories.*.ranges[].last_affected",
+	"advisories.*.severity",
+	"advisories.*.summary",
+	"advisories.*.versions[]",
+	"auditedAt.*",
+	"audits.*.analyzed",
+	"audits.*.gen",
+	"audits.*.snyk",
+	"audits.*.socket",
+	"audits.*.socketAlerts",
+	"checked.*",
+	"format",
+	"history.*[]",
+	"historyAt.*",
+	"hits.*[]",
+}
 
 func NewDB() *DB {
 	return &DB{

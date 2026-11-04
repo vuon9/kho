@@ -72,4 +72,4 @@ go test -race ./...
 | Command history | `$XDG_STATE_HOME/kho/history.jsonl`, default `~/.local/state/kho` |
 | Chosen theme | next to the history, `theme` |
 
-Bump `format` in `internal/vuln/cache.go` whenever what the cache stores changes, so an old cache is dropped instead of misread.
+Bump `format` in `internal/vuln/cache.go` whenever what the cache stores changes, so an old cache is dropped instead of misread, and update `stored` next to it. `TestStoredShapeMatchesFormat` fails when the cache's JSON no longer matches `stored`.
