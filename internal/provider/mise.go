@@ -11,7 +11,7 @@ import (
 type Mise struct{}
 
 func (Mise) Name() string    { return "mise" }
-func (Mise) Available() bool { return onPath("mise") }
+func (Mise) Missing() string { return notOnPath("mise") }
 
 func (Mise) List(ctx context.Context) ([]Package, error) {
 	out, err := run(ctx, "mise", "ls", "--json")

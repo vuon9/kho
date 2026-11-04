@@ -383,7 +383,8 @@ func Verdict(risk string) string {
 }
 
 // SkillAudits fetches skills.sh audits for skills by GitHub source. It uses
-// the same endpoint as the skills CLI and honors the same opt-outs.
+// the same endpoint as the skills CLI and honors the same opt-outs, returning
+// nil without asking, and a non-nil map whenever it did ask.
 func SkillAudits(ctx context.Context, bySource map[string][]string) (map[string]SkillAudit, error) {
 	if os.Getenv("DISABLE_TELEMETRY") != "" || os.Getenv("DO_NOT_TRACK") != "" {
 		return nil, nil
@@ -408,11 +409,13 @@ func SkillAudits(ctx context.Context, bySource map[string][]string) (map[string]
 			return out, fmt.Errorf("skills.sh: %w", err)
 		}
 		for slug, r := range resp {
-			out[source+"/"+slug] = SkillAudit{Gen: r.Ath.Risk, Socket: r.Socket.Risk, SocketAlerts: r.Socket.Alerts, Snyk: r.Snyk.Risk, Analyzed: r.Ath.AnalyzedAt}
+			out[auditKey(source, slug)] = SkillAudit{Gen: r.Ath.Risk, Socket: r.Socket.Risk, SocketAlerts: r.Socket.Alerts, Snyk: r.Snyk.Risk, Analyzed: r.Ath.AnalyzedAt}
 		}
 	}
 	return out, nil
 }
+
+func auditKey(source, slug string) string { return source + "/" + slug }
 
 // SkillPage is the skill's page on skills.sh, which shows the full audits.
 func SkillPage(source, slug string) string {

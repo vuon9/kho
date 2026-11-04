@@ -5,7 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"os/exec"
+	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,16 +23,17 @@ import (
 )
 
 type fake struct {
-	name     string
-	pkgs     []provider.Package
-	versions []provider.Release
+	name               string
+	pkgs               []provider.Package
+	versions           []provider.Release
+	listErr, latestErr error
 }
 
 func (f fake) Name() string                                     { return f.name }
-func (f fake) Available() bool                                  { return true }
-func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, nil }
+func (f fake) Missing() string                                  { return "" }
+func (f fake) List(context.Context) ([]provider.Package, error) { return f.pkgs, f.listErr }
 func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Package, error) {
-	return p, nil
+	return p, f.latestErr
 }
 func (f fake) Deps(context.Context, provider.Package) ([]provider.Dep, error) { return nil, nil }
 func (f fake) Versions(context.Context, provider.Package) ([]provider.Release, error) {
@@ -205,56 +213,87 @@ func TestCheckReportsWhatItDidNotCheck(t *testing.T) {
 }
 
 func TestRequireCompleteFailsOnAPartialScan(t *testing.T) {
-	var out, errOut bytes.Buffer
-	partial := Env{
-		Version: "v9.9.9",
-		Providers: []provider.Provider{
-			fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
-		},
-		DB:      vuln.NewDB(),
-		Log:     history.Open(""),
-		Out:     &out,
-		Err:     &errOut,
-		Now:     func() time.Time { return clock },
-		Skipped: map[string]string{"uv": "uv not on PATH"},
-		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
-			return map[string][]string{}, map[string]vuln.Advisory{}, nil
-		},
-		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+	uvMissing := map[string]string{"uv": "uv not on PATH"}
+	vulnerable := map[string][]string{"bramble": {"GHSA-test"}}
+	npm := fake{name: "npm", pkgs: []provider.Package{{Source: "npm", Name: "diffkit", Version: "0.23.0", Latest: "0.23.0"}}}
+	listFails, latestFails := npm, npm
+	listFails.listErr = errors.New("npm ls: boom")
+	latestFails.latestErr = errors.New("registry is down")
+	type result struct {
+		code     int
+		stderr   string
+		safe     bool
+		complete bool
+		errors   map[string]string
 	}
 	tests := []struct {
-		id   string
-		env  Env
-		args []string
-		code int
-		err  string
+		id      string
+		npm     fake
+		skipped map[string]string
+		hits    map[string][]string
+		args    []string
+		want    result
 	}{
-		{"a partial scan still passes without the flag", partial, []string{"check"}, ExitOK, ""},
-		{"a partial scan fails with the flag, and says why", partial, []string{"check", "--require-complete"}, ExitIncomplete, "scan was not complete: uv (uv not on PATH)"},
-		{"a required source that was skipped fails", partial, []string{"check", "--require", "uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
-		{"a required source that was read passes", partial, []string{"check", "--require", "pipx"}, ExitOK, ""},
-		{"a manager this machine lacks is fine unless required", partial, []string{"check", "--require", "pipx,uv"}, ExitIncomplete, "scan was not complete for uv (uv not on PATH)"},
-		{"an unknown source in the list is a usage error", partial, []string{"check", "--require", "npmm"}, ExitUsage, "unknown source in --require: npmm"},
+		{"at risk wins over a partial scan, and stderr still says what was skipped", npm, uvMissing, vulnerable, []string{"--require-complete"},
+			result{ExitAtRisk, "scan was not complete: uv (uv not on PATH)", false, false, nil}},
+		{"a required source whose list failed fails, and says why", listFails, nil, nil, []string{"--require", "npm"},
+			result{ExitIncomplete, "scan was not complete for npm failed: npm ls: boom", true, false, map[string]string{"npm": "npm ls: boom"}}},
+		{"a required source whose latest versions failed was still read", latestFails, nil, nil, []string{"--require", "npm"},
+			result{ExitOK, "", true, false, map[string]string{"npm latest": "registry is down"}}},
+		{"a failed latest lookup still leaves the scan incomplete", latestFails, nil, nil, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: npm latest failed: registry is down", true, false, map[string]string{"npm latest": "registry is down"}}},
+		{"a partial scan still passes without the flag", npm, uvMissing, nil, nil, result{ExitOK, "", true, false, nil}},
+		{"a partial scan fails with the flag, and says why", npm, uvMissing, nil, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: uv (uv not on PATH)", true, false, nil}},
+		{"a required source that was skipped fails", npm, uvMissing, nil, []string{"--require", "uv"},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", true, false, nil}},
+		{"a required source that was read passes", npm, uvMissing, nil, []string{"--require", "pipx"}, result{ExitOK, "", true, false, nil}},
+		{"a manager this machine lacks is fine unless required", npm, uvMissing, nil, []string{"--require", "pipx,uv"},
+			result{ExitIncomplete, "scan was not complete for uv (uv not on PATH)", true, false, nil}},
+		{"cask is read by brew, so requiring it requires brew", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask"},
+			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", true, false, nil}},
+		{"a source required twice is named once", npm, map[string]string{"brew": "brew not on PATH"}, nil, []string{"--require", "cask,brew"},
+			result{ExitIncomplete, "scan was not complete for brew (brew not on PATH)", true, false, nil}},
+		{"a full scan passes with the flag", npm, nil, nil, []string{"--require-complete"}, result{ExitOK, "", true, true, nil}},
+		{"an unknown source in the list is a usage error", npm, uvMissing, nil, []string{"--require", "npmm"},
+			result{ExitUsage, "unknown source in --require: npmm", false, false, nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			out.Reset()
-			errOut.Reset()
-			if code := Main(tt.env, tt.args); code != tt.code {
-				t.Errorf("exit %d, want %d", code, tt.code)
+			var out, errOut bytes.Buffer
+			env := Env{
+				Version: "v9.9.9",
+				Providers: []provider.Provider{
+					fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0", Latest: "22.12.0"}}},
+					tt.npm,
+				},
+				DB:      vuln.NewDB(),
+				Log:     history.Open(""),
+				Out:     &out,
+				Err:     &errOut,
+				Now:     func() time.Time { return clock },
+				Skipped: tt.skipped,
+				Scan: func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+					got := map[string][]string{}
+					for _, q := range qs {
+						got[q.Key()] = tt.hits[q.Name]
+					}
+					return got, map[string]vuln.Advisory{redos.ID: redos}, nil
+				},
+				Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
 			}
-			if got := strings.TrimSpace(errOut.String()); got != tt.err {
-				t.Errorf("stderr %q, want %q", got, tt.err)
+			got := result{code: Main(env, append([]string{"check", "--json"}, tt.args...)), stderr: strings.TrimSpace(errOut.String())}
+			if out.Len() > 0 {
+				var r Report
+				if err := json.Unmarshal(out.Bytes(), &r); err != nil {
+					t.Fatalf("not JSON: %v\n%s", err, out.String())
+				}
+				got.safe, got.complete, got.errors = r.Safe, r.Complete, r.Errors
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
 			}
 		})
-	}
-
-	full := partial
-	full.Skipped = nil
-	out.Reset()
-	errOut.Reset()
-	if code := Main(full, []string{"check", "--require-complete"}); code != ExitOK {
-		t.Errorf("a full scan with the flag exited %d, want %d: %s", code, ExitOK, errOut.String())
 	}
 }
 
@@ -268,75 +307,84 @@ func TestCheckUsesTheCache(t *testing.T) {
 	}
 }
 
-func TestCheckAsksAgainWhenTheSkillAuditFailed(t *testing.T) {
+func TestCheckSkillAudits(t *testing.T) {
 	const key = "someone/skills/pathmaker"
-	want := vuln.SkillAudit{Gen: "safe", Socket: "low", Snyk: "low"}
-	db := vuln.NewDB()
-	calls := 0
-	var out, errOut bytes.Buffer
-	env := Env{
-		Version: "v9.9.9",
-		Providers: []provider.Provider{
-			fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
-		},
-		DB:  db,
-		Log: history.Open(""),
-		Out: &out, Err: &errOut,
-		Now: func() time.Time { return clock },
-		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
-			return map[string][]string{}, map[string]vuln.Advisory{}, nil
-		},
-		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
-			calls++
-			if calls == 1 {
-				return nil, errors.New("skills.sh is down")
-			}
-			return map[string]vuln.SkillAudit{key: want}, nil
-		},
+	high := map[string]vuln.SkillAudit{key: {Gen: "safe", Socket: "high", Snyk: "low"}}
+	low := map[string]vuln.SkillAudit{key: {Gen: "safe", Socket: "low", Snyk: "low"}}
+	down := errors.New("skills.sh: down")
+	type answer struct {
+		audits map[string]vuln.SkillAudit
+		err    error
+	}
+	type result struct {
+		code      int
+		stderr    string
+		asks      int
+		risky     []string
+		errors    map[string]string
+		complete  bool
+		audits    map[string]vuln.SkillAudit
+		auditedAt map[string]time.Time
 	}
 	tests := []struct {
-		id    string
-		check func(t *testing.T, r Report, code int)
+		id      string
+		answers []answer
+		runs    int
+		flags   []string
+		want    result
 	}{
-		{"a failed audit is reported and leaves the skill stale", func(t *testing.T, r Report, code int) {
-			if code != ExitOK || r.Errors["security"] != "skills.sh is down" || r.Complete {
-				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
-			}
-			if calls != 1 {
-				t.Errorf("asked skills.sh %d times, want 1", calls)
-			}
-			if at, ok := db.AuditedAt[key]; ok {
-				t.Errorf("a failed audit marked the skill fresh at %v", at)
-			}
-			if _, ok := db.Audits[key]; ok {
-				t.Errorf("a failed audit stored %+v", db.Audits[key])
-			}
-		}},
-		{"the next scan asks skills.sh again and caches what it got", func(t *testing.T, r Report, code int) {
-			if code != ExitOK || r.Errors["security"] != "" || !r.Complete {
-				t.Errorf("exit %d, errors %v, complete %t", code, r.Errors, r.Complete)
-			}
-			if calls != 2 {
-				t.Errorf("asked skills.sh %d times, want 2", calls)
-			}
-			if at := db.AuditedAt[key]; !at.Equal(clock) {
-				t.Errorf("audited at %v, want %v", at, clock)
-			}
-			if got := db.Audits[key]; got != want {
-				t.Errorf("audit %+v, want %+v", got, want)
-			}
-		}},
+		{"an audit that came back with an error still puts the scan at risk", []answer{{high, down}}, 1, nil,
+			result{ExitAtRisk, "", 1, []string{"pathmaker"}, map[string]string{"security": "skills.sh: down"}, false, high, map[string]time.Time{}}},
+		{"at risk wins over incomplete, and stderr still says what failed", []answer{{high, down}}, 1, []string{"--require-complete"},
+			result{ExitAtRisk, "scan was not complete: security failed: skills.sh: down", 1, []string{"pathmaker"}, map[string]string{"security": "skills.sh: down"}, false, high, map[string]time.Time{}}},
+		{"a failed ask is incomplete", []answer{{nil, down}}, 1, []string{"--require-complete"},
+			result{ExitIncomplete, "scan was not complete: security failed: skills.sh: down", 1, nil, map[string]string{"security": "skills.sh: down"}, false, map[string]vuln.SkillAudit{}, map[string]time.Time{}}},
+		{"a failed ask is asked again on the next scan", []answer{{nil, down}, {low, nil}}, 2, nil,
+			result{ExitOK, "", 2, nil, nil, true, low, map[string]time.Time{key: clock}}},
+		{"a scan with telemetry off leaves the skill due, so the next scan asks", []answer{{nil, nil}, {high, nil}}, 2, []string{"--require-complete"},
+			result{ExitAtRisk, "", 2, []string{"pathmaker"}, nil, true, high, map[string]time.Time{key: clock}}},
+		{"an answer without an audit is not asked again", []answer{{map[string]vuln.SkillAudit{}, nil}}, 3, nil,
+			result{ExitOK, "", 1, nil, nil, true, map[string]vuln.SkillAudit{}, map[string]time.Time{key: clock}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			out.Reset()
-			errOut.Reset()
-			code := Main(env, []string{"check", "--json"})
+			var out, errOut bytes.Buffer
+			db := vuln.NewDB()
+			got := result{audits: db.Audits, auditedAt: db.AuditedAt}
+			env := Env{
+				Version: "v9.9.9",
+				Providers: []provider.Provider{
+					fake{name: "skills", pkgs: []provider.Package{{Source: "skills", Name: "pathmaker", Version: "32b0ce9", Repo: "someone/skills"}}},
+				},
+				DB:  db,
+				Log: history.Open(""),
+				Out: &out, Err: &errOut,
+				Now: func() time.Time { return clock },
+				Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+					return map[string][]string{}, map[string]vuln.Advisory{}, nil
+				},
+				Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) {
+					a := tt.answers[min(got.asks, len(tt.answers)-1)]
+					got.asks++
+					return a.audits, a.err
+				},
+			}
+			for range tt.runs {
+				out.Reset()
+				errOut.Reset()
+				got.code = Main(env, append([]string{"check", "--json"}, tt.flags...))
+			}
 			var r Report
 			if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, out.String())
 			}
-			tt.check(t, r, code)
+			got.stderr, got.errors, got.complete = strings.TrimSpace(errOut.String()), r.Errors, r.Complete
+			for _, s := range r.RiskySkills {
+				got.risky = append(got.risky, s.Name)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
+			}
 		})
 	}
 }
@@ -380,5 +428,104 @@ func TestInstallIsRecorded(t *testing.T) {
 	}
 	if len(got.log) != 1 || got.log[0].Kind != history.Change || got.log[0].Output != "installed" {
 		t.Errorf("history %+v", got.log)
+	}
+}
+
+// Usage, SKILL.md and AGENTS.md are kept in step with the code by hand, so
+// this reads the commands and exit codes from cli.go, asks each command for
+// its flags, and looks for every one of them in the docs.
+func TestDocsKeepUpWithTheCLI(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	var codes []int
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.ValueSpec:
+			for i, name := range n.Names {
+				if strings.HasPrefix(name.Name, "Exit") {
+					code, _ := strconv.Atoi(n.Values[i].(*ast.BasicLit).Value)
+					codes = append(codes, code)
+				}
+			}
+		case *ast.FuncDecl:
+			return n.Name.Name == "Main"
+		case *ast.CaseClause:
+			for _, e := range n.List {
+				if cmd, _ := strconv.Unquote(e.(*ast.BasicLit).Value); !strings.HasPrefix(cmd, "-") {
+					commands = append(commands, cmd)
+				}
+			}
+		}
+		return true
+	})
+
+	var tokens, flags []string
+	for _, cmd := range commands {
+		tokens = append(tokens, "kho "+cmd)
+		var out, errOut bytes.Buffer
+		Main(Env{DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut, Now: func() time.Time { return clock }}, []string{cmd, "-h"})
+		for _, m := range regexp.MustCompile(`(?m)^  -(\S+)`).FindAllStringSubmatch(errOut.String(), -1) {
+			if len(m[1]) == 1 {
+				flags = append(flags, "-"+m[1])
+			} else {
+				flags = append(flags, "--"+m[1])
+			}
+		}
+	}
+	if len(flags) == 0 {
+		t.Fatalf("found no flags in %v", commands)
+	}
+	tokens = append(tokens, flags...)
+
+	_, exits, _ := strings.Cut(Usage, "exit codes: ")
+	exits, _, _ = strings.Cut(exits, "\n")
+	var listed []int
+	for _, item := range strings.Split(exits, ", ") {
+		code, _ := strconv.Atoi(strings.Fields(item)[0])
+		listed = append(listed, code)
+	}
+	if !reflect.DeepEqual(listed, codes) {
+		t.Errorf("Usage lists exit codes %v, cli.go has %v", listed, codes)
+	}
+
+	skill, err := os.ReadFile("../../skills/use-kho/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, err := os.ReadFile("../../AGENTS.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every doc carries the exit code line, and it names --require and
+	// --require-complete, so it is taken out before looking for the rest. A
+	// token must stand alone, or --require would be found in --require-complete.
+	tests := []struct {
+		id     string
+		doc    string
+		tokens []string
+	}{
+		{"skills/use-kho/SKILL.md", string(skill), tokens},
+		{"Usage", Usage, tokens},
+		{"AGENTS.md", string(agents), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var missing []string
+			if !strings.Contains(tt.doc, exits) {
+				missing = append(missing, exits)
+			}
+			rest := strings.ReplaceAll(tt.doc, exits, "")
+			for _, w := range tt.tokens {
+				if !regexp.MustCompile(`(^|[^\w-])` + regexp.QuoteMeta(w) + `($|[^\w-])`).MatchString(rest) {
+					missing = append(missing, w)
+				}
+			}
+			if len(missing) > 0 {
+				t.Errorf("%s does not mention %q", tt.id, missing)
+			}
+		})
 	}
 }

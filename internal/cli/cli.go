@@ -48,7 +48,7 @@ type Env struct {
 	// returns its combined output.
 	Run func(*exec.Cmd) (string, error)
 	// Skipped names the providers this machine is not set up for, with what
-	// was looked for. main fills it from provider.Missing.
+	// was looked for. main fills it from provider.Detect.
 	Skipped map[string]string
 }
 
@@ -66,8 +66,9 @@ usage:
                                        commands kho ran, newest first
   kho list                             every package as JSON
   kho version                          print the version
+  kho help                             print this
 
-exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan
+exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete
 `
 
 func Main(env Env, args []string) int {
@@ -120,7 +121,9 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// inventory lists every provider with latest versions, in parallel.
+// inventory lists every provider with latest versions, in parallel. A failed
+// list is filed under the provider's name, and a failed latest lookup under
+// "<name> latest", since its packages were still read and can be checked.
 func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]string) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -129,13 +132,17 @@ func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]st
 	for _, p := range env.Providers {
 		wg.Go(func() {
 			pkgs, err := p.List(ctx)
+			var latestErr error
 			if err == nil {
-				pkgs, err = p.Latest(ctx, pkgs)
+				pkgs, latestErr = p.Latest(ctx, pkgs)
 			}
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				errs[p.Name()] = err.Error()
+			}
+			if latestErr != nil {
+				errs[p.Name()+" latest"] = latestErr.Error()
 			}
 			all = append(all, pkgs...)
 		})
@@ -158,14 +165,12 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 		}
 		queries = append(queries, provider.DepQueries(p)...)
 		if p.Source == "skills" && p.Repo != "" {
-			k := p.Repo + "/" + p.Name
-			if t, ok := env.DB.AuditedAt[k]; refresh || !ok || env.Now().Sub(t) > vuln.MaxAge {
-				bySource[p.Repo] = append(bySource[p.Repo], p.Name)
-			}
+			bySource[p.Repo] = append(bySource[p.Repo], p.Name)
 		}
 	}
 	if !refresh {
 		queries = env.DB.Stale(queries, env.Now())
+		bySource = env.DB.StaleAudits(bySource, env.Now())
 	}
 	var errs []error
 	if len(queries) > 0 {
@@ -182,13 +187,9 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 	}
 	if len(bySource) > 0 {
 		audits, err := env.Audits(ctx, bySource)
+		env.DB.MergeAudits(bySource, audits, err, env.Now())
 		if err != nil {
 			errs = append(errs, err)
-		} else {
-			for k, a := range audits {
-				env.DB.Audits[k] = a
-				env.DB.AuditedAt[k] = env.Now()
-			}
 		}
 	}
 	if env.DBPath != "" {
@@ -409,22 +410,23 @@ func (env Env) check(args []string) int {
 	return ExitOK
 }
 
-// splitSources reads the --require list and returns the names kho does not know,
-// so a typo fails loudly instead of passing as "nothing to check".
+// splitSources reads the --require list as provider names, so "cask" from the
+// JSON means brew, and returns the names kho does not know, so a typo fails
+// loudly instead of passing as "nothing to check".
 func splitSources(list string) (known, unknown []string) {
 	sources := map[string]bool{}
 	for _, p := range provider.All() {
 		sources[p.Name()] = true
 	}
 	for _, name := range strings.Split(list, ",") {
-		name = strings.TrimSpace(name)
+		name = provider.ProviderOf(provider.Package{Source: strings.TrimSpace(name)})
 		if name == "" {
 			continue
 		}
-		if sources[name] {
-			known = append(known, name)
-		} else {
+		if !sources[name] {
 			unknown = append(unknown, name)
+		} else if !slices.Contains(known, name) {
+			known = append(known, name)
 		}
 	}
 	return known, unknown

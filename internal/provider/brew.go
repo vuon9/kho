@@ -10,7 +10,7 @@ import (
 type Brew struct{}
 
 func (Brew) Name() string    { return "brew" }
-func (Brew) Available() bool { return onPath("brew") }
+func (Brew) Missing() string { return notOnPath("brew") }
 
 func (Brew) List(ctx context.Context) ([]Package, error) {
 	out, err := run(ctx, "brew", "info", "--json=v2", "--installed")
