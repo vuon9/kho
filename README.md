@@ -50,6 +50,14 @@ or, with Go:
 go install github.com/vuon9/kho@latest
 ```
 
+To check that an archive from the [Releases page](https://github.com/vuon9/kho/releases) was built by this repo's release workflow, verify its signed build provenance with the GitHub CLI (2.49 or later, signed in):
+
+```bash
+VERSION=0.1.5   # the release you downloaded
+gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
+  --signer-workflow vuon9/kho/.github/workflows/release.yml
+```
+
 ## Use it
 
 Run `kho`. Press `?` at any time for every key.

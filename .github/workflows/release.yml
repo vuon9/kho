@@ -39,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -58,3 +60,30 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # A fine-grained PAT with Contents read and write on vuon9/tap.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # Signs a build provenance attestation for every archive in checksums.txt,
+      # so `gh attestation verify` can prove a download was built here.
+      - name: Check archives against checksums.txt
+        working-directory: dist
+        run: sha256sum -c checksums.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+      # Verify the files users download from the release, not the local build.
+      - name: Verify provenance of the release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          while read -r _ f; do
+            gh release download "$TAG" --pattern "$f" --dir verify --clobber
+            # A new attestation can take a moment to become visible.
+            for attempt in 1 2 3 4 5; do
+              gh attestation verify "verify/$f" --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" && break
+              [ "$attempt" -lt 5 ] || exit 1
+              sleep 10
+            done
+          done < dist/checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag }}
