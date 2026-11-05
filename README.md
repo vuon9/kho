@@ -75,7 +75,7 @@ Give your agents the `use-kho` skill. `-g` installs it for your user, so it work
 npx skills add vuon9/kho --skill use-kho -g
 ```
 
-Then ask it "am I safe?" or "fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
+Then ask it "/use-kho am I safe?" or "/use-kho fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and upgrades a package only after you say yes to that package.
 
 For a daily security report, paste a prompt like this into Claude Code, Hermes Agent, or any agent that can schedule tasks:
 
