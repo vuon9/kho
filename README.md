@@ -50,10 +50,11 @@ or, with Go:
 go install github.com/vuon9/kho@latest
 ```
 
-To check that a downloaded archive was built by this repo's release workflow, verify its signed build provenance with the GitHub CLI:
+To check that a downloaded archive was built by this repo's release workflow, verify its signed build provenance with the GitHub CLI (2.49 or later, signed in). Use the file name you downloaded:
 
 ```bash
-gh attestation verify kho_<version>_<os>_<arch>.tar.gz --repo vuon9/kho
+gh attestation verify kho_0.1.5_darwin_arm64.tar.gz --repo vuon9/kho \
+  --signer-workflow vuon9/kho/.github/workflows/release.yml
 ```
 
 ## Use it
