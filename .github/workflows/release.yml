@@ -70,13 +70,20 @@ jobs:
           subject-checksums: dist/checksums.txt
       # Verify the files users download from the release, not the local build.
       - name: Verify provenance of the release assets
+        shell: bash
         run: |
-          mkdir verify
-          awk '{print $2}' dist/checksums.txt | while read -r f; do
-            gh release download "$TAG" --pattern "$f" --dir verify
-            gh attestation verify "verify/$f" --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-          done
+          set -euo pipefail
+          mkdir -p verify
+          while read -r _ f; do
+            gh release download "$TAG" --pattern "$f" --dir verify --clobber
+            # A new attestation can take a moment to become visible.
+            for attempt in 1 2 3 4 5; do
+              gh attestation verify "verify/$f" --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" && break
+              [ "$attempt" -lt 5 ] || exit 1
+              sleep 10
+            done
+          done < dist/checksums.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release-please.outputs.tag }}
