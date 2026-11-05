@@ -11,8 +11,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ai-code-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  # One group per event type, so a comment run never cancels a PR review.
+  group: ai-code-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
   cancel-in-progress: true
+
+permissions: {}
 
 jobs:
   review-pr:
@@ -24,7 +27,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.7
+    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@22c7285151d8084c3bc40dd69998bb194c0f0db3 # v0.4.7
     with:
       mode: pr
     secrets:
@@ -37,7 +40,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@v0.4.7
+    uses: vuon9/gh-workflows/.github/workflows/ai-code-review.yml@22c7285151d8084c3bc40dd69998bb194c0f0db3 # v0.4.7
     with:
       mode: comment
     secrets:
