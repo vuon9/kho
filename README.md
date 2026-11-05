@@ -50,6 +50,12 @@ or, with Go:
 go install github.com/vuon9/kho@latest
 ```
 
+To check that a downloaded archive was built by this repo's release workflow, verify its signed build provenance with the GitHub CLI:
+
+```bash
+gh attestation verify kho_<version>_<os>_<arch>.tar.gz --repo vuon9/kho
+```
+
 ## Use it
 
 Run `kho`. Press `?` at any time for every key.
