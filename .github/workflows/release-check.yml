@@ -1,0 +1,36 @@
+name: release-check
+
+# Run by hand after changing the release environment or rotating
+# HOMEBREW_TAP_TOKEN. It waits for the same approval as a release, runs under
+# the same egress block, and checks the token can push to vuon9/tap without
+# pushing anything.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tap-token:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+      - name: Check HOMEBREW_TAP_TOKEN can push to vuon9/tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$TOKEN" || { echo "HOMEBREW_TAP_TOKEN is not set in the release environment"; exit 1; }
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git init -q tap && cd tap
+          git -c http.extraheader="$auth" fetch -q --depth 1 https://github.com/vuon9/tap.git HEAD
+          git checkout -q FETCH_HEAD
+          # GitHub only answers a push handshake for a token with write access,
+          # and --dry-run stops before anything is sent.
+          git -c http.extraheader="$auth" push --dry-run https://github.com/vuon9/tap.git HEAD:refs/heads/release-check-dry-run
+          echo "HOMEBREW_TAP_TOKEN can push to vuon9/tap"
