@@ -50,6 +50,9 @@ type Env struct {
 	// Skipped names the providers this machine is not set up for, with what
 	// was looked for. main fills it from provider.Detect.
 	Skipped map[string]string
+	// Major names a higher major module path that serves a version, so a Go
+	// tool that moved to /v2 is reported instead of "no published version".
+	Major func(context.Context, string, string) string
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -659,6 +662,12 @@ func (env Env) published(ctx context.Context, p provider.Package, version string
 	for _, r := range rels {
 		if r.Version == version || provider.TagVersion(r.Version) == provider.TagVersion(version) {
 			return nil
+		}
+	}
+	if p.Source == "go" && env.Major != nil {
+		if path := env.Major(ctx, p.Origin, version); path != "" {
+			return fmt.Errorf("%s has no published version %q in %s, but %s does; kho cannot install across a major module yet",
+				p.Name, version, p.Origin, path)
 		}
 	}
 	return fmt.Errorf("%s has no published version %q", p.Name, version)

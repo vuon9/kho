@@ -419,6 +419,40 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+// A Go tool that moved to /v2 reports its v2 releases under a different module
+// path, so a version missing from the installed module is not the same as a
+// version that does not exist.
+func TestInstallNamesTheHigherMajorModule(t *testing.T) {
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version: "v9.9.9",
+		Providers: []provider.Provider{fake{
+			name:     "go",
+			pkgs:     []provider.Package{{Source: "go", Name: "tool", Version: "v1.0.0", Origin: "example.com/tool", Entry: "example.com/tool/cmd/tool"}},
+			versions: []provider.Release{{Version: "v1.0.0"}},
+		}},
+		Log: history.Open(""),
+		Out: &out, Err: &errOut,
+		Now:   func() time.Time { return clock },
+		Major: func(context.Context, string, string) string { return "example.com/tool/v2" },
+		Run:   func(cmd *exec.Cmd) (string, error) { t.Errorf("ran %v, want a refusal", cmd.Args); return "", nil },
+	}
+	if code := Main(env, []string{"install", "go/tool@v2.15.0", "--yes"}); code != ExitError {
+		t.Fatalf("exit %d, want %d", code, ExitError)
+	}
+	want := `tool has no published version "v2.15.0" in example.com/tool, but example.com/tool/v2 does; kho cannot install across a major module yet`
+	if got := strings.TrimSpace(errOut.String()); got != want {
+		t.Errorf("stderr %q, want %q", got, want)
+	}
+}
+
+func TestInstallStillRefusesAVersionNowhere(t *testing.T) {
+	got := kho(t, nil, nil, nil, "install", "pipx/bramble@99.0.0", "--yes")
+	if got.code != ExitError || !strings.Contains(got.err, `no published version "99.0.0"`) {
+		t.Errorf("exit %d stderr %q", got.code, got.err)
+	}
+}
+
 func TestInstallIsRecorded(t *testing.T) {
 	got := kho(t, nil, nil, nil, "install", "pipx/bramble@24.3.0", "--yes", "--json")
 	var res InstallResult
