@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/vuon9/kho/compare/v0.1.5...v0.1.6) (2026-11-05)
+
+
+### Bug Fixes
+
+* **install:** name the module path that serves a higher major ([#28](https://github.com/vuon9/kho/issues/28)) ([b910294](https://github.com/vuon9/kho/commit/b910294f24f08c49fc9384914ecc6c8d18d86461))
+
 ## [0.1.5](https://github.com/vuon9/kho/compare/v0.1.4...v0.1.5) (2026-11-05)
 
 
