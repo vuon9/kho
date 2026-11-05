@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/vuon9/kho/compare/v0.1.4...v0.1.5) (2026-11-05)
+
+
+### Miscellaneous Chores
+
+* release 0.1.5 ([#25](https://github.com/vuon9/kho/issues/25)) ([f8a47ca](https://github.com/vuon9/kho/commit/f8a47cabe29344b2ca4d0050c293e0bf5404e68d))
+
 ## [0.1.4](https://github.com/vuon9/kho/compare/v0.1.3...v0.1.4) (2026-11-04)
 
 
