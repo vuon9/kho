@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/mod/semver"
@@ -35,6 +36,46 @@ func goBinDir() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "go", "bin")
+}
+
+// majorProbe reports whether a module path serves a version. Tests swap it.
+var majorProbe = func(ctx context.Context, path, version string) bool {
+	url := "https://proxy.golang.org/" + escapeModule(path) + "/@v/" + escapeModule(version) + ".info"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// MajorModule is the module path of a higher major that serves version, when a
+// Go tool outgrows v1. Every major keeps its own path, so the module an
+// installed binary reports never lists the releases above it: a tool installed
+// from v1 looks like it has no newer version while its whole v2 line lives at
+// /v2.
+func MajorModule(ctx context.Context, origin, version string) string {
+	if origin == "" || version == "" {
+		return ""
+	}
+	from := 2
+	base := origin
+	if i := strings.LastIndexByte(origin, '/'); i >= 0 {
+		if n, err := strconv.Atoi(strings.TrimPrefix(origin[i+1:], "v")); err == nil && n >= 2 {
+			base, from = origin[:i], n+1
+		}
+	}
+	for n := from; n <= from+2; n++ {
+		path := base + "/v" + strconv.Itoa(n)
+		if majorProbe(ctx, path, version) {
+			return path
+		}
+	}
+	return ""
 }
 
 func (GoBin) List(context.Context) ([]Package, error) {

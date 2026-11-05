@@ -779,6 +779,39 @@ func TestRunIsRecorded(t *testing.T) {
 	}
 }
 
+// A Go tool that outgrows v1 moves to its own /vN module path, which the module
+// an installed binary reports never lists, so the higher major has to be looked
+// for by name.
+func TestMajorModuleFindsAHigherMajor(t *testing.T) {
+	tests := []struct {
+		id      string
+		origin  string
+		version string
+		serves  []string
+		want    string
+	}{
+		{"a v2 line is found for a v1 module", "example.com/tool", "v2.15.0", []string{"example.com/tool/v2"}, "example.com/tool/v2"},
+		{"a v3 line is found when v2 lacks the version", "example.com/tool", "v3.1.0", []string{"example.com/tool/v3"}, "example.com/tool/v3"},
+		{"nothing above the installed major means no path", "example.com/tool", "v9.9.9", nil, ""},
+		{"an origin already on v2 looks at v3 beside it", "example.com/tool/v2", "v3.0.0", []string{"example.com/tool/v3"}, "example.com/tool/v3"},
+		{"an empty origin is not probed", "", "v2.0.0", []string{"example.com/tool/v2"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			serves := map[string]bool{}
+			for _, s := range tt.serves {
+				serves[s] = true
+			}
+			original := majorProbe
+			majorProbe = func(_ context.Context, path, version string) bool { return serves[path] }
+			defer func() { majorProbe = original }()
+			if got := MajorModule(context.Background(), tt.origin, tt.version); got != tt.want {
+				t.Errorf("MajorModule(%q, %q) = %q, want %q", tt.origin, tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 // A provider this machine lacks must be skipped with a reason, never dropped:
 // a silent skip reads as "nothing installed" and hides whatever it would hold.
 // Each row builds its own PATH and home, so the developer's machine does not

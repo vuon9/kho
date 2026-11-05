@@ -63,6 +63,7 @@ func main() {
 		Scan:      vuln.Scan,
 		Audits:    vuln.SkillAudits,
 		History:   vuln.History,
+		Major:     provider.MajorModule,
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
 	}, os.Args[1:]))
