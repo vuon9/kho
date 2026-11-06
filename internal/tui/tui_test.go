@@ -2328,6 +2328,90 @@ func TestProject(t *testing.T) {
 			}
 			return ""
 		}},
+		{"a rescan keeps the selected part selected, during and after", func(t *testing.T) model {
+			m := press(t, header(withProject(t, one, false)), "enter", "G")
+			tm, _ := m.Update(watchMsg{gen: m.projGen, changed: true})
+			if busy := tm.(model); busy.curRow().key != "project:composer.json" {
+				t.Errorf("while reading, %q is selected", busy.curRow().key)
+			}
+			return update(t, m, watchMsg{gen: m.projGen, changed: true})
+		}, func(m model) string {
+			if m.curRow().key != "project:composer.json" {
+				return fmt.Sprintf("after the rescan, %q is selected", m.curRow().key)
+			}
+			return ""
+		}},
+		{"when a rescan drops a lockfile above it, the selection stays on its lockfile", func(t *testing.T) model {
+			three := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
+				{Path: "Cargo.toml", Manager: "cargo", Missing: "no lockfile"},
+				{Path: "composer.json", Manager: "composer", Missing: "no lockfile"},
+				{Path: "package.json", Manager: "npm", Missing: "no lockfile"},
+			}}}}
+			m := press(t, header(withProject(t, three, false)), "enter", "G", "k")
+			findProject = func(context.Context, string) (project.Scan, error) {
+				return project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: three.Projects[0].Lockfiles[1:]}}}, nil
+			}
+			return update(t, m, watchMsg{gen: m.projGen, changed: true})
+		}, func(m model) string {
+			if m.curRow().key != "project:composer.json" {
+				return fmt.Sprintf("selected %q", m.curRow().key)
+			}
+			return ""
+		}},
+		{"closing the project from a part selects its header", func(t *testing.T) model {
+			m := press(t, header(withProject(t, one, false)), "enter", "G")
+			m.projOpen = false
+			return update(t, m, tickMsg{})
+		}, func(m model) string {
+			if m.curRow().kind != rowProject {
+				return fmt.Sprintf("selected %+v", m.curRow())
+			}
+			return ""
+		}},
+		{"a package with no registry kho knows still loads its dependencies", func(t *testing.T) model {
+			crate := project.Scan{Root: "/work/rs", Projects: []project.Project{{Lockfiles: []project.Lockfile{{Path: "Cargo.lock", Manager: "cargo",
+				Packages: []provider.Package{{Source: "cargo", Name: "tinyhash", Version: "1.0.5", Lockfile: "Cargo.lock"}}}}}}}
+			return header(withProject(t, crate, false))
+		}, func(m model) string {
+			if d := m.deps[cacheKey(provider.Package{Source: "cargo", Name: "tinyhash", Version: "1.0.5", Lockfile: "Cargo.lock"})]; d == nil || !d.done {
+				return "dependencies never finish loading"
+			}
+			return ""
+		}},
+		{"a project folder with only a bare manifest shows its note", func(t *testing.T) model {
+			notes := project.Scan{Root: "/work/code", Projects: []project.Project{
+				{Dir: "api", Lockfiles: []project.Lockfile{{Path: "api/go.mod", Manager: "go", Packages: []provider.Package{{Source: "go", Name: "example.com/a", Origin: "example.com/a", Version: "v1.0.0", Lockfile: "api/go.mod"}}}}},
+				{Dir: "web", Lockfiles: []project.Lockfile{{Path: "web/package.json", Manager: "npm", Missing: "no lockfile, versions unknown. Run npm install to create one"}}},
+			}}
+			return press(t, header(withProject(t, notes, false)), "enter", "G")
+		}, func(m model) string {
+			if !strings.Contains(rail(m), "web") || !strings.Contains(rail(m), "◌") || !strings.Contains(screen(m), "web/package.json: no lockfile") {
+				return fmt.Sprintf("rail %q", rail(m))
+			}
+			return ""
+		}},
+		{"a failed scan names the folder kho was opened on", func(t *testing.T) model {
+			m := loaded(t)
+			findProject = func(context.Context, string) (project.Scan, error) { return project.Scan{}, errors.New("boom") }
+			m.dir, m.projBusy = "/work/app", projReading
+			return update(t, m, m.findCmd()())
+		}, func(m model) string {
+			if !strings.Contains(rail(m), "📁 app · boom") {
+				return fmt.Sprintf("rail %q", rail(m))
+			}
+			return ""
+		}},
+		{"a project package's Versions footer offers no install", func(t *testing.T) model {
+			m := header(withProject(t, one, false))
+			m.focus = focusSide
+			projectVersions = func(context.Context, provider.Package) ([]provider.Release, error) { return []provider.Release{{Version: "9.9.9"}}, nil }
+			return press(t, m, "v")
+		}, func(m model) string {
+			if f := ansi.Strip(m.footer()); strings.Contains(f, "install it") || !strings.Contains(f, "kho doesn't change projects") {
+				return fmt.Sprintf("footer %q", f)
+			}
+			return ""
+		}},
 		{"several projects get a row per folder", func(t *testing.T) model { return press(t, header(withProject(t, several, false)), "enter") },
 			func(m model) string {
 				if r := rail(m); !strings.Contains(r, "code · 2 projects") || !strings.Contains(r, "api") || !strings.Contains(r, "web") {
@@ -2360,5 +2444,29 @@ func TestProject(t *testing.T) {
 				t.Error(why)
 			}
 		})
+	}
+}
+
+func TestProjectStaysInViewInAShortTerminal(t *testing.T) {
+	var ps []provider.Provider
+	for i := range 8 {
+		ps = append(ps, fake{name: fmt.Sprintf("tool%d", i)})
+	}
+	m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 100, Height: minHeight})
+	findProject = func(context.Context, string) (project.Scan, error) {
+		return project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{{Path: "go.mod", Manager: "go"}}}}}, nil
+	}
+	projectLatest = func(_ context.Context, p []provider.Package) []provider.Package { return p }
+	m.dir, m.projBusy = "/work/app", projReading
+	m = update(t, m, m.findCmd()())
+	rail := ansi.Strip(strings.Join(m.railBody(m.layout().bodyH-2), "\n"))
+	if !strings.Contains(rail, "📁 app") || !strings.Contains(rail, "All") {
+		t.Errorf("the project or All is off screen:\n%s", rail)
+	}
+	m.focus = focusRail
+	m = press(t, m, "G", "enter")
+	rail = ansi.Strip(strings.Join(m.railBody(m.layout().bodyH-2), "\n"))
+	if !strings.Contains(rail, "▾ 📁 app") || !strings.Contains(rail, "go") {
+		t.Errorf("the open project is off screen:\n%s", rail)
 	}
 }

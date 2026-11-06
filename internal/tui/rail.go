@@ -2,7 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/provider"
 )
@@ -63,10 +66,40 @@ func (m model) rowPkgs(r railRow) []provider.Package {
 }
 
 func (m *model) setRail(i int) {
-	i = max(min(i, len(m.railRows())-1), 0)
+	rows := m.railRows()
+	i = max(min(i, len(rows)-1), 0)
 	if i != m.rail {
 		m.rail, m.cursor, m.offset = i, 0, 0
 	}
+	m.railKey = rows[i].key
+}
+
+// keepRail puts the selection back on its row after rows came or went: a
+// rescan, the project opening or closing, a provider appearing. A part of
+// the project that went away falls back to the project's header.
+func (m *model) keepRail() {
+	rows := m.railRows()
+	if r, ok := at(rows, m.rail); ok && r.key == m.railKey {
+		return
+	}
+	for i, r := range rows {
+		if r.key == m.railKey {
+			m.rail = i
+			return
+		}
+	}
+	for i, r := range rows {
+		if r.kind == rowProject && strings.HasPrefix(m.railKey, "project") {
+			m.rail, m.cursor, m.offset = i, 0, 0
+			m.railKey = r.key
+			return
+		}
+	}
+	if m.railKey != "" {
+		m.cursor, m.offset = 0, 0
+	}
+	m.rail = max(min(m.rail, len(rows)-1), 0)
+	m.railKey = rows[m.rail].key
 }
 
 // railAll is every line of the rail, which row each selects (-1 for none),
@@ -91,11 +124,42 @@ func (m model) railAll() (lines []string, rowOf []int, block int) {
 	return lines, rowOf, block
 }
 
+// pinned says the project block stays at the bottom while the Machine rows
+// above it scroll, which it does when the rail overflows and the block
+// leaves at least two lines for them.
+func pinned(total, block, h int) bool {
+	return block >= 0 && total > h && total-block <= h-2
+}
+
+// railTopFor is where the rail's scrolled part starts, h lines tall, so the
+// selected row stays in view.
+func (m model) railTopFor(h int) int {
+	lines, _, block := m.railAll()
+	sel := m.railLineOf(m.rail)
+	switch {
+	case len(lines) <= h:
+		return 0
+	case pinned(len(lines), block, h):
+		window := h - (len(lines) - block)
+		if sel >= block {
+			return max(min(m.railTop, block-window), 0)
+		}
+		return max(min(scroll(m.railTop, sel, window), block-window), 0)
+	}
+	return max(min(scroll(m.railTop, sel, h), len(lines)-h), 0)
+}
+
 // railLines is what the rail panel shows, h lines tall. When it all fits,
-// the project block sits at the bottom. When it doesn't, the rail scrolls to
-// keep the selected row in view.
+// the project block sits at the bottom. When it doesn't, the Machine rows
+// scroll above the block, or with a block too tall for that, everything
+// scrolls, keeping the selected row in view.
 func (m model) railLines(h int) (lines []string, rowOf []int) {
 	lines, rowOf, block := m.railAll()
+	if pinned(len(lines), block, h) {
+		window := h - (len(lines) - block)
+		top := max(min(m.railTop, block-window), 0)
+		return append(slices.Clone(lines[top:top+window]), lines[block:]...), append(slices.Clone(rowOf[top:top+window]), rowOf[block:]...)
+	}
 	if len(lines) <= h {
 		if block >= 0 {
 			gap := h - len(lines)
@@ -138,17 +202,20 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 			mark = accent().Render(spinner[m.frame%len(spinner)])
 		}
 	case rowPart:
-		if lf, ok := m.lockfile(r.lockfile); ok && lf.Err != "" {
-			mark = red().Render("!")
-		} else if ok && lf.Missing != "" {
-			mark = yellow().Render("◌")
+		for _, lf := range m.partLockfiles(r) {
+			switch {
+			case lf.Err != "":
+				mark = red().Render("!")
+			case lf.Missing != "" && mark == "":
+				mark = yellow().Render("◌")
+			}
 		}
 	}
 	indent := "  "
 	if r.kind == rowPart {
 		indent = "    "
 	}
-	line := indent + icon(r.icon) + " " + pad(r.name, max(inner-15-len(indent), 6)) + m.badges(r) + " " + mark
+	line := indent + icon(r.icon) + " " + pad(r.name, max(inner-15-len(indent), 3)) + m.badges(r) + " " + mark
 	if selectedRow {
 		line = selected(line, inner, m.focus == focusRail)
 	}
@@ -177,15 +244,17 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	if m.projOpen {
 		arrow = "▾"
 	}
+	nameW := max(inner-17, 6)
 	name := m.projName()
 	if n := len(m.proj.Projects); n > 1 {
-		name += fmt.Sprintf(" · %d projects", n)
+		count := fmt.Sprintf(" · %d projects", n)
+		name = ansi.Truncate(name, max(nameW-len(count), 1), "…") + count
 	}
 	var mark string
 	if m.projBusy != "" {
 		mark = accent().Render(spinner[m.frame%len(spinner)])
 	}
-	line := arrow + " " + icon("project") + " " + pad(name, max(inner-17, 6)) + m.badges(railRow{kind: rowProject, key: "project"}) + " " + mark
+	line := arrow + " " + icon("project") + " " + pad(name, nameW) + m.badges(railRow{kind: rowProject, key: "project"}) + " " + mark
 	if selectedRow {
 		line = selected(line, inner, m.focus == focusRail)
 	}

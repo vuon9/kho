@@ -91,3 +91,28 @@ func FillLatest(ctx context.Context, pkgs []Package) []Package {
 	}
 	return pkgs
 }
+
+// RegistryVersions lists a project package's published versions straight
+// from its registry, newest first. npm's are read from the registry's own
+// document rather than `npm view`, which would load the project's .npmrc.
+func RegistryVersions(ctx context.Context, p Package) ([]Release, error) {
+	switch Ecosystem(p) {
+	case "npm":
+		var raw json.RawMessage
+		if err := getJSON(ctx, "https://registry.npmjs.org/"+p.Name, nil, &raw); err != nil {
+			return nil, err
+		}
+		rels, repo, err := parseNpmView(p.Name, raw)
+		if err != nil {
+			return nil, err
+		}
+		return withNotes(ctx, repo, rels), nil
+	case "PyPI":
+		return pypiVersions(ctx, NormalizePyPI(p.Name))
+	case "Go":
+		return GoBin{}.Versions(ctx, p)
+	case "Packagist":
+		return Composer{}.Versions(ctx, p)
+	}
+	return nil, fmt.Errorf("kho has no version list for %s packages yet", p.Source)
+}

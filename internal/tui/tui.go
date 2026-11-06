@@ -202,7 +202,10 @@ type model struct {
 	focus int
 	tab   int
 	rail  int
-	// railTop is the first rail row shown when the rows don't all fit.
+	// railKey is the selected rail row's key, so the selection follows the
+	// row when rows above it come and go. railTop is the first rail line
+	// shown when they don't all fit.
+	railKey string
 	railTop int
 	cursor  int
 	offset  int
@@ -530,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.(type) {
-	case listedMsg, checkedMsg, scanMsg, auditMsg:
+	case listedMsg, checkedMsg, scanMsg, auditMsg, projectMsg, projectLatestMsg:
 		if m.picked {
 			m.reselect()
 		}
@@ -625,11 +628,15 @@ func (m *model) load() tea.Cmd {
 	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if p.Lockfile != "" {
-		if prov = versionsFrom(p); prov == nil {
-			m.versions[key] = &lazy[[]provider.Release]{err: fmt.Errorf("kho has no version list for %s packages yet", p.Source), done: true}
-			return nil
-		}
 		m.deps[key] = &lazy[[]provider.Dep]{val: m.pulledIn(p), done: true}
+		if m.activeTab() == tabVersions && m.versions[key] == nil {
+			m.versions[key] = &lazy[[]provider.Release]{}
+			return func() tea.Msg {
+				rels, err := projectVersions(context.Background(), p)
+				return versionsMsg{key, rels, err}
+			}
+		}
+		return nil
 	}
 	if prov == nil {
 		return nil
@@ -1046,10 +1053,10 @@ func (m *model) openReleasePage() tea.Cmd {
 // it selects.
 func (m *model) clamp() {
 	m.clampHistory()
+	m.keepRail()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
 	l := m.layout()
-	m.rail = max(min(m.rail, len(m.railRows())-1), 0)
-	m.railTop = scroll(m.railTop, m.railLineOf(m.rail), l.bodyH-2)
+	m.railTop = m.railTopFor(l.bodyH - 2)
 	m.offset = scroll(m.offset, m.cursor, l.rows)
 	if p, ok := m.current(); ok && pkgKey(p) != m.selected {
 		m.selected, m.sel = pkgKey(p), nil

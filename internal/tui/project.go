@@ -22,9 +22,10 @@ const projKey = "\x00project"
 
 // The project lookups, swapped out in tests.
 var (
-	findProject   = project.Find
-	projectLatest = provider.FillLatest
-	watchEvery    = 3 * time.Second
+	findProject     = project.Find
+	projectLatest   = provider.FillLatest
+	projectVersions = provider.RegistryVersions
+	watchEvery      = 3 * time.Second
 )
 
 const (
@@ -33,9 +34,10 @@ const (
 )
 
 type projectMsg struct {
-	gen  int
-	scan project.Scan
-	err  error
+	gen    int
+	scan   project.Scan
+	stamps map[string]time.Time
+	err    error
 }
 
 type projectLatestMsg struct {
@@ -54,7 +56,7 @@ func (m model) findCmd() tea.Cmd {
 	gen, dir := m.projGen, m.dir
 	return func() tea.Msg {
 		scan, err := findProject(context.Background(), dir)
-		return projectMsg{gen, scan, err}
+		return projectMsg{gen, scan, stamps(scan), err}
 	}
 }
 
@@ -73,6 +75,9 @@ func (m *model) gotProject(msg projectMsg) tea.Cmd {
 		return nil
 	}
 	m.proj, m.projErr = &msg.scan, msg.err
+	if msg.err != nil {
+		m.proj = nil
+	}
 	var pkgs []provider.Package
 	for _, p := range msg.scan.Projects {
 		for _, lf := range p.Lockfiles {
@@ -81,7 +86,7 @@ func (m *model) gotProject(msg projectMsg) tea.Cmd {
 	}
 	m.forget(projKey)
 	m.pkgs[projKey] = pkgs
-	m.projStamps = stamps(msg.scan)
+	m.projStamps = msg.stamps
 	m.reindex()
 	if len(pkgs) == 0 {
 		m.projBusy = ""
@@ -171,9 +176,10 @@ func (m model) projName() string {
 	return filepath.Base(m.dir)
 }
 
-// projReady says the project section has something to select.
+// projReady says the project section has something to select. While a
+// rescan reads the lockfiles again, the last scan stays selectable.
 func (m model) projReady() bool {
-	return m.proj != nil && m.projBusy != projReading && len(m.proj.Projects) > 0
+	return m.proj != nil && len(m.proj.Projects) > 0
 }
 
 func (m model) projPkgs() []provider.Package { return m.pkgs[projKey] }
@@ -218,6 +224,22 @@ func dirOf(file string) string {
 		return d
 	}
 	return ""
+}
+
+// partLockfiles are the lockfiles a row under the project header stands for.
+func (m model) partLockfiles(r railRow) []project.Lockfile {
+	if m.proj == nil || r.kind != rowPart {
+		return nil
+	}
+	var out []project.Lockfile
+	for _, p := range m.proj.Projects {
+		for _, lf := range p.Lockfiles {
+			if r.lockfile != "" && lf.Path == r.lockfile || r.inDir && p.Dir == r.dir {
+				out = append(out, lf)
+			}
+		}
+	}
+	return out
 }
 
 // lockfile is the scan's entry for path, for its note or error.
@@ -265,18 +287,16 @@ func (m model) projectFix(p provider.Package) string {
 	return project.FixCommand(p, target)
 }
 
-// versionsFrom is where a project package's versions come from. These read
-// registries, not the project, so the machine needn't have the manager.
-func versionsFrom(p provider.Package) provider.Provider {
-	switch p.Source {
-	case "npm":
-		return provider.Npm{}
-	case "composer":
-		return provider.Composer{}
-	case "go":
-		return provider.GoBin{}
-	case "uv", "poetry", "pip":
-		return provider.Pipx{}
+// inProjectPkg says the selected package comes from a project lockfile.
+func (m model) inProjectPkg() bool {
+	p, ok := m.current()
+	return ok && p.Lockfile != ""
+}
+
+// currentFix is the selected project package's fix command, or "".
+func (m model) currentFix() string {
+	if p, ok := m.current(); ok {
+		return m.projectFix(p)
 	}
-	return nil
+	return ""
 }

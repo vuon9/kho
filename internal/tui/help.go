@@ -43,7 +43,7 @@ var helpSections = []struct {
 		{"t", "after a failed install, run it again in the terminal"},
 		{"y", "open the release page of a version without notes"},
 		{"A", "in Links, every agent the skills CLI supports, or installed ones"},
-		{"c", "copy the text below to the clipboard"},
+		{"c", "copy the text below, or a project package's fix command on Security"},
 	}},
 	{"Mouse", [][2]string{
 		{"click", "select, sort by a header, switch a tab, open a link"},

@@ -250,17 +250,21 @@ func (m model) footer() string {
 	case m.showHistory:
 		line = keys("↑↓", "move", "/", "filter", "f", "kind", "c", "copy command", "H esc", "back", "?", "help")
 	case m.focus == focusRail && m.curRow().kind == rowProject && m.projOpen:
-		line = keys("↑↓", "source", "enter", "close project", "p", "dev", "tab", "panel", "?", "help", "q", "quit")
+		line = keys("↑↓", "source", "enter", "close project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail && m.curRow().kind == rowProject:
-		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "?", "help", "q", "quit")
+		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusTable && m.inProject():
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "?", "help")
+		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
 	case m.focus == focusTable:
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
+	case m.activeTab() == tabVersions && m.inProjectPkg():
+		line = keys("↑↓", "version", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help") + faint().Render("   kho doesn't change projects")
 	case m.activeTab() == tabVersions:
 		line = keys("↑↓", "version", "enter", "install it", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help")
+	case m.activeTab() == tabSecurity && m.sidePart == 0 && m.currentFix() != "":
+		line = keys("↑↓", "select", "enter", "read", "c", "copy the fix", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
 	case m.activeTab() == tabLinks && m.allAgents:
 		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "installed only", "[ ]", "tabs", "?", "help")
 	case m.activeTab() == tabLinks:
@@ -327,12 +331,18 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
-	if lf, ok := m.lockfile(m.curRow().lockfile); ok && len(lf.Packages) == 0 {
-		switch {
-		case lf.Err != "":
-			return append([]string{""}, styled(red(), wrap(lf.Path+": "+lf.Err, m.layout().tableW-4))...)
-		case lf.Missing != "":
-			return append([]string{""}, styled(yellow(), wrap("◌ "+lf.Path+": "+lf.Missing, m.layout().tableW-4))...)
+	if r := m.curRow(); r.kind == rowPart && len(m.rowPkgs(r)) == 0 {
+		lines := []string{""}
+		for _, lf := range m.partLockfiles(r) {
+			switch {
+			case lf.Err != "":
+				lines = append(lines, styled(red(), wrap(lf.Path+": "+lf.Err, m.layout().tableW-4))...)
+			case lf.Missing != "":
+				lines = append(lines, styled(yellow(), wrap("◌ "+lf.Path+": "+lf.Missing, m.layout().tableW-4))...)
+			}
+		}
+		if len(lines) > 1 {
+			return lines
 		}
 	}
 	if r := m.curRow(); r.kind == rowProvider {
