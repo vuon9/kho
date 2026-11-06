@@ -76,7 +76,7 @@ func ProviderOf(p Package) string {
 }
 
 func All() []Provider {
-	return []Provider{Brew{}, Npm{}, Pipx{}, Uv{}, GoBin{}, Mise{}, Skills{}}
+	return []Provider{Brew{}, Npm{}, Composer{}, Pipx{}, Uv{}, GoBin{}, Mise{}, Skills{}}
 }
 
 // Detect splits All into the providers this machine is set up for and the

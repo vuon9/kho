@@ -32,6 +32,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 |---|---|---|---|
 | Homebrew formulae and casks | `brew info --json=v2 --installed` | Homebrew | not covered by OSV yet |
 | npm globals | `npm ls -g`, `npm outdated -g` | npm registry | OSV, plus direct dependencies |
+| Composer globals | `composer global show`, `composer global show --tree`, `composer global outdated` | Packagist | OSV, plus every dependency |
 | pipx | `pipx list --json` | PyPI | OSV |
 | uv tools | `uv tool list` | PyPI | OSV |
 | `go install` binaries | build info inside each binary | Go module proxy | OSV, plus every module built in |

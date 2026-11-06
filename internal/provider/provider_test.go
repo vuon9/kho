@@ -141,6 +141,117 @@ func TestParseLists(t *testing.T) {
 	}
 }
 
+func TestParseComposer(t *testing.T) {
+	tests := []struct {
+		id         string
+		flat, tree string
+		want       []Package
+	}{
+		{
+			id: "dependencies are rows with the shortest chain that pulls them in, without platform requirements",
+			flat: `{"installed":[
+				{"name":"acme/cli","direct-dependency":true,"homepage":"https://cli.example","source":"https://github.com/example/cli/tree/v5.4.2",
+					"version":"v5.4.2","description":"Build command line tools","abandoned":false},
+				{"name":"acme/console","direct-dependency":false,"homepage":null,"source":"https://github.com/example/console/tree/v2.3.0",
+					"version":"v2.3.0","description":"Read input and write output","abandoned":false},
+				{"name":"acme/container","direct-dependency":false,"homepage":null,"source":"https://github.com/example/container/tree/2.0.2",
+					"version":"2.0.2","description":"Common container interface","abandoned":false},
+				{"name":"acme/lexer","direct-dependency":false,"homepage":null,"source":"https://github.com/example/lexer/tree/v1.2.0",
+					"version":"v1.2.0","description":"Split PHP code into tokens","abandoned":false},
+				{"name":"acme/parser","direct-dependency":true,"homepage":null,"source":"https://github.com/example/parser/tree/v4.1.0",
+					"version":"v4.1.0","description":"A parser for PHP code","abandoned":false},
+				{"name":"acme/polyfill","direct-dependency":false,"homepage":null,"source":"https://github.com/example/polyfill/tree/v1.30.0",
+					"version":"v1.30.0","description":"Backport newer string functions","abandoned":false}]}`,
+			tree: `{"installed":[
+				{"name":"acme/cli","version":"v5.4.2","description":"Build command line tools","requires":[
+					{"name":"php","version":">=7.2.5"},
+					{"name":"acme/console","version":"^2.1","installed":"v2.3.0","requires":[
+						{"name":"php","version":">=8.1"},
+						{"name":"acme/container","version":"^1.1|^2.0","installed":"2.0.2","requires":[{"name":"php","version":">=7.4.0"}]},
+						{"name":"acme/polyfill","version":"~1.0","installed":"v1.30.0","requires":[{"name":"ext-iconv","version":"*"}]}]},
+					{"name":"acme/polyfill","version":"~1.0","installed":"v1.30.0","requires":[{"name":"ext-iconv","version":"*"}]}]},
+				{"name":"acme/parser","version":"v4.1.0","description":"A parser for PHP code","requires":[
+					{"name":"acme/lexer","version":"^1.2","installed":"v1.2.0","requires":[
+						{"name":"acme/polyfill","version":"~1.0","installed":"v1.30.0","requires":[{"name":"ext-iconv","version":"*"}]}]},
+					{"name":"ext-tokenizer","version":"*"},{"name":"php","version":">=7.1"}]}]}`,
+			want: []Package{
+				{Source: "composer", Name: "acme/cli", Version: "v5.4.2", Origin: "packagist.org", Desc: "Build command line tools",
+					Deps: []Dep{{Name: "acme/console", Version: "v2.3.0", Direct: true}, {Name: "acme/polyfill", Version: "v1.30.0", Direct: true}}},
+				{Source: "composer", Name: "acme/console", Version: "v2.3.0", Dependency: true, Origin: "packagist.org", Desc: "Read input and write output",
+					Via: []string{"acme/cli"}},
+				{Source: "composer", Name: "acme/container", Version: "2.0.2", Dependency: true, Origin: "packagist.org", Desc: "Common container interface",
+					Via: []string{"acme/cli", "acme/console"}},
+				{Source: "composer", Name: "acme/lexer", Version: "v1.2.0", Dependency: true, Origin: "packagist.org", Desc: "Split PHP code into tokens",
+					Via: []string{"acme/parser"}},
+				{Source: "composer", Name: "acme/parser", Version: "v4.1.0", Origin: "packagist.org", Desc: "A parser for PHP code",
+					Deps: []Dep{{Name: "acme/lexer", Version: "v1.2.0", Direct: true}}},
+				{Source: "composer", Name: "acme/polyfill", Version: "v1.30.0", Dependency: true, Origin: "packagist.org", Desc: "Backport newer string functions",
+					Via: []string{"acme/cli"}},
+			},
+		},
+		{
+			id: "before 2.11 the tree names no installed versions, and dependency rows still get theirs",
+			flat: `{"installed":[
+				{"name":"acme/cli","direct-dependency":true,"version":"v5.4.2","description":"Build command line tools"},
+				{"name":"acme/console","direct-dependency":false,"version":"v2.3.0","description":"Read input and write output"},
+				{"name":"acme/container","direct-dependency":false,"version":"2.0.2","description":"Common container interface"}]}`,
+			tree: `{"installed":[{"name":"acme/cli","version":"v5.4.2","description":"Build command line tools","requires":[
+				{"name":"php","version":">=7.2.5"},
+				{"name":"acme/console","version":"^2.1","requires":[
+					{"name":"php","version":">=8.1"},{"name":"acme/container","version":"^1.1|^2.0","requires":[{"name":"php","version":">=7.4.0"}]}]}]}]}`,
+			want: []Package{
+				{Source: "composer", Name: "acme/cli", Version: "v5.4.2", Origin: "packagist.org", Desc: "Build command line tools",
+					Deps: []Dep{{Name: "acme/console", Version: "v2.3.0", Direct: true}}},
+				{Source: "composer", Name: "acme/console", Version: "v2.3.0", Dependency: true, Origin: "packagist.org", Desc: "Read input and write output",
+					Via: []string{"acme/cli"}},
+				{Source: "composer", Name: "acme/container", Version: "2.0.2", Dependency: true, Origin: "packagist.org", Desc: "Common container interface",
+					Via: []string{"acme/cli", "acme/console"}},
+			},
+		},
+		{
+			id: "a package required directly is not a dependency row too",
+			flat: `{"installed":[{"name":"acme/cli","version":"v5.4.2"},{"name":"acme/ctype","version":"v1.30.0"},
+				{"name":"acme/strings","version":"v6.4.1"}]}`,
+			tree: `{"installed":[
+				{"name":"acme/cli","version":"v5.4.2","requires":[{"name":"acme/strings","version":"^6.0","installed":"v6.4.1","requires":[
+					{"name":"acme/ctype","version":"~1.8","installed":"v1.30.0"}]}]},
+				{"name":"acme/strings","version":"v6.4.1","requires":[{"name":"acme/ctype","version":"~1.8","installed":"v1.30.0"}]}]}`,
+			want: []Package{
+				{Source: "composer", Name: "acme/cli", Version: "v5.4.2", Origin: "packagist.org", Deps: []Dep{{Name: "acme/strings", Version: "v6.4.1", Direct: true}}},
+				{Source: "composer", Name: "acme/ctype", Version: "v1.30.0", Dependency: true, Origin: "packagist.org", Via: []string{"acme/strings"}},
+				{Source: "composer", Name: "acme/strings", Version: "v6.4.1", Origin: "packagist.org", Deps: []Dep{{Name: "acme/ctype", Version: "v1.30.0", Direct: true}}},
+			},
+		},
+		{
+			id: "a package nothing requires any more is still a dependency row",
+			flat: `{"installed":[{"name":"acme/cli","version":"v5.4.2","description":"Build command line tools"},
+				{"name":"acme/leftover","version":"0.9.1","description":"Once needed by an older acme/cli"}]}`,
+			tree: `{"installed":[{"name":"acme/cli","version":"v5.4.2","description":"Build command line tools","requires":[{"name":"php","version":">=8.1"}]}]}`,
+			want: []Package{
+				{Source: "composer", Name: "acme/cli", Version: "v5.4.2", Origin: "packagist.org", Desc: "Build command line tools"},
+				{Source: "composer", Name: "acme/leftover", Version: "0.9.1", Dependency: true, Origin: "packagist.org", Desc: "Once needed by an older acme/cli"},
+			},
+		},
+		{
+			id:   "nothing required prints an empty array",
+			flat: `[]`,
+			tree: `{"installed":[]}`,
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			got, err := parseComposer([]byte(tt.flat), []byte(tt.tree))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %+v\nwant %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseOutdated(t *testing.T) {
 	tests := []struct {
 		id    string
@@ -150,6 +261,11 @@ func TestParseOutdated(t *testing.T) {
 	}{
 		{"npm outdated", parseNpmOutdated, `{"npm":{"current":"11.19.0","wanted":"12.2.1","latest":"12.2.1","dependent":"global"}}`, map[string]string{"npm": "12.2.1"}},
 		{"npm nothing outdated", parseNpmOutdated, ``, nil},
+		{"composer outdated", parseComposerOutdated, `{"installed":[{"name":"acme/parser","direct-dependency":true,"homepage":null,
+			"source":"https://github.com/acme/parser/tree/v4.1.0","version":"v4.1.0","release-age":"10 months old","release-date":"2026-01-06T11:45:25+00:00",
+			"latest":"v5.2.0","latest-release-date":"2026-09-13T18:51:52+00:00","latest-status":"update-possible","description":"A parser for PHP code",
+			"abandoned":false}]}`, map[string]string{"acme/parser": "v5.2.0"}},
+		{"composer nothing outdated", parseComposerOutdated, `{"installed":[]}`, map[string]string{}},
 		{"mise outdated", parseMiseOutdated, `{"node":{"requested":"24","current":"24.2.0","latest":"24.3.0"}}`, map[string]string{"node": "24.3.0"}},
 		{"mise nothing outdated", parseMiseOutdated, `{}`, map[string]string{}},
 	}
@@ -316,6 +432,31 @@ func TestParseVersions(t *testing.T) {
 			parse:    func(in string) ([]Release, string, error) { return parseNpmView("x", []byte(in)) },
 			in:       `{"time":{},"repository":"github:owner/name"}`,
 			wantRepo: "owner/name",
+		},
+		{
+			id:    "packagist versions carry a field left out from the version before, newest first",
+			parse: func(in string) ([]Release, string, error) { return parsePackagist("acme/ledger", []byte(in)) },
+			in: `{"minified":"composer/2.0","packages":{"acme/ledger":[
+				{"name":"acme/ledger","description":"Keep accounts","homepage":"https://ledger.example","version":"v2.5.0","version_normalized":"2.5.0.0",
+					"source":{"url":"https://github.com/example/ledger.git","type":"git","reference":"c71ecc5"},"time":"2026-10-09T00:00:00+00:00",
+					"extra":{"branch-alias":{"dev-main":"2.5.x-dev"}},"require":{"php":">=8.1"}},
+				{"version":"v2.4.0","version_normalized":"2.4.0.0","source":{"url":"https://github.com/example/ledger.git","type":"git","reference":"2ae3732"},
+					"time":"2026-10-03T00:00:00+00:00","extra":"__unset"},
+				{"version":"v2.4.0-RC1","version_normalized":"2.4.0.0-RC1"},
+				{"version":"v1.0.0","version_normalized":"1.0.0.0","time":"__unset","source":"__unset"}]}}`,
+			want: []Release{
+				{Version: "v2.5.0", Date: day(9), URL: "https://packagist.org/packages/acme/ledger#v2.5.0"},
+				{Version: "v2.4.0", Date: day(3), URL: "https://packagist.org/packages/acme/ledger#v2.4.0"},
+				{Version: "v2.4.0-RC1", Date: day(3), URL: "https://packagist.org/packages/acme/ledger#v2.4.0-RC1"},
+				{Version: "v1.0.0", URL: "https://packagist.org/packages/acme/ledger#v1.0.0"},
+			},
+			wantRepo: "example/ledger",
+		},
+		{
+			id:       "packagist without the package asked for",
+			parse:    func(in string) ([]Release, string, error) { return parsePackagist("acme/ledger", []byte(in)) },
+			in:       `{"minified":"composer/2.0","packages":{}}`,
+			wantRepo: "",
 		},
 		{
 			id:    "pypi skips yanked and empty releases",
@@ -844,7 +985,7 @@ func TestMajorModuleFindsAHigherMajor(t *testing.T) {
 // Each row builds its own PATH and home, so the developer's machine does not
 // decide the result.
 func TestDetect(t *testing.T) {
-	everything := []string{"brew", "npm", "pipx", "uv", "mise"}
+	everything := []string{"brew", "npm", "composer", "pipx", "uv", "mise"}
 	tests := []struct {
 		id      string
 		bins    []string
@@ -853,15 +994,15 @@ func TestDetect(t *testing.T) {
 		skipped map[string]string
 	}{
 		{"a machine with nothing set up names every provider and why", nil, nil, nil, map[string]string{
-			"brew": "brew not on PATH", "npm": "npm not on PATH", "pipx": "pipx not on PATH", "uv": "uv not on PATH",
-			"go": "no Go binary directory", "mise": "mise not on PATH", "skills": "no ~/.agents/skills directory",
+			"brew": "brew not on PATH", "npm": "npm not on PATH", "composer": "composer not on PATH", "pipx": "pipx not on PATH",
+			"uv": "uv not on PATH", "go": "no Go binary directory", "mise": "mise not on PATH", "skills": "no ~/.agents/skills directory",
 		}},
 		{"a machine with some set up skips the rest", []string{"uv"}, []string{"gobin"}, []string{"uv", "go"}, map[string]string{
-			"brew": "brew not on PATH", "npm": "npm not on PATH", "pipx": "pipx not on PATH",
+			"brew": "brew not on PATH", "npm": "npm not on PATH", "composer": "composer not on PATH", "pipx": "pipx not on PATH",
 			"mise": "mise not on PATH", "skills": "no ~/.agents/skills directory",
 		}},
 		{"a machine with everything set up skips nothing", everything, []string{"gobin", ".agents/skills"},
-			[]string{"brew", "npm", "pipx", "uv", "go", "mise", "skills"}, map[string]string{}},
+			[]string{"brew", "npm", "composer", "pipx", "uv", "go", "mise", "skills"}, map[string]string{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
