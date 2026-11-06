@@ -1,0 +1,12 @@
+[package]
+name = "demo-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+inkpot = { git = "https://example.com/inkpot", version = "3.1.0" }
+localutil = { path = "localutil" }
+tinyhash = "0.4"
+
+[dev-dependencies]
+tmp = { package = "tempdir-lite", version = "3.2" }

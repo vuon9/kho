@@ -1,0 +1,10 @@
+[package]
+name = "core-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tinyhash = "0.4"
+
+[dev-dependencies]
+tempdir-lite = "3.2"

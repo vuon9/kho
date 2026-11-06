@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "legacy-app"
+version = "0.1.0"
+description = ""
+authors = ["Someone"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+inkpot = "^3.0"
+
+[tool.poetry.dev-dependencies]
+checkmate = "^7.4"
+
+[tool.poetry.group.docs.dependencies]
+pagewright = "^1.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

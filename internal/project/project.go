@@ -1,0 +1,432 @@
+// Package project finds the lockfiles under a folder and reads them into
+// packages kho can check. It only reads files. It never runs a project's
+// tools, because those run the project's own scripts and plugins.
+package project
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"fmt"
+	"maps"
+	"math"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/vuln"
+)
+
+// Tunables, package vars so tests can shrink them.
+var (
+	MaxDepth     = 4
+	MaxLockfiles = 50
+	Budget       = 3 * time.Second
+)
+
+type Scan struct {
+	// Root is the absolute folder the scan used: the start folder, or the
+	// git root when nothing was found below the start.
+	Root string `json:"root"`
+	// Projects holds one entry per folder with lockfiles or flagged
+	// manifests, sorted by Dir.
+	Projects []Project `json:"projects,omitempty"`
+	// Capped says why the scan stopped early, or is "".
+	Capped string `json:"capped,omitempty"`
+}
+
+type Project struct {
+	// Dir is relative to Root and slash separated, "" for Root itself.
+	Dir       string     `json:"dir"`
+	Lockfiles []Lockfile `json:"lockfiles"`
+}
+
+type Lockfile struct {
+	// Path is relative to Root and slash separated.
+	Path string `json:"path"`
+	// Manager is npm, composer, go, uv, poetry, pip or cargo. It becomes
+	// each package's Source.
+	Manager  string             `json:"manager"`
+	Packages []provider.Package `json:"packages,omitempty"`
+	// Missing is set when only a manifest exists, and says what to do.
+	Missing string `json:"missing,omitempty"`
+	// Err is a read or parse failure, shown to the person.
+	Err string `json:"error,omitempty"`
+}
+
+// Find walks down from start for lockfiles. When it finds nothing and start
+// sits below the root of a git repo, it walks the repo from its root. The
+// error is only for a start folder that can't be read.
+func Find(ctx context.Context, start string) (Scan, error) {
+	root, err := filepath.Abs(start)
+	if err != nil {
+		return Scan{}, err
+	}
+	if _, err := os.ReadDir(root); err != nil {
+		return Scan{}, err
+	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, Budget)
+	defer cancel()
+	s := Scan{Root: root}
+	s.Projects, s.Capped = walk(ctx, root)
+	if len(s.Projects) == 0 && s.Capped == "" {
+		// A home folder kept in git for its dotfiles is not a project to walk.
+		home, _ := os.UserHomeDir()
+		if top := gitRoot(root); top != "" && top != root && top != home {
+			s.Root = top
+			s.Projects, s.Capped = walk(ctx, top)
+		}
+	}
+	if err := parent.Err(); err != nil {
+		return Scan{}, err
+	}
+	return s, nil
+}
+
+// gitRoot is the nearest folder at or above dir that holds .git, or "".
+// It never looks above the home folder.
+func gitRoot(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	for !aboveHome(dir, home) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func aboveHome(dir, home string) bool {
+	rel, err := filepath.Rel(dir, home)
+	rel = filepath.ToSlash(rel)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+var skipped = map[string]bool{
+	"node_modules": true, "vendor": true, ".venv": true, "venv": true, "target": true,
+	"dist": true, "build": true, "testdata": true, "fixtures": true,
+}
+
+type folder struct {
+	rel   string
+	depth int
+	// locked holds the ecosystems with a lockfile in a folder above.
+	locked map[string]bool
+}
+
+// walk goes breadth first, so when a cap stops it the folders nearest the
+// root are the ones read.
+func walk(ctx context.Context, root string) ([]Project, string) {
+	var found []Lockfile
+	capped := ""
+	read := 0
+	queue := []folder{{}}
+scan:
+	for len(queue) > 0 {
+		f := queue[0]
+		queue = queue[1:]
+		if ctx.Err() != nil {
+			capped = "stopped after " + Budget.String()
+			break
+		}
+		dir := filepath.Join(root, filepath.FromSlash(f.rel))
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		files := map[string]bool{}
+		var dirs []string
+		for _, e := range entries {
+			switch {
+			case !e.IsDir():
+				files[e.Name()] = true
+			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), "."):
+				dirs = append(dirs, e.Name())
+			}
+		}
+		here, locked := detect(dir, f.rel, files, f.locked)
+		for _, lf := range here {
+			if lf.Missing != "" {
+				found = append(found, lf)
+				continue
+			}
+			if read == MaxLockfiles {
+				capped = fmt.Sprintf("stopped after %d lockfiles", MaxLockfiles)
+				break scan
+			}
+			if ctx.Err() != nil {
+				capped = "stopped after " + Budget.String()
+				break scan
+			}
+			read++
+			found = append(found, readLockfile(root, lf.Path, lf.Manager))
+		}
+		if f.depth < MaxDepth {
+			for _, d := range dirs {
+				queue = append(queue, folder{rel: path.Join(f.rel, d), depth: f.depth + 1, locked: locked})
+			}
+		}
+	}
+	return group(found), capped
+}
+
+// detect lists the lockfiles in one folder, plus notes for manifests that
+// have none. A manifest is not flagged when a folder above holds that
+// ecosystem's lockfile, as in npm and Cargo workspaces.
+func detect(dir, rel string, files, above map[string]bool) ([]Lockfile, map[string]bool) {
+	var out []Lockfile
+	add := func(file, manager, missing string) {
+		out = append(out, Lockfile{Path: path.Join(rel, file), Manager: manager, Missing: missing})
+	}
+	noLock := func(cmd string) string { return "no lockfile, versions unknown. Run " + cmd + " to create one" }
+	locked := maps.Clone(above)
+	if locked == nil {
+		locked = map[string]bool{}
+	}
+
+	npmLock := firstOf(files, "package-lock.json", "npm-shrinkwrap.json")
+	otherLock := firstOf(files, "pnpm-lock.yaml", "yarn.lock", "bun.lock")
+	switch {
+	case npmLock != "":
+		add(npmLock, "npm", "")
+	case files["package.json"] && !above["npm"] && npmDeclares(dir):
+		if otherLock != "" {
+			add("package.json", "npm", otherLock+" isn't read yet")
+		} else {
+			add("package.json", "npm", noLock("npm install"))
+		}
+	}
+	locked["npm"] = locked["npm"] || npmLock != "" || otherLock != ""
+
+	switch {
+	case files["composer.lock"]:
+		add("composer.lock", "composer", "")
+		locked["composer"] = true
+	case files["composer.json"] && !above["composer"]:
+		add("composer.json", "composer", noLock("composer install"))
+	}
+
+	if files["go.mod"] {
+		add("go.mod", "go", "")
+	}
+
+	var reqs []string
+	for name := range files {
+		if strings.HasPrefix(name, "requirements") && strings.HasSuffix(name, ".txt") {
+			reqs = append(reqs, name)
+		}
+	}
+	switch {
+	case files["uv.lock"] || files["poetry.lock"]:
+		// requirements files beside these are usually exported from them.
+		if files["uv.lock"] {
+			add("uv.lock", "uv", "")
+		}
+		if files["poetry.lock"] {
+			add("poetry.lock", "poetry", "")
+		}
+		locked["python"] = true
+	case len(reqs) > 0:
+		for _, r := range reqs {
+			add(r, "pip", "")
+		}
+		locked["python"] = true
+	case files["pyproject.toml"] && !above["python"]:
+		if m := pyprojectManager(dir); m != "" {
+			add("pyproject.toml", m, noLock(m+" lock"))
+		}
+	}
+
+	switch {
+	case files["Cargo.lock"]:
+		add("Cargo.lock", "cargo", "")
+		locked["cargo"] = true
+	case files["Cargo.toml"] && !above["cargo"]:
+		add("Cargo.toml", "cargo", noLock("cargo generate-lockfile"))
+	}
+	return out, locked
+}
+
+func firstOf(files map[string]bool, names ...string) string {
+	for _, n := range names {
+		if files[n] {
+			return n
+		}
+	}
+	return ""
+}
+
+func group(lfs []Lockfile) []Project {
+	slices.SortFunc(lfs, func(a, b Lockfile) int {
+		return cmp.Or(strings.Compare(dirOf(a.Path), dirOf(b.Path)), strings.Compare(a.Manager, b.Manager), strings.Compare(a.Path, b.Path))
+	})
+	var out []Project
+	for _, lf := range lfs {
+		d := dirOf(lf.Path)
+		if len(out) == 0 || out[len(out)-1].Dir != d {
+			out = append(out, Project{Dir: d})
+		}
+		out[len(out)-1].Lockfiles = append(out[len(out)-1].Lockfiles, lf)
+	}
+	return out
+}
+
+func dirOf(p string) string {
+	if d := path.Dir(p); d != "." {
+		return d
+	}
+	return ""
+}
+
+var readers = map[string]func(dir, name string) ([]provider.Package, error){
+	"npm":      readNpm,
+	"composer": readComposer,
+	"go":       readGoMod,
+	"uv":       readUv,
+	"poetry":   readPoetry,
+	"pip":      readRequirements,
+	"cargo":    readCargo,
+}
+
+func readLockfile(root, rel, manager string) Lockfile {
+	lf := Lockfile{Path: rel, Manager: manager}
+	pkgs, err := readers[manager](filepath.Join(root, filepath.FromSlash(path.Dir(rel))), path.Base(rel))
+	if err != nil {
+		lf.Err = err.Error()
+		return lf
+	}
+	for i := range pkgs {
+		pkgs[i].Source = manager
+		pkgs[i].Lockfile = rel
+	}
+	lf.Packages = tidy(pkgs)
+	return lf
+}
+
+// tidy sorts packages by name and version, and folds copies of one version
+// into the one that matters most: direct, then prod, then the shortest chain.
+// npm can install the same version at several places in node_modules.
+func tidy(pkgs []provider.Package) []provider.Package {
+	slices.SortFunc(pkgs, func(a, b provider.Package) int {
+		return cmp.Or(strings.Compare(a.Name, b.Name), vuln.Compare(a.Version, b.Version),
+			cmp.Compare(boolRank(a.Dependency), boolRank(b.Dependency)), cmp.Compare(boolRank(a.Dev), boolRank(b.Dev)),
+			cmp.Compare(reach(a), reach(b)), strings.Compare(strings.Join(a.Via, " "), strings.Join(b.Via, " ")))
+	})
+	var out []provider.Package
+	for _, p := range pkgs {
+		if n := len(out); n > 0 && out[n-1].Name == p.Name && out[n-1].Version == p.Version {
+			out[n-1].Dev = out[n-1].Dev && p.Dev
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func reach(p provider.Package) int {
+	if p.Dependency && p.Via == nil {
+		return math.MaxInt
+	}
+	return len(p.Via)
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// trace finds how each node is pulled in. via holds the shortest chain of
+// names from a root down to the node's parent. Chains from prod roots win, so
+// a prod package is never shown as coming in through a dev tool. devOnly says
+// a node is reachable from dev roots alone.
+func trace[K comparable](prod, dev []K, children func(K) []K, name func(K) string) (via map[K][]string, devOnly func(K) bool) {
+	fromProd := chains(prod, children, name)
+	fromDev := chains(dev, children, name)
+	via = maps.Clone(fromDev)
+	maps.Copy(via, fromProd)
+	return via, func(k K) bool {
+		_, p := fromProd[k]
+		_, d := fromDev[k]
+		return d && !p
+	}
+}
+
+func chains[K comparable](roots []K, children func(K) []K, name func(K) string) map[K][]string {
+	via := map[K][]string{}
+	var queue []K
+	for _, r := range roots {
+		if _, seen := via[r]; !seen {
+			via[r] = nil
+			queue = append(queue, r)
+		}
+	}
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		for _, c := range children(n) {
+			if _, seen := via[c]; !seen {
+				via[c] = append(slices.Clip(via[n]), name(n))
+				queue = append(queue, c)
+			}
+		}
+	}
+	return via
+}
+
+func readJSON(file string, v any) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+// FixCommand is what a person runs in the project's folder to move p to
+// version. For pip it is an edit to make, not a command.
+func FixCommand(p provider.Package, version string) string {
+	switch p.Source {
+	case "npm":
+		switch {
+		case p.Dependency:
+			return "npm update " + p.Name
+		case p.Dev:
+			return "npm install -D " + p.Name + "@" + version
+		}
+		return "npm install " + p.Name + "@" + version
+	case "composer":
+		switch {
+		case p.Dependency:
+			return "composer update " + p.Name
+		case p.Dev:
+			return "composer require --dev " + p.Name + ":^" + strings.TrimPrefix(version, "v")
+		}
+		return "composer require " + p.Name + ":^" + strings.TrimPrefix(version, "v")
+	case "go":
+		// OSV writes Go versions without the v that go get needs.
+		return "go get " + p.Origin + "@v" + strings.TrimPrefix(version, "v")
+	case "uv":
+		return "uv lock --upgrade-package " + p.Name
+	case "poetry":
+		return "poetry update " + p.Name
+	case "pip":
+		return "pin " + p.Name + "==" + version + " in " + path.Base(p.Lockfile)
+	case "cargo":
+		// Naming the locked version still works when two versions are locked.
+		return "cargo update -p " + p.Name + "@" + p.Version + " --precise " + version
+	}
+	return ""
+}

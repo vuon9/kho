@@ -1,0 +1,81 @@
+{
+    "_readme": [
+        "This file locks the dependencies of your project to a known state",
+        "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
+        "This file is @generated automatically"
+    ],
+    "content-hash": "00000000000000000000000000000000",
+    "packages": [
+        {
+            "name": "acme/ledger",
+            "version": "v2.3.0",
+            "source": {
+                "type": "git",
+                "url": "https://example.com/acme/ledger.git",
+                "reference": "0000000000000000000000000000000000000000"
+            },
+            "require": {
+                "acme/numbers": "^1.4",
+                "ext-json": "*",
+                "php": ">=8.1"
+            },
+            "type": "library",
+            "license": [
+                "MIT"
+            ],
+            "time": "2026-01-01T00:00:00+00:00"
+        },
+        {
+            "name": "acme/numbers",
+            "version": "1.4.2",
+            "require": {
+                "acme/polyfill-math": "^1.0",
+                "ext-bcmath": "*",
+                "php": ">=7.4"
+            },
+            "type": "library"
+        },
+        {
+            "name": "acme/polyfill-math",
+            "version": "v1.0.5",
+            "require": {
+                "php": ">=7.2"
+            },
+            "type": "library"
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "acme/faker-lite",
+            "version": "0.3.7",
+            "require": {
+                "php": ">=8.0"
+            },
+            "type": "library"
+        },
+        {
+            "name": "acme/fixture-kit",
+            "version": "1.1.0",
+            "require": {
+                "acme/faker-lite": "^0.3",
+                "acme/numbers": "^1.0",
+                "php": ">=8.1"
+            },
+            "require-dev": {
+                "acme/never-installed": "^1.0"
+            },
+            "type": "library"
+        }
+    ],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": {},
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {
+        "php": ">=8.1",
+        "ext-json": "*"
+    },
+    "platform-dev": {},
+    "plugin-api-version": "2.6.0"
+}
