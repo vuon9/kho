@@ -453,6 +453,48 @@ func TestInstallStillRefusesAVersionNowhere(t *testing.T) {
 	}
 }
 
+// A scoped npm package carries an @ of its own, so the version separator has to
+// be the last one. Splitting on the first tore the ref in half and kho answered
+// "npm/ is not installed" about a package it could see.
+func TestInstallReadsScopedNames(t *testing.T) {
+	tests := []struct {
+		id   string
+		args []string
+		out  string
+		ran  []string
+	}{
+		{id: "a scoped package with a version only says what it would run", args: []string{"install", "npm/@scope/tool@1.2.3"}, out: "would run: npm install -g @scope/tool@1.2.3"},
+		{id: "a scoped package at latest runs", args: []string{"install", "npm/@scope/tool@latest", "--yes"}, ran: []string{"npm install -g @scope/tool@9.9.9"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			var ran []string
+			env := Env{
+				Version: "v9.9.9",
+				Providers: []provider.Provider{fake{
+					name:     "npm",
+					pkgs:     []provider.Package{{Source: "npm", Name: "@scope/tool", Version: "1.0.0", Latest: "9.9.9", Outdated: true}},
+					versions: []provider.Release{{Version: "1.2.3"}, {Version: "9.9.9"}},
+				}},
+				Log: history.Open(""),
+				Out: &out, Err: &errOut,
+				Now: func() time.Time { return clock },
+				Run: func(cmd *exec.Cmd) (string, error) {
+					ran = append(ran, strings.Join(cmd.Args, " "))
+					return "installed", nil
+				},
+			}
+			if code := Main(env, tt.args); code != ExitOK {
+				t.Fatalf("exit %d, stderr %q", code, errOut.String())
+			}
+			if !strings.Contains(out.String(), tt.out) || strings.Join(ran, "|") != strings.Join(tt.ran, "|") {
+				t.Errorf("stdout %q, ran %v, want %q and %v", out.String(), ran, tt.out, tt.ran)
+			}
+		})
+	}
+}
+
 func TestInstallIsRecorded(t *testing.T) {
 	got := kho(t, nil, nil, nil, "install", "pipx/bramble@24.3.0", "--yes", "--json")
 	var res InstallResult
