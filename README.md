@@ -6,12 +6,14 @@
 
 **One place for every package manager on your machine, with security checks.**
 
-![kho listing packages from several managers, with a vulnerable npm package selected and its advisory open](docs/screenshot.png)
+![kho with a project's lockfiles open under the machine's package managers, a vulnerable dependency selected, and the command that fixes it](docs/screenshot.png)
 
-*Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, pipx, uv, `go install`, mise and the skills CLI have put on your machine, tells you which of those packages have known vulnerabilities, and upgrades them only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
+*Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, Composer, pipx, uv, `go install`, mise and the skills CLI have put on your machine, and what the project in front of you depends on. It tells you which of those packages have known vulnerabilities, and upgrades the machine's only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
 
 <details>
 <summary>See it run</summary>
+
+This recording is from v0.1.1, before Composer and project scanning. The latest version does a lot more, so try it yourself.
 
 https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
@@ -21,9 +23,10 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 - **Everything in one list.** Packages from every manager in one table, with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
 - **Knows what's unsafe.** Checks packages against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
+- **Knows your project too.** Run kho in a project folder and it reads the lockfiles there in the background: `package-lock.json`, `composer.lock`, `go.mod`, `uv.lock`, `poetry.lock`, pinned `requirements*.txt` and `Cargo.lock`, four folders deep. They show in their own section at the bottom of the sidebar, with each dependency's chain back to what you required, dev packages marked, and the project's own command to fix a vulnerable one. kho only reads lockfiles. It never runs the project's tools and never changes the project.
 - **Reads before you change.** Versions with their release notes, dependencies (flagged when they're vulnerable), and for skills: SKILL.md, the README, and which agents can see the skill.
 - **Changes only on your say-so.** Pick a version to upgrade or downgrade, read the exact command, confirm, and watch it run in a popup without leaving kho. Link or unlink a skill for any agent the skills CLI supports. Every command kho runs is kept in a history you can browse.
-- **Works for agents too.** `kho check --json` answers "am I safe?" and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
+- **Works for agents too.** `kho check --json` answers "am I safe?", `kho check --project` asks the same of a project (and works as a CI gate), and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
 - **Pleasant to live in.** Mouse and keyboard, resizable panels, selectable text, five themes, a `?` key that lists every shortcut.
 
 ## Supported sources
@@ -32,6 +35,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 |---|---|---|---|
 | Homebrew formulae and casks | `brew info --json=v2 --installed` | Homebrew | not covered by OSV yet |
 | npm globals | `npm ls -g`, `npm outdated -g` | npm registry | OSV, plus direct dependencies |
+| Composer globals | `composer global show`, `composer global show --tree`, `composer global outdated` | Packagist | OSV, plus every dependency |
 | pipx | `pipx list --json` | PyPI | OSV |
 | uv tools | `uv tool list` | PyPI | OSV |
 | `go install` binaries | build info inside each binary | Go module proxy | OSV, plus every module built in |
@@ -61,12 +65,13 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
 
 ## Use it
 
-Run `kho`. Press `?` at any time for every key.
+Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any time for every key.
 
 | Key | Does |
 |---|---|
-| `tab` `h` `l` | move between Sources, Packages and the sidebar |
-| `↑` `↓` `enter` | pick, then open in the next panel |
+| `tab` `h` `l` | move between Machine, Packages and the sidebar |
+| `↑` `↓` `enter` | pick, then open in the next panel; `enter` on the project opens or closes it |
+| `d` `p` | show or hide dependencies (vulnerable ones always show), hide a project's dev packages |
 | `/` `f` | filter by name, step through status filters |
 | `s` `S` | sort by the next column, reverse it |
 | `i` `v` `a` | sidebar tabs: Info, Versions, Security |
@@ -74,7 +79,7 @@ Run `kho`. Press `?` at any time for every key.
 | `H` | history of every command kho ran |
 | `<` `>` `{` `}` | resize panels and the sidebar's halves |
 | `t` | next theme |
-| `w` `c` | open the homepage, copy the text you're reading |
+| `w` `c` | open the homepage, copy the text you're reading (on a project package's Security tab, its fix command) |
 
 ## For agents
 
@@ -104,18 +109,26 @@ Run it once now so I can see a report, and tell me how to pause it.
 
 Scripts can call the same commands: `kho check --json` exits 0 when safe, 3 when at risk, and 4 when the scan was not complete and a gate was asked for. `--require uv,npm` fails only when one of the named managers could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped or failed, an OSV or skills.sh lookup included. `kho help` lists the rest.
 
+`kho check --project [folder]` does the same for a project's lockfiles instead of the machine, so it also works as a CI step that fails a pull request adding a vulnerable dependency. `--prod-only` leaves dev dependencies out of the verdict:
+
+```bash
+kho check --project . --prod-only
+```
+
 ## What leaves your machine
 
 kho changes nothing until you confirm. To check versions and security it asks the services below about the packages you have, so each one learns those package names and sees your IP address, as it would when your package managers check for updates. Nothing else is sent: no analytics, no paths, no file contents.
 
 | Where | What it learns | Asked by |
 |---|---|---|
-| OSV (`api.osv.dev`) | names and versions of npm, PyPI and Go packages, and of their dependencies | kho |
-| PyPI (`pypi.org`) | names of pipx and uv packages | kho |
-| Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries | kho |
+| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles | kho |
+| PyPI (`pypi.org`) | names of pipx and uv packages, and of a project's direct Python dependencies | kho |
+| Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
 | GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes | kho |
 | skills.sh | skill names and their repositories | kho |
-| npm registry | names of global npm packages | `npm outdated`, `npm view` |
+| npm registry | names of global npm packages, and of a project's direct npm dependencies | `npm outdated`, `npm view`, and kho for projects |
+| Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |
+| crates.io | names of a project's direct Rust crates | kho |
 | mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |
 
 Homebrew answers from its local copy of its package list. When you confirm an install, the package manager downloads it as it always does.

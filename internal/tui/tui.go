@@ -19,14 +19,19 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-func Run(log *history.Log, version string) error {
+// Run opens the TUI on dir, whose project kho reads alongside the machine.
+func Run(log *history.Log, version, dir string) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
-	m.log, m.version = log, version
+	m.log, m.version, m.dir = log, version, dir
+	if dir != "" {
+		m.projBusy = projReading
+	}
 	m.themePath = filepath.Join(filepath.Dir(history.Path()), "theme")
 	if name, err := os.ReadFile(m.themePath); err == nil {
 		if t, ok := themeNamed(strings.TrimSpace(string(name))); ok {
@@ -194,11 +199,16 @@ type model struct {
 	vulns    map[string][]vuln.Advisory
 	depVulns map[string][]depAdvisory
 
-	focus  int
-	tab    int
-	rail   int
-	cursor int
-	offset int
+	focus int
+	tab   int
+	rail  int
+	// railKey is the selected rail row's key, so the selection follows the
+	// row when rows above it come and go. railTop is the first rail line
+	// shown when they don't all fit.
+	railKey string
+	railTop int
+	cursor  int
+	offset  int
 	// picked is whether the person has done anything since kho started or
 	// rescanned. Until then the cursor stays on the first row as the
 	// sources answer; after, it stays on the package they are looking at.
@@ -211,8 +221,8 @@ type model struct {
 
 	sortCol   int
 	sortDesc  bool
-	filters   map[int]string
-	statuses  map[int]int
+	filters   map[string]string
+	statuses  map[string]int
 	filtering bool
 	showDeps  bool
 	help      bool
@@ -229,7 +239,18 @@ type model struct {
 	resizing  int
 	grab      int
 
-	version     string
+	version string
+	// dir is the folder kho was opened on, whose project it reads. proj is
+	// what the last scan found, nil until one comes back. projGen counts
+	// scans, so an answer for an older one is dropped.
+	dir         string
+	proj        *project.Scan
+	projErr     error
+	projBusy    string
+	projOpen    bool
+	projGen     int
+	projStamps  map[string]time.Time
+	prodOnly    bool
 	themePath   string
 	themePicked bool
 
@@ -265,7 +286,7 @@ var (
 
 func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
-		filters: map[int]string{}, statuses: map[int]int{}}
+		filters: map[string]string{}, statuses: map[string]int{}}
 	m.reset()
 	return m
 }
@@ -273,7 +294,11 @@ func newModel(ps []provider.Provider, dbPath string) model {
 // Init lists every provider and starts the spinner, which newModel already
 // counts as ticking.
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.scan(), tick(), tea.RequestBackgroundColor)
+	cmds := []tea.Cmd{m.scan(), tick(), tea.RequestBackgroundColor}
+	if m.projBusy == projReading {
+		cmds = append(cmds, m.findCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 func tick() tea.Cmd {
@@ -332,7 +357,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.inst.running()
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running()
 }
 
 // startTicking runs the spinner while something is loading.
@@ -354,6 +379,11 @@ func (m model) provider(name string) provider.Provider {
 }
 
 func pkgKey(p provider.Package) string {
+	// A lockfile can hold two versions of one package, and two lockfiles the
+	// same one, so a project package is known by all three.
+	if p.Lockfile != "" {
+		return p.Lockfile + "\x00" + p.Name + "\x00" + p.Version
+	}
 	return p.Source + "\x00" + p.Name
 }
 
@@ -407,6 +437,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(m.busy, msg.name)
 		m.reindex()
+	case projectMsg:
+		cmds = append(cmds, m.gotProject(msg))
+	case projectLatestMsg:
+		m.gotProjectLatest(msg)
+	case watchMsg:
+		cmds = append(cmds, m.gotWatch(msg))
 	case depsMsg:
 		m.deps[msg.key] = &lazy[[]provider.Dep]{msg.deps, msg.err, true}
 	case versionsMsg:
@@ -497,7 +533,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.(type) {
-	case listedMsg, checkedMsg, scanMsg, auditMsg:
+	case listedMsg, checkedMsg, scanMsg, auditMsg, projectMsg, projectLatestMsg:
 		if m.picked {
 			m.reselect()
 		}
@@ -591,6 +627,17 @@ func (m *model) load() tea.Cmd {
 		return nil
 	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
+	if p.Lockfile != "" {
+		m.deps[key] = &lazy[[]provider.Dep]{val: m.pulledIn(p), done: true}
+		if m.activeTab() == tabVersions && m.versions[key] == nil {
+			m.versions[key] = &lazy[[]provider.Release]{}
+			return func() tea.Msg {
+				rels, err := projectVersions(context.Background(), p)
+				return versionsMsg{key, rels, err}
+			}
+		}
+		return nil
+	}
 	if prov == nil {
 		return nil
 	}
@@ -742,11 +789,17 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "d":
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
+	case "p":
+		m.prodOnly = !m.prodOnly
+		m.cursor, m.offset = 0, 0
 	case "s":
 		m.sortCol = (m.sortCol + 1) % 5
 	case "S":
 		m.sortDesc = !m.sortDesc
 	case "c":
+		if p, ok := m.current(); ok && m.activeTab() == tabSecurity && m.projectFix(p) != "" {
+			return m.copy(m.projectFix(p)), false
+		}
 		return m.copyArea(), false
 	case "<":
 		m.grow(-2)
@@ -782,7 +835,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return m.openReleasePage(), false
 	case "r":
 		m.reset()
-		return m.scan(), false
+		return tea.Batch(m.scan(), m.scanProject()), false
 	case "R":
 		var all []provider.Package
 		for _, pkgs := range m.pkgs {
@@ -847,11 +900,15 @@ func (m *model) move(key string) {
 	case focusRail:
 		switch key {
 		case "enter":
-			m.focus = focusTable
+			if m.curRow().kind == rowProject {
+				m.projOpen = !m.projOpen
+			} else {
+				m.focus = focusTable
+			}
 		case "home", "g":
 			m.setRail(0)
 		case "end", "G":
-			m.setRail(len(m.providers))
+			m.setRail(len(m.railRows()) - 1)
 		default:
 			m.setRail(m.rail + step)
 		}
@@ -928,13 +985,6 @@ func sign(n int) int {
 	return 1
 }
 
-func (m *model) setRail(i int) {
-	i = max(min(i, len(m.providers)), 0)
-	if i != m.rail {
-		m.rail, m.cursor, m.offset = i, 0, 0
-	}
-}
-
 func (m *model) typeFilter(key, text string) {
 	f := m.filter()
 	switch key {
@@ -1003,8 +1053,10 @@ func (m *model) openReleasePage() tea.Cmd {
 // it selects.
 func (m *model) clamp() {
 	m.clampHistory()
+	m.keepRail()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
 	l := m.layout()
+	m.railTop = m.railTopFor(l.bodyH - 2)
 	m.offset = scroll(m.offset, m.cursor, l.rows)
 	if p, ok := m.current(); ok && pkgKey(p) != m.selected {
 		m.selected, m.sel = pkgKey(p), nil
@@ -1099,7 +1151,7 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 	var out []provider.Package
 	for _, p := range pkgs {
 		switch {
-		case p.Dependency && !m.showDeps:
+		case m.hidden(p):
 		case !m.matchStatus(p):
 		case m.filter() != "" && !strings.Contains(strings.ToLower(p.Name), strings.ToLower(m.filter())):
 		default:
@@ -1110,12 +1162,7 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 }
 
 func (m model) rows() []provider.Package {
-	var rows []provider.Package
-	for i, p := range m.providers {
-		if m.rail == 0 || m.rail == i+1 {
-			rows = append(rows, m.visible(m.pkgs[p.Name()])...)
-		}
-	}
+	rows := m.visible(m.rowPkgs(m.curRow()))
 	m.sort(rows)
 	return rows
 }

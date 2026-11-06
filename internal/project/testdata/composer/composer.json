@@ -1,0 +1,11 @@
+{
+    "name": "acme/shop",
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "acme/ledger": "^2.3"
+    },
+    "require-dev": {
+        "acme/fixture-kit": "^1.1"
+    }
+}

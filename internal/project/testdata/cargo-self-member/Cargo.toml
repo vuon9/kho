@@ -1,0 +1,10 @@
+[package]
+name = "loop-app"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = [".", "helper", "./helper/"]
+
+[dependencies]
+tinyhash = "0.4"

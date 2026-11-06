@@ -32,7 +32,7 @@ func (m model) View() tea.View {
 		body = m.historyBody()
 	} else {
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			box(icon("All")+" Sources", m.railLines(), l.railW, l.bodyH, m.focus == focusRail),
+			box(icon("Machine")+" Machine", m.railBody(l.bodyH-2), l.railW, l.bodyH, m.focus == focusRail),
 			box(m.tableTitle(), m.tableLines(), l.tableW, l.bodyH, m.focus == focusTable),
 			m.sideBox(l.sideW, l.bodyH, m.focus == focusSide),
 		)
@@ -151,8 +151,12 @@ func (m model) titleBar() string {
 
 // statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
-	t := m.count(m.allPkgs())
-	parts := []string{" " + pillOn(fmt.Sprintf("%d packages", t.total), th.subtle, th.selFg)}
+	pkgs, label := m.allPkgs(), "packages"
+	if m.inProject() {
+		pkgs, label = m.projPkgs(), "in "+m.projName()
+	}
+	t := m.count(pkgs)
+	parts := []string{" " + pillOn(fmt.Sprintf("%d %s", t.total, label), th.subtle, th.selFg)}
 	if t.vulnerable > 0 {
 		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d vulnerable", t.vulnerable), th.red, th.selFg))
 	} else if len(m.db.Checked) > 0 {
@@ -174,6 +178,9 @@ func (m model) activity() string {
 		if m.busy[p.Name()] != "" {
 			busy = append(busy, p.Name())
 		}
+	}
+	if m.projBusy != "" {
+		busy = append(busy, "lockfiles")
 	}
 	if m.scanning > 0 {
 		busy = append(busy, "security")
@@ -242,12 +249,22 @@ func (m model) footer() string {
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")
 	case m.showHistory:
 		line = keys("↑↓", "move", "/", "filter", "f", "kind", "c", "copy command", "H esc", "back", "?", "help")
+	case m.focus == focusRail && m.curRow().kind == rowProject && m.projOpen:
+		line = keys("↑↓", "source", "enter", "close project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
+	case m.focus == focusRail && m.curRow().kind == rowProject:
+		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
+	case m.focus == focusTable && m.inProject():
+		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
 	case m.focus == focusTable:
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
+	case m.activeTab() == tabVersions && m.inProjectPkg():
+		line = keys("↑↓", "version", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help") + faint().Render("   kho doesn't change projects")
 	case m.activeTab() == tabVersions:
 		line = keys("↑↓", "version", "enter", "install it", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help")
+	case m.activeTab() == tabSecurity && m.sidePart == 0 && m.currentFix() != "":
+		line = keys("↑↓", "select", "enter", "read", "c", "copy the fix", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
 	case m.activeTab() == tabLinks && m.allAgents:
 		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "installed only", "[ ]", "tabs", "?", "help")
 	case m.activeTab() == tabLinks:
@@ -267,48 +284,20 @@ func (m model) footer() string {
 	return line
 }
 
-func (m model) railLines() []string {
-	inner := m.layout().railW - 2
-	var lines []string
-	for i := 0; i <= len(m.providers); i++ {
-		name := "All"
-		pkgs := m.allPkgs()
-		var mark string
-		if i > 0 {
-			name = m.providers[i-1].Name()
-			pkgs = m.pkgs[name]
-			switch {
-			case m.errs[name] != nil:
-				mark = red().Render("!")
-			case m.busy[name] != "":
-				mark = accent().Render(spinner[m.frame%len(spinner)])
-			}
-		}
-		t := m.count(pkgs)
-		var badges []string
-		if m.filters[i] != "" || m.statuses[i] != statusAll {
-			badges = append(badges, accent().Render("⌕"))
-		}
-		if t.vulnerable > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", t.vulnerable)))
-		}
-		if t.outdated > 0 {
-			badges = append(badges, yellow().Render(fmt.Sprintf("↑%d", t.outdated)))
-		}
-		line := fmt.Sprintf("  %s %s%s %s %s", icon(name), pad(name, max(inner-17, 6)), fmt.Sprintf("%4d", t.total), strings.Join(badges, " "), mark)
-		if i == m.rail {
-			line = selected(line, inner, m.focus == focusRail)
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
 func (m model) tableTitle() string {
-	title := icon("All") + " All"
-	if m.rail > 0 {
-		name := m.providers[m.rail-1].Name()
-		title = icon(name) + " " + name
+	r := m.curRow()
+	title := icon(r.icon) + " " + r.name
+	if r.kind == rowPart {
+		title = icon("project") + " " + m.projName() + " · " + r.name
+	}
+	if m.inProject() && m.proj.Capped != "" {
+		title += " · " + m.proj.Capped
+	}
+	if m.inProject() && len(m.proj.Shallow) > 0 {
+		title += " · not below " + m.proj.Shallow[0]
+	}
+	if m.inProject() && m.prodOnly {
+		title += " · dev hidden"
 	}
 	if m.status() != statusAll {
 		title += " · " + statusNames[m.status()]
@@ -327,8 +316,8 @@ type column struct {
 // and narrows the version columns before it squeezes names.
 func (m model) tableColumns() []column {
 	inner := m.layout().tableW - 4
-	cols := []column{{colName, 0}, {colSource, 7}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
-	if inner < 10+8+14+14+12 {
+	cols := []column{{colName, 0}, {colSource, 8}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
+	if inner < 10+9+14+14+12 {
 		cols = []column{{colName, 0}, {colVersion, 10}, {colLatest, 10}, {colStatus, 11}}
 	}
 	fixed := 0
@@ -337,7 +326,7 @@ func (m model) tableColumns() []column {
 	}
 	longest := 0
 	for _, p := range m.rows() {
-		longest = max(longest, len(p.Name))
+		longest = max(longest, lipgloss.Width(p.Name+nameTag(p)))
 	}
 	cols[0].width = max(min(longest+2, inner-fixed), 10)
 	cols[len(cols)-1].width = max(inner-fixed+11-cols[0].width, 11)
@@ -345,8 +334,22 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
-	if m.rail > 0 {
-		name := m.providers[m.rail-1].Name()
+	if r := m.curRow(); r.kind == rowPart && len(m.rowPkgs(r)) == 0 {
+		lines := []string{""}
+		for _, lf := range m.partLockfiles(r) {
+			switch {
+			case lf.Err != "":
+				lines = append(lines, styled(red(), wrap(lf.Path+": "+lf.Err, m.layout().tableW-4))...)
+			case lf.Missing != "":
+				lines = append(lines, styled(yellow(), wrap("◌ "+lf.Path+": "+lf.Missing, m.layout().tableW-4))...)
+			}
+		}
+		if len(lines) > 1 {
+			return lines
+		}
+	}
+	if r := m.curRow(); r.kind == rowProvider {
+		name := r.name
 		if err := m.errs[name]; err != nil && len(m.pkgs[name]) == 0 {
 			return []string{"", red().Render(" " + err.Error())}
 		}
@@ -383,6 +386,9 @@ func (m model) tableLines() []string {
 		if p.Dependency {
 			name = faint().Render(name)
 		}
+		if tag := nameTag(p); tag != "" {
+			name += faint().Render(tag)
+		}
 		line := "  " + row([5]string{name, p.Source, ver, p.Latest, m.statusCell(p)})
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
@@ -400,6 +406,28 @@ func (m model) tableLines() []string {
 		lines = append(lines, "")
 	}
 	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+}
+
+// nameTag follows a project package's name: dev, and the direct package
+// that pulls it in.
+func nameTag(p provider.Package) string {
+	var tag string
+	if p.Dev {
+		tag += " dev"
+	}
+	if len(p.Via) > 0 {
+		tag += " via " + p.Via[0]
+	}
+	return tag
+}
+
+// styled renders each line in style, one space in from the edge.
+func styled(style lipgloss.Style, lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = style.Render(" " + l)
+	}
+	return out
 }
 
 func (m model) statusCell(p provider.Package) string {

@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"time"
 
 	"github.com/vuon9/kho/internal/cli"
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/tui"
 	"github.com/vuon9/kho/internal/vuln"
@@ -38,8 +40,8 @@ func main() {
 		}
 		log.Add(e)
 	}
-	if len(os.Args) == 1 {
-		if err := tui.Run(log, appVersion()); err != nil {
+	if dir, ok := tuiFolder(os.Args[1:]); ok {
+		if err := tui.Run(log, appVersion(), dir); err != nil {
 			// 128 plus SIGHUP's number, as a shell reports a hung-up program.
 			if errors.Is(err, tui.ErrHangup) {
 				os.Exit(129)
@@ -51,20 +53,38 @@ func main() {
 	}
 	ready, skipped := provider.Detect()
 	os.Exit(cli.Main(cli.Env{
-		Version:   appVersion(),
-		Providers: ready,
-		Skipped:   skipped,
-		DB:        vuln.Load(vuln.Path()),
-		DBPath:    vuln.Path(),
-		Log:       log,
-		Out:       os.Stdout,
-		Err:       os.Stderr,
-		Now:       time.Now,
-		Scan:      vuln.Scan,
-		Audits:    vuln.SkillAudits,
-		History:   vuln.History,
-		Major:     provider.MajorModule,
+		Version:     appVersion(),
+		Providers:   ready,
+		Skipped:     skipped,
+		DB:          vuln.Load(vuln.Path()),
+		DBPath:      vuln.Path(),
+		Log:         log,
+		Out:         os.Stdout,
+		Err:         os.Stderr,
+		Now:         time.Now,
+		Scan:        vuln.Scan,
+		Audits:      vuln.SkillAudits,
+		History:     vuln.History,
+		Major:       provider.MajorModule,
+		FindProject: project.Find,
+		Latest:      provider.FillLatest,
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
 	}, os.Args[1:]))
+}
+
+// tuiFolder is the folder the TUI opens on: the working folder with no
+// arguments, or the only argument when it is a folder and not a command.
+func tuiFolder(args []string) (string, bool) {
+	switch {
+	case len(args) == 0:
+		dir, _ := os.Getwd()
+		return dir, true
+	case len(args) == 1 && !cli.IsCommand(args[0]):
+		if fi, err := os.Stat(args[0]); err == nil && fi.IsDir() {
+			dir, err := filepath.Abs(args[0])
+			return dir, err == nil
+		}
+	}
+	return "", false
 }

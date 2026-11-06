@@ -1,0 +1,11 @@
+{
+  "name": "legacy-shop",
+  "version": "1.0.0",
+  "dependencies": {
+    "left-trim": "^1.2.0",
+    "trim-old": "npm:left-trim@^1.0.0"
+  },
+  "devDependencies": {
+    "inkpot": "^3.0.0"
+  }
+}

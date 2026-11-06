@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,12 +13,14 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -540,6 +543,9 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 
 	var tokens, flags []string
 	for _, cmd := range commands {
+		if !IsCommand(cmd) {
+			t.Errorf("IsCommand(%q) is false, so a folder named %s would open the TUI instead", cmd, cmd)
+		}
 		tokens = append(tokens, "kho "+cmd)
 		var out, errOut bytes.Buffer
 		Main(Env{DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut, Now: func() time.Time { return clock }}, []string{cmd, "-h"})
@@ -603,5 +609,169 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 				t.Errorf("%s does not mention %q", tt.id, missing)
 			}
 		})
+	}
+}
+
+// projectKho runs kho against a made-up project scan. The machine's providers
+// fail if anything lists them, since --project must not read the machine.
+func projectKho(t *testing.T, scan project.Scan, hits map[string][]string, args ...string) (run, string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	var r run
+	var asked string
+	env := Env{
+		Version:   "v9.9.9",
+		Providers: []provider.Provider{fake{name: "pipx", listErr: errors.New("the machine was read")}},
+		DB:        vuln.NewDB(),
+		Log:       history.Open(""),
+		Out:       &out, Err: &errOut,
+		Now: func() time.Time { return clock },
+		Scan: func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			got := map[string][]string{}
+			for _, q := range qs {
+				got[q.Key()] = hits[q.Name]
+			}
+			return got, map[string]vuln.Advisory{redos.ID: redos}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+		FindProject: func(_ context.Context, dir string) (project.Scan, error) {
+			asked = dir
+			return scan, nil
+		},
+		Latest: func(_ context.Context, pkgs []provider.Package) []provider.Package {
+			for i := range pkgs {
+				if !pkgs[i].Dependency {
+					pkgs[i].Latest, pkgs[i].Outdated = "26.10.1", pkgs[i].Version != "26.10.1"
+				}
+			}
+			return pkgs
+		},
+	}
+	r.code = Main(env, args)
+	r.out, r.err = out.String(), errOut.String()
+	return r, asked
+}
+
+func TestCheckProject(t *testing.T) {
+	lock := func(path string, pkgs ...provider.Package) project.Lockfile {
+		for i := range pkgs {
+			pkgs[i].Source, pkgs[i].Lockfile = "npm", path
+		}
+		return project.Lockfile{Path: path, Manager: "npm", Packages: pkgs}
+	}
+	web := project.Scan{Root: "/work/app", Projects: []project.Project{{Dir: "web", Lockfiles: []project.Lockfile{lock("web/package-lock.json",
+		provider.Package{Name: "left-trim", Version: "1.0.2"},
+		provider.Package{Name: "bramble", Version: "22.12.0", Dependency: true, Via: []string{"left-trim"}},
+	)}}}}
+	devOnly := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{lock("package-lock.json",
+		provider.Package{Name: "bramble", Version: "22.12.0", Dev: true},
+	)}}}}
+	noLock := project.Scan{Root: "/work/app", Projects: []project.Project{{Dir: "js", Lockfiles: []project.Lockfile{
+		{Path: "js/package.json", Manager: "npm", Missing: "no lockfile, versions unknown. Run npm install to create one"},
+	}}}}
+	vulnerable := map[string][]string{"bramble": {"GHSA-test"}}
+	tests := []struct {
+		id    string
+		scan  project.Scan
+		hits  map[string][]string
+		args  []string
+		code  int
+		check func(Report) string
+	}{
+		{"a vulnerable dependency puts the project at risk, with its chain and the project's own fix", web, vulnerable, nil, ExitAtRisk, func(r Report) string {
+			f := r.Vulnerable[0]
+			if f.Name != "bramble" || f.Lockfile != "web/package-lock.json" || !slices.Equal(f.Via, []string{"left-trim"}) || f.Fix != "npm update bramble" || f.FixedIn != "24.3.0" {
+				return fmt.Sprintf("finding %+v", f)
+			}
+			return ""
+		}},
+		{"a vulnerable dev package counts", devOnly, vulnerable, nil, ExitAtRisk, func(r Report) string {
+			if !r.Vulnerable[0].Dev || r.Vulnerable[0].Fix != "npm install -D bramble@24.3.0" {
+				return fmt.Sprintf("finding %+v", r.Vulnerable[0])
+			}
+			return ""
+		}},
+		{"--prod-only leaves dev packages out", devOnly, vulnerable, []string{"--prod-only"}, ExitOK, func(r Report) string {
+			if !r.Safe || r.Summary.Packages != 0 {
+				return fmt.Sprintf("summary %+v", r.Summary)
+			}
+			return ""
+		}},
+		{"a manifest with no lockfile leaves the check incomplete", noLock, nil, nil, ExitOK, func(r Report) string {
+			if r.Complete || !slices.Contains(r.NotCovered, "js/package.json (no lockfile, versions unknown. Run npm install to create one)") {
+				return fmt.Sprintf("complete %v, not covered %v", r.Complete, r.NotCovered)
+			}
+			return ""
+		}},
+		{"a clean project is safe and says what it read", web, nil, nil, ExitOK, func(r Report) string {
+			if !r.Safe || !r.Complete || r.Project.Root != "/work/app" || r.Project.Lockfiles[0].Packages != 2 || r.Summary.Outdated != 1 {
+				return fmt.Sprintf("report %+v, project %+v", r, r.Project)
+			}
+			return ""
+		}},
+	}
+	empty := project.Scan{Root: "/work/empty"}
+	tests = append(tests, []struct {
+		id    string
+		scan  project.Scan
+		hits  map[string][]string
+		args  []string
+		code  int
+		check func(Report) string
+	}{
+		{"--require-complete fails a project with a bare manifest", noLock, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string { return "" }},
+		{"--require-complete fails a folder with no lockfiles", empty, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string {
+			if !slices.Contains(r.NotCovered, "no lockfiles found in /work/empty") {
+				return fmt.Sprintf("not covered %v", r.NotCovered)
+			}
+			return ""
+		}},
+		{"a folder deeper than kho looks leaves the check incomplete", project.Scan{Root: "/work/app", Shallow: []string{"a/b/c/d"}, Projects: web.Projects}, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string {
+			if !slices.Contains(r.NotCovered, "a/b/c/d (kho doesn't look deeper than this)") {
+				return fmt.Sprintf("not covered %v", r.NotCovered)
+			}
+			return ""
+		}},
+		{"at risk still wins over incomplete", web, vulnerable, []string{"--require-complete"}, ExitAtRisk, func(r Report) string { return "" }},
+		{"a complete clean project passes --require-complete", web, nil, []string{"--require-complete"}, ExitOK, func(r Report) string { return "" }},
+	}...)
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			got, _ := projectKho(t, tt.scan, tt.hits, append([]string{"check", "--project", "--json"}, tt.args...)...)
+			var r Report
+			if err := json.Unmarshal([]byte(got.out), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s%s", err, got.out, got.err)
+			}
+			if got.code != tt.code {
+				t.Errorf("exit %d, want %d", got.code, tt.code)
+			}
+			if why := tt.check(r); why != "" {
+				t.Error(why)
+			}
+		})
+	}
+}
+
+func TestCheckProjectFolder(t *testing.T) {
+	scan := project.Scan{Root: "/work/app", Projects: []project.Project{{Dir: "web", Lockfiles: []project.Lockfile{{Path: "web/package-lock.json", Manager: "npm",
+		Packages: []provider.Package{{Source: "npm", Name: "bramble", Version: "22.12.0", Dependency: true, Via: []string{"left-trim"}, Lockfile: "web/package-lock.json"}}}}}}}
+	got, asked := projectKho(t, scan, map[string][]string{"bramble": {"GHSA-test"}}, "check", "app", "--project")
+	if asked != "app" {
+		t.Errorf("read %q, want the folder given", asked)
+	}
+	for _, want := range []string{"project /work/app, 1 lockfile", "⚠ at risk: 1 vulnerable package\n", "npm/bramble 22.12.0 (web/package-lock.json, via left-trim)", "fix, in web: npm update bramble"} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output lacks %q:\n%s", want, got.out)
+		}
+	}
+	if got.code != ExitAtRisk {
+		t.Errorf("exit %d", got.code)
+	}
+}
+
+func TestCheckProjectRefusesRequire(t *testing.T) {
+	got, _ := projectKho(t, project.Scan{}, nil, "check", "--project", "--require", "npm")
+	if got.code != ExitUsage || !strings.Contains(got.err, "use --require-complete") {
+		t.Errorf("exit %d, stderr %q", got.code, got.err)
 	}
 }

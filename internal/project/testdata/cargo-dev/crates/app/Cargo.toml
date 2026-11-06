@@ -1,0 +1,10 @@
+[package]
+name = "dice-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dice = "0.8"
+
+[dev-dependencies]
+dice = "0.7"

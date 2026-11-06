@@ -1,0 +1,59 @@
+[[package]]
+name = "checkmate"
+version = "7.4.0"
+description = "A made-up test runner."
+category = "dev"
+optional = false
+python-versions = ">=3.7"
+
+[package.dependencies]
+tinyhash = ">=0.4"
+
+[package.extras]
+testing = ["assertly (>=0.8)"]
+
+[[package]]
+name = "inkpot"
+version = "3.0.2"
+description = "A made-up ink library."
+category = "main"
+optional = false
+python-versions = "*"
+
+[package.dependencies]
+tinyhash = ">=0.4"
+
+[[package]]
+name = "pagewright"
+version = "1.4.0"
+description = "A made-up docs builder."
+category = "dev"
+optional = false
+python-versions = ">=3.7"
+
+[[package]]
+name = "tinyhash"
+version = "0.4.1"
+description = "A made-up hash library."
+category = "main"
+optional = false
+python-versions = ">=3.6"
+
+[metadata]
+lock-version = "1.1"
+python-versions = "^3.8"
+content-hash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[metadata.files]
+checkmate = [
+    {file = "checkmate-7.4.0.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+]
+inkpot = [
+    {file = "inkpot-3.0.2.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+]
+pagewright = [
+    {file = "pagewright-1.4.0.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+]
+tinyhash = [
+    {file = "tinyhash-0.4.1.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+]

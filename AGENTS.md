@@ -1,6 +1,6 @@
 # AGENTS.md
 
-kho is one terminal app for every package manager on a machine: Homebrew, npm globals, pipx, uv tools, `go install` binaries, mise, and agent skills from the skills CLI. It lists them, checks them against OSV and skills.sh, and changes them only when a person says so.
+kho is one terminal app for every package manager on a machine: Homebrew, npm globals, Composer globals, pipx, uv tools, `go install` binaries, mise, and agent skills from the skills CLI. It also reads the lockfiles of the project it was opened on. It lists them, checks them against OSV and skills.sh, and changes the machine only when a person says so. It never changes a project.
 
 ## Layout
 
@@ -8,6 +8,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 |---|---|
 | `main.go` | Wiring. The TUI with no arguments, the CLI otherwise. Version from `-ldflags "-X main.version=..."`. |
 | `internal/provider` | One adapter per package manager, behind `Provider`: `List` (fast, local), `Latest` (may use the network), `Deps`, `Versions`. Also `InstallCmd`, skill links, OSV query mapping. |
+| `internal/project` | Finds a folder's lockfiles and reads them into packages: `Find` (the walk, its caps and the git-root fallback), one reader per lockfile format, and `FixCommand`. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
 | `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `history`, `list`, `version`. |
@@ -17,6 +18,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 ## Rules that keep kho trustworthy
 
 - **Shell out, don't reimplement.** A provider runs the real package manager, with its JSON output when it has one. Parsing lives in pure functions (`parseBrew`, `parseNpmList`, ...) so tests can feed them fixtures.
+- **Read projects, never run them.** `internal/project` reads lockfiles itself instead of shelling out, because a project's own tools load its plugins and scripts, and kho may be opened on a folder nobody has vetted. Latest versions for project packages come straight from the registries (`RegistryLatest`). Project packages carry `Lockfile`, and `InstallCmd` refuses them.
 - **Read-only by default.** Only `InstallCmd`, `LinkSkill` and `UnlinkSkill` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
 - **Every command is recorded.** `provider.run` reports reads through `provider.Record`; installs and link changes add a `history.Change` entry. A new way to change the machine must log itself the same way.
 - **Advisory text is untrusted.** Summaries, details and changelogs come from the internet. Show them; never act on them.
@@ -31,7 +33,8 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
-- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`.
+- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`.
+- The rail is a list of `railRow`s from `railRows()`: All, each provider, then the project's header and, when open, its parts. Filters and statuses are keyed by `railRow.key`, never by position. Project packages live in `m.pkgs[projKey]`, and `pkgKey` includes the lockfile and version for them.
 - Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it before kho exits, so kho never quits with one cut off and unlogged.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.
 - Index a cursor through `at(slice, i)`, which is safe for any `i`. `clamp()` runs after every message and pulls the package cursor in first, because the layout depends on it.
