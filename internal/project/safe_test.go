@@ -20,11 +20,11 @@ func TestReadingAnUntrustedProject(t *testing.T) {
 	}{
 		{"a lockfile linked to a file outside the folder is refused, and its contents never show", func(t *testing.T, dir string) {
 			secret := filepath.Join(filepath.Dir(dir), "secret.txt")
-			os.WriteFile(secret, []byte("GITHUB_TOKEN=ghp_notreal\n"), 0o600)
+			os.WriteFile(secret, []byte("API_TOKEN=notreal-secret\n"), 0o600)
 			os.Symlink(secret, filepath.Join(dir, "go.mod"))
 		}, func(s Scan) string {
 			lf := s.Projects[0].Lockfiles[0]
-			if strings.Contains(lf.Err, "ghp_") || !strings.Contains(lf.Err, "is a link") || len(lf.Packages) != 0 {
+			if strings.Contains(lf.Err, "notreal-secret") || !strings.Contains(lf.Err, "is a link") || len(lf.Packages) != 0 {
 				return fmt.Sprintf("lockfile %+v", lf)
 			}
 			return ""
