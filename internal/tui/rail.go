@@ -108,7 +108,7 @@ func (m *model) keepRail() {
 // something to select.
 func (m model) railAll() (lines []string, rowOf []int, block int) {
 	inner := m.layout().railW - 2
-	rule := fg(th.subtle).Render(strings.Repeat("─", inner))
+	rule := projRule(inner)
 	block = -1
 	for i, r := range m.railRows() {
 		if r.kind == rowProject {
@@ -147,6 +147,13 @@ func (m model) railTopFor(h int) int {
 		return max(min(scroll(m.railTop, sel, window), block-window), 0)
 	}
 	return max(min(scroll(m.railTop, sel, h), len(lines)-h), 0)
+}
+
+// projRule is the line above the project section, labeled like a panel's
+// top border.
+func projRule(inner int) string {
+	label := "── Project "
+	return fg(th.subtle).Render("── ") + faint().Bold(true).Render("Project") + " " + fg(th.subtle).Render(strings.Repeat("─", max(inner-len([]rune(label)), 0)))
 }
 
 // railLines is what the rail panel shows, h lines tall. When it all fits,
@@ -246,9 +253,9 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	}
 	nameW := max(inner-17, 6)
 	name := m.projName()
-	if n := len(m.proj.Projects); n > 1 {
-		count := fmt.Sprintf(" · %d projects", n)
-		name = ansi.Truncate(name, max(nameW-len(count), 1), "…") + count
+	// The count only shows when the name still fits beside it.
+	if count := fmt.Sprintf(" · %d projects", len(m.proj.Projects)); len(m.proj.Projects) > 1 && nameW-len(count) >= 4 {
+		name = ansi.Truncate(name, nameW-len(count), "…") + count
 	}
 	var mark string
 	if m.projBusy != "" {

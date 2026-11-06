@@ -2249,14 +2249,14 @@ func TestProject(t *testing.T) {
 			func(m model) string {
 				m.focus = focusRail
 				m = press(t, m, "G")
-				if !strings.Contains(rail(m), "reading lockfiles") || m.curRow().kind != rowProvider {
+				if !strings.Contains(rail(m), "── Project ──") || !strings.Contains(rail(m), "reading lockfiles") || m.curRow().kind != rowProvider {
 					return fmt.Sprintf("rail %q, selected %+v", rail(m), m.curRow())
 				}
 				return ""
 			}},
 		{"closed, the header still shows the project's risk", func(t *testing.T) model { return withProject(t, one, false) },
 			func(m model) string {
-				if !strings.Contains(rail(m), "▸ 📁 app") || !strings.Contains(rail(m), "⚠1") || m.curRow().kind != rowAll {
+				if !strings.Contains(rail(m), "── Project ──") || !strings.Contains(rail(m), "▸ 📁 app") || !strings.Contains(rail(m), "⚠1") || m.curRow().kind != rowAll {
 					return fmt.Sprintf("rail %q", rail(m))
 				}
 				return ""
