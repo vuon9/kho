@@ -152,7 +152,7 @@ scan:
 			switch {
 			case !e.IsDir():
 				files[e.Name()] = true
-			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), "."):
+			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), ".") && clean(e.Name()) == e.Name():
 				dirs = append(dirs, e.Name())
 			}
 		}
@@ -304,12 +304,20 @@ func readLockfile(root, rel, manager string) Lockfile {
 	lf := Lockfile{Path: rel, Manager: manager}
 	pkgs, err := readers[manager](filepath.Join(root, filepath.FromSlash(path.Dir(rel))), path.Base(rel))
 	if err != nil {
-		lf.Err = err.Error()
+		lf.Err = clean(err.Error())
 		return lf
+	}
+	if len(pkgs) > MaxPackages {
+		pkgs = pkgs[:MaxPackages]
+		lf.Err = fmt.Sprintf("read the first %d packages only", MaxPackages)
 	}
 	for i := range pkgs {
 		pkgs[i].Source = manager
 		pkgs[i].Lockfile = rel
+		pkgs[i].Name, pkgs[i].Version = clean(pkgs[i].Name), clean(pkgs[i].Version)
+		for j := range pkgs[i].Via {
+			pkgs[i].Via[j] = clean(pkgs[i].Via[j])
+		}
 	}
 	lf.Packages = tidy(pkgs)
 	return lf
@@ -320,9 +328,12 @@ func readLockfile(root, rel, manager string) Lockfile {
 // npm can install the same version at several places in node_modules.
 func tidy(pkgs []provider.Package) []provider.Package {
 	slices.SortFunc(pkgs, func(a, b provider.Package) int {
-		return cmp.Or(strings.Compare(a.Name, b.Name), vuln.Compare(a.Version, b.Version),
+		if c := cmp.Or(strings.Compare(a.Name, b.Name), vuln.Compare(a.Version, b.Version),
 			cmp.Compare(boolRank(a.Dependency), boolRank(b.Dependency)), cmp.Compare(boolRank(a.Dev), boolRank(b.Dev)),
-			cmp.Compare(reach(a), reach(b)), strings.Compare(strings.Join(a.Via, " "), strings.Join(b.Via, " ")))
+			cmp.Compare(reach(a), reach(b))); c != 0 {
+			return c
+		}
+		return slices.Compare(a.Via, b.Via)
 	})
 	var out []provider.Package
 	for _, p := range pkgs {
@@ -366,11 +377,11 @@ func trace[K comparable](prod, dev []K, children func(K) []K, name func(K) strin
 }
 
 func chains[K comparable](roots []K, children func(K) []K, name func(K) string) map[K][]string {
-	via := map[K][]string{}
+	found := map[K]chain{}
 	var queue []K
 	for _, r := range roots {
-		if _, seen := via[r]; !seen {
-			via[r] = nil
+		if _, seen := found[r]; !seen {
+			found[r] = chain{}
 			queue = append(queue, r)
 		}
 	}
@@ -378,17 +389,53 @@ func chains[K comparable](roots []K, children func(K) []K, name func(K) string) 
 		n := queue[0]
 		queue = queue[1:]
 		for _, c := range children(n) {
-			if _, seen := via[c]; !seen {
-				via[c] = append(slices.Clip(via[n]), name(n))
+			if _, seen := found[c]; !seen {
+				found[c] = found[n].with(name(n))
 				queue = append(queue, c)
 			}
 		}
 	}
+	via := make(map[K][]string, len(found))
+	for k, c := range found {
+		via[k] = c.list()
+	}
 	return via
 }
 
+const chainHead, chainTail = 5, 4
+
+// chain is a path from a direct package, kept to its first and last few
+// links, so a lockfile where each package requires the next can't make
+// every path a copy of the one before.
+type chain struct {
+	head, tail []string
+	n          int
+}
+
+func (c chain) with(name string) chain {
+	if len(c.head) < chainHead {
+		return chain{head: append(slices.Clip(c.head), name), n: c.n + 1}
+	}
+	tail := append(slices.Clip(c.tail), name)
+	if len(tail) > chainTail {
+		tail = tail[len(tail)-chainTail:]
+	}
+	return chain{head: c.head, tail: tail, n: c.n + 1}
+}
+
+func (c chain) list() []string {
+	if c.n == 0 {
+		return nil
+	}
+	out := slices.Clone(c.head)
+	if c.n > len(c.head)+len(c.tail) {
+		out = append(out, "…")
+	}
+	return append(out, c.tail...)
+}
+
 func readJSON(file string, v any) error {
-	data, err := os.ReadFile(file)
+	data, err := readFile(file)
 	if err != nil {
 		return err
 	}
@@ -396,8 +443,19 @@ func readJSON(file string, v any) error {
 }
 
 // FixCommand is what a person runs in the project's folder to move p to
-// version. For pip it is an edit to make, not a command.
+// version, or "" when kho can't say. For pip it is an edit to make, not a
+// command. Every part comes from a lockfile anyone could have written, so a
+// command is only built from names and versions that a shell reads as
+// plain words.
 func FixCommand(p provider.Package, version string) string {
+	for _, part := range []string{p.Name, p.Version, version, path.Base(p.Lockfile)} {
+		if part != "" && part != "." && !shellSafe.MatchString(part) {
+			return ""
+		}
+	}
+	if p.Source == "go" && !shellSafe.MatchString(p.Origin) {
+		return ""
+	}
 	switch p.Source {
 	case "npm":
 		switch {
@@ -419,13 +477,26 @@ func FixCommand(p provider.Package, version string) string {
 		// OSV writes Go versions without the v that go get needs.
 		return "go get " + p.Origin + "@v" + strings.TrimPrefix(version, "v")
 	case "uv":
+		// A direct requirement may pin a version that --upgrade-package
+		// can't move past.
+		if !p.Dependency {
+			return `uv add "` + p.Name + ">=" + version + `"`
+		}
 		return "uv lock --upgrade-package " + p.Name
 	case "poetry":
+		if !p.Dependency {
+			return "poetry add " + p.Name + "@^" + version
+		}
 		return "poetry update " + p.Name
 	case "pip":
 		return "pin " + p.Name + "==" + version + " in " + path.Base(p.Lockfile)
 	case "cargo":
-		// Naming the locked version still works when two versions are locked.
+		// cargo add rewrites the requirement, so it also crosses a major
+		// version. Naming the locked version picks the right one when two
+		// are locked.
+		if !p.Dependency {
+			return "cargo add " + p.Name + "@" + version
+		}
 		return "cargo update -p " + p.Name + "@" + p.Version + " --precise " + version
 	}
 	return ""

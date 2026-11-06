@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/BurntSushi/toml"
 
 	"github.com/vuon9/kho/internal/provider"
 )
@@ -37,7 +34,7 @@ type uvPkg struct {
 // groups are direct and dev.
 func readUv(dir, name string) ([]provider.Package, error) {
 	var lock struct{ Package []uvPkg }
-	if _, err := toml.DecodeFile(filepath.Join(dir, name), &lock); err != nil {
+	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
 		return nil, err
 	}
 	pkgs := lock.Package
@@ -132,7 +129,7 @@ func (p poetryPkg) dev() bool {
 // ("MarkupSafe" for markupsafe), so names are matched normalized.
 func readPoetry(dir, name string) ([]provider.Package, error) {
 	var lock struct{ Package []poetryPkg }
-	if _, err := toml.DecodeFile(filepath.Join(dir, name), &lock); err != nil {
+	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
 		return nil, err
 	}
 	manifest, err := readPyproject(dir)
@@ -208,7 +205,7 @@ type pyproject struct {
 // readPyproject reads pyproject.toml, or returns nil when there is none.
 func readPyproject(dir string) (*pyproject, error) {
 	var p pyproject
-	if _, err := toml.DecodeFile(filepath.Join(dir, "pyproject.toml"), &p); err != nil {
+	if _, err := decodeTOML(filepath.Join(dir, "pyproject.toml"), &p); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
@@ -283,7 +280,7 @@ func pyprojectManager(dir string) string {
 // Ranges, editable installs and included files are left out, since they name
 // no single version.
 func readRequirements(dir, name string) ([]provider.Package, error) {
-	data, err := os.ReadFile(filepath.Join(dir, name))
+	data, err := readFile(filepath.Join(dir, name))
 	if err != nil {
 		return nil, err
 	}

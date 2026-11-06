@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -14,17 +15,39 @@ import (
 func latestURL(p Package) string {
 	switch Ecosystem(p) {
 	case "npm":
-		return "https://registry.npmjs.org/-/package/" + p.Name + "/dist-tags"
+		return "https://registry.npmjs.org/-/package/" + segments(p.Name) + "/dist-tags"
 	case "PyPI":
-		return "https://pypi.org/pypi/" + NormalizePyPI(p.Name) + "/json"
+		return "https://pypi.org/pypi/" + url.PathEscape(NormalizePyPI(p.Name)) + "/json"
 	case "Go":
-		return "https://proxy.golang.org/" + escapeModule(p.Origin) + "/@latest"
+		// Module paths have a fixed alphabet, and the proxy needs its "!".
+		if m := escapeModule(p.Origin); goModule.MatchString(m) && !strings.Contains("/"+m+"/", "/../") {
+			return "https://proxy.golang.org/" + m + "/@latest"
+		}
 	case "crates.io":
 		return "https://crates.io/api/v1/crates/" + url.PathEscape(p.Name)
 	case "Packagist":
-		return "https://repo.packagist.org/p2/" + p.Name + ".json"
+		return packagistURL(p.Name)
 	}
 	return ""
+}
+
+var goModule = regexp.MustCompile(`^[a-z0-9._~!/-]+$`)
+
+// segments escapes each part of a slash separated name, so a name read from
+// a project's lockfile, such as "../x?y", stays one name in a registry URL.
+func segments(name string) string {
+	parts := strings.Split(name, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+		if p == "." || p == ".." {
+			parts[i] = strings.Repeat("%2E", len(p))
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+func packagistURL(name string) string {
+	return "https://repo.packagist.org/p2/" + segments(name) + ".json"
 }
 
 // RegistryLatest asks a package's registry for its newest version. Project
@@ -74,16 +97,24 @@ func newestStable(rels []Release) string {
 	return ""
 }
 
-// FillLatest looks up the newest version of every direct package in pkgs.
-// Transitive ones are left alone: a project can have a thousand, and the
-// direct ones are what a person upgrades.
+// MaxLatest caps the registry lookups one project can cause.
+var MaxLatest = 200
+
+// FillLatest looks up the newest version of every direct package in pkgs,
+// up to MaxLatest. Transitive ones are left alone: a project can have a
+// thousand, and the direct ones are what a person upgrades.
 func FillLatest(ctx context.Context, pkgs []Package) []Package {
 	var direct []Package
 	var at []int
 	for i, p := range pkgs {
-		if !p.Dependency {
-			direct, at = append(direct, p), append(at, i)
+		if p.Dependency {
+			continue
 		}
+		if len(direct) == MaxLatest {
+			pkgs[i].Note = fmt.Sprintf("latest not looked up: kho asks about %d direct packages at most", MaxLatest)
+			continue
+		}
+		direct, at = append(direct, p), append(at, i)
 	}
 	direct = fillLatest(ctx, direct, RegistryLatest)
 	for j, i := range at {
@@ -96,10 +127,13 @@ func FillLatest(ctx context.Context, pkgs []Package) []Package {
 // from its registry, newest first. npm's are read from the registry's own
 // document rather than `npm view`, which would load the project's .npmrc.
 func RegistryVersions(ctx context.Context, p Package) ([]Release, error) {
+	if latestURL(p) == "" {
+		return nil, fmt.Errorf("kho has no version list for %s packages yet", p.Source)
+	}
 	switch Ecosystem(p) {
 	case "npm":
 		var raw json.RawMessage
-		if err := getJSON(ctx, "https://registry.npmjs.org/"+p.Name, nil, &raw); err != nil {
+		if err := getJSON(ctx, "https://registry.npmjs.org/"+segments(p.Name), nil, &raw); err != nil {
 			return nil, err
 		}
 		rels, repo, err := parseNpmView(p.Name, raw)

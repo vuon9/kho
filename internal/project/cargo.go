@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-
 	"github.com/vuon9/kho/internal/provider"
 )
 
@@ -24,7 +22,7 @@ func readCargo(dir, name string) ([]provider.Package, error) {
 			Dependencies []string
 		}
 	}
-	if _, err := toml.DecodeFile(filepath.Join(dir, name), &lock); err != nil {
+	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
 		return nil, err
 	}
 	devOnly, err := cargoDevOnly(dir)
@@ -108,7 +106,7 @@ func cargoDevOnly(dir string) (map[string]bool, error) {
 	prod, dev := map[string]bool{}, map[string]bool{}
 	for i := 0; i < len(files); i++ {
 		var m cargoManifest
-		if _, err := toml.DecodeFile(filepath.Join(dir, files[i]), &m); err != nil {
+		if _, err := decodeTOML(filepath.Join(dir, files[i]), &m); err != nil {
 			if i == 0 && errors.Is(err, fs.ErrNotExist) {
 				return nil, nil
 			}

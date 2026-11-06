@@ -13,6 +13,9 @@ func TestLatestURL(t *testing.T) {
 		{"a Go module uses the proxy's case encoding", Package{Source: "go", Name: "github.com/Acme/tidyup", Origin: "github.com/Acme/tidyup"}, "https://proxy.golang.org/github.com/!acme/tidyup/@latest"},
 		{"a crate", Package{Source: "cargo", Name: "tinyhash"}, "https://crates.io/api/v1/crates/tinyhash"},
 		{"a Composer package", Package{Source: "composer", Name: "acme/ledger"}, "https://repo.packagist.org/p2/acme/ledger.json"},
+		{"a name from a lockfile can't climb out of its path", Package{Source: "npm", Name: "../../-/user/x?y#z"}, "https://registry.npmjs.org/-/package/%2E%2E/%2E%2E/-/user/x%3Fy%23z/dist-tags"},
+		{"nor can a Packagist one", Package{Source: "composer", Name: "acme/../../evil?x"}, "https://repo.packagist.org/p2/acme/%2E%2E/%2E%2E/evil%3Fx.json"},
+		{"a Go module outside the module alphabet is not looked up", Package{Source: "go", Name: "x", Origin: "example.com/../x?y"}, ""},
 		{"a source with no registry", Package{Source: "mise", Name: "node"}, ""},
 	}
 	for _, tt := range tests {

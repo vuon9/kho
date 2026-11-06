@@ -516,6 +516,24 @@ func TestFixCommand(t *testing.T) {
 		want    string
 	}{
 		{
+			id:      "a locked version that a shell would run gets no command",
+			pkg:     provider.Package{Source: "cargo", Name: "smallvec", Version: "0.6.9;echo${IFS}INJECTED;#", Dependency: true},
+			version: "0.6.14",
+			want:    "",
+		},
+		{
+			id:      "nor does a name with spaces or quotes",
+			pkg:     provider.Package{Source: "npm", Name: "left-trim'; rm -rf ~ #"},
+			version: "1.0.3",
+			want:    "",
+		},
+		{
+			id:      "nor a fix version that isn't a plain version",
+			pkg:     provider.Package{Source: "npm", Name: "left-trim"},
+			version: "1.0.3 && curl evil.test",
+			want:    "",
+		},
+		{
 			id:      "npm transitive updates in place",
 			pkg:     provider.Package{Source: "npm", Name: "tinyhash", Dependency: true},
 			version: "0.4.2",
@@ -570,10 +588,28 @@ func TestFixCommand(t *testing.T) {
 			want:    "uv lock --upgrade-package tinyhash",
 		},
 		{
-			id:      "poetry",
-			pkg:     provider.Package{Source: "poetry", Name: "tinyhash"},
+			id:      "poetry transitive",
+			pkg:     provider.Package{Source: "poetry", Name: "tinyhash", Dependency: true},
 			version: "0.4.2",
 			want:    "poetry update tinyhash",
+		},
+		{
+			id:      "poetry direct rewrites the requirement, which may pin",
+			pkg:     provider.Package{Source: "poetry", Name: "tinyhash"},
+			version: "0.4.2",
+			want:    "poetry add tinyhash@^0.4.2",
+		},
+		{
+			id:      "uv direct rewrites the requirement",
+			pkg:     provider.Package{Source: "uv", Name: "tinyhash"},
+			version: "0.4.2",
+			want:    `uv add "tinyhash>=0.4.2"`,
+		},
+		{
+			id:      "cargo direct crosses a major with cargo add",
+			pkg:     provider.Package{Source: "cargo", Name: "tinyhash", Version: "0.7.3"},
+			version: "0.8.6",
+			want:    "cargo add tinyhash@0.8.6",
 		},
 		{
 			id:      "pip names the file to edit",

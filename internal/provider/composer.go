@@ -165,7 +165,7 @@ func (Composer) Deps(_ context.Context, p Package) ([]Dep, error) { return p.Dep
 
 func (Composer) Versions(ctx context.Context, p Package) ([]Release, error) {
 	var raw json.RawMessage
-	if err := getJSON(ctx, "https://repo.packagist.org/p2/"+p.Name+".json", nil, &raw); err != nil {
+	if err := getJSON(ctx, packagistURL(p.Name), nil, &raw); err != nil {
 		return nil, err
 	}
 	rels, repo, err := parsePackagist(p.Name, raw)

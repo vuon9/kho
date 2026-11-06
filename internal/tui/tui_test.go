@@ -2404,7 +2404,9 @@ func TestProject(t *testing.T) {
 		{"a project package's Versions footer offers no install", func(t *testing.T) model {
 			m := header(withProject(t, one, false))
 			m.focus = focusSide
-			projectVersions = func(context.Context, provider.Package) ([]provider.Release, error) { return []provider.Release{{Version: "9.9.9"}}, nil }
+			projectVersions = func(context.Context, provider.Package) ([]provider.Release, error) {
+				return []provider.Release{{Version: "9.9.9"}}, nil
+			}
 			return press(t, m, "v")
 		}, func(m model) string {
 			if f := ansi.Strip(m.footer()); strings.Contains(f, "install it") || !strings.Contains(f, "kho doesn't change projects") {

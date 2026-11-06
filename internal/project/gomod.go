@@ -1,7 +1,6 @@
 package project
 
 import (
-	"os"
 	"path/filepath"
 
 	"golang.org/x/mod/modfile"
@@ -14,7 +13,7 @@ import (
 // projects pin a fixed release. One replaced by a local folder is left out.
 func readGoMod(dir, name string) ([]provider.Package, error) {
 	file := filepath.Join(dir, name)
-	data, err := os.ReadFile(file)
+	data, err := readFile(file)
 	if err != nil {
 		return nil, err
 	}
