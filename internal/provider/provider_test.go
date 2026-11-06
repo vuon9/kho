@@ -394,6 +394,30 @@ func TestQueries(t *testing.T) {
 	}
 }
 
+func TestQuery(t *testing.T) {
+	tests := []struct {
+		id   string
+		pkg  Package
+		want vuln.Query
+		ok   bool
+	}{
+		{"a Python name is asked about in its standard form", Package{Source: "pipx", Name: "Ink_Pot.Tools", Version: "3.1.0"}, vuln.Query{Ecosystem: "PyPI", Name: "ink-pot-tools", Version: "3.1.0"}, true},
+		{"a poetry project package is PyPI too", Package{Source: "poetry", Name: "inkpot", Version: "3.1.0"}, vuln.Query{Ecosystem: "PyPI", Name: "inkpot", Version: "3.1.0"}, true},
+		{"so is a pinned requirements.txt line", Package{Source: "pip", Name: "InkPot", Version: "3.1.0"}, vuln.Query{Ecosystem: "PyPI", Name: "inkpot", Version: "3.1.0"}, true},
+		{"composer asks Packagist", Package{Source: "composer", Name: "acme/ledger", Version: "2.4.0"}, vuln.Query{Ecosystem: "Packagist", Name: "acme/ledger", Version: "2.4.0"}, true},
+		{"cargo asks crates.io", Package{Source: "cargo", Name: "tinyhash", Version: "1.0.5"}, vuln.Query{Ecosystem: "crates.io", Name: "tinyhash", Version: "1.0.5"}, true},
+		{"a go package is known by its module", Package{Source: "go", Name: "tidyup", Origin: "example.com/tidyup", Version: "v0.23.0"}, vuln.Query{Ecosystem: "Go", Name: "example.com/tidyup", Version: "v0.23.0"}, true},
+		{"mise has no OSV ecosystem", Package{Source: "mise", Name: "node", Version: "24.3.0"}, vuln.Query{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got, ok := Query(tt.pkg); got != tt.want || ok != tt.ok {
+				t.Errorf("got %+v %v, want %+v %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 func TestDepQuery(t *testing.T) {
 	tests := []struct {
 		id     string
@@ -409,6 +433,7 @@ func TestDepQuery(t *testing.T) {
 		{"brew has no OSV ecosystem", "brew", Dep{Name: "openssl@4", Version: "4.1.0"}, vuln.Query{}, false},
 		{"a go module", "go", Dep{Name: "example.org/net", Version: "v0.50.0"}, vuln.Query{Ecosystem: "Go", Name: "example.org/net", Version: "v0.50.0"}, true},
 		{"an npm dependency", "npm", Dep{Name: "left-trim", Version: "1.0.2"}, vuln.Query{Ecosystem: "npm", Name: "left-trim", Version: "1.0.2"}, true},
+		{"a global composer package's dependency", "composer", Dep{Name: "acme/strings", Version: "1.2.0"}, vuln.Query{Ecosystem: "Packagist", Name: "acme/strings", Version: "1.2.0"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -433,10 +458,12 @@ func TestInstallCmd(t *testing.T) {
 		want    string
 		err     string
 	}{
+		{"a project package is never changed", Package{Source: "npm", Name: "left-trim", Lockfile: "web/package-lock.json"}, "1.0.3", "", "left-trim comes from web/package-lock.json, and kho doesn't change project lockfiles"},
 		{"npm installs any version", Package{Source: "npm", Name: "diffkit"}, "0.23.0", "npm install -g diffkit@0.23.0", ""},
 		{"pipx forces the version", Package{Source: "pipx", Name: "bramble"}, "24.3.0", "pipx install --force bramble==24.3.0", ""},
 		{"uv forces the version", Package{Source: "uv", Name: "ruff"}, "0.15.2", "uv tool install --force ruff==0.15.2", ""},
 		{"go installs the main package", Package{Source: "go", Name: "tidyup", Entry: "example.com/tidyup"}, "v0.24.0", "go install example.com/tidyup@v0.24.0", ""},
+		{"composer requires the version globally", Package{Source: "composer", Name: "acme/ledger"}, "2.5.0", "composer global require acme/ledger:2.5.0", ""},
 		{"mise installs a tool version", Package{Source: "mise", Name: "node"}, "24.3.0", "mise install node@24.3.0", ""},
 		{"brew upgrades to the newest", Package{Source: "brew", Name: "anvil", Latest: "0.2.94"}, "0.2.94", "brew upgrade anvil", ""},
 		{"casks too", Package{Source: "cask", Name: "notchy", Latest: "2.3.0"}, "2.3.0", "brew upgrade --cask notchy", ""},

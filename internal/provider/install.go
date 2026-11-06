@@ -9,6 +9,9 @@ import (
 // InstallCmd builds the command that moves a package to version through its
 // own package manager, or says why kho can't.
 func InstallCmd(p Package, version string) (*exec.Cmd, error) {
+	if p.Lockfile != "" {
+		return nil, fmt.Errorf("%s comes from %s, and kho doesn't change project lockfiles", p.Name, p.Lockfile)
+	}
 	if p.Pinned {
 		return nil, fmt.Errorf("%s is pinned, so kho leaves it where it is", p.Name)
 	}
@@ -32,6 +35,8 @@ func InstallCmd(p Package, version string) (*exec.Cmd, error) {
 			return nil, errors.New("this binary has no main package recorded to install from")
 		}
 		return exec.Command("go", "install", p.Entry+"@"+version), nil
+	case "composer":
+		return exec.Command("composer", "global", "require", p.Name+":"+version), nil
 	case "mise":
 		return exec.Command("mise", "install", p.Name+"@"+version), nil
 	case "skills":

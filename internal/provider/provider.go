@@ -29,6 +29,14 @@ type Package struct {
 	// Entry is the main package `go install` builds a Go binary from.
 	Entry string `json:"entry,omitempty"`
 	Deps  []Dep  `json:"deps,omitempty"`
+	// Lockfile is the project lockfile a package was read from, relative to
+	// the scanned folder. It is set only for project packages, which kho
+	// never changes.
+	Lockfile string `json:"lockfile,omitempty"`
+	Dev      bool   `json:"dev,omitempty"`
+	// Via is the chain of packages that pulls a transitive dependency in,
+	// starting with the direct one.
+	Via []string `json:"via,omitempty"`
 }
 
 type Dep struct {
