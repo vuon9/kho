@@ -62,10 +62,10 @@ func Query(p Package) (vuln.Query, bool) {
 
 // DepQuery is the OSV query for one of p's dependencies, if kho asks about
 // it. kho asks about the ones known without extra work: npm's direct
-// dependencies, every module built into a Go binary, and everything a global
-// Composer package pulls in.
+// dependencies and every module built into a Go binary. Composer lists its
+// dependencies as packages of their own, which are asked about directly.
 func DepQuery(p Package, d Dep) (vuln.Query, bool) {
-	if p.Source != "npm" && p.Source != "go" && p.Source != "composer" || !Released(d.Version) {
+	if p.Source != "npm" && p.Source != "go" || !Released(d.Version) {
 		return vuln.Query{}, false
 	}
 	return vuln.Query{Ecosystem: Ecosystem(p), Name: d.Name, Version: d.Version}, true

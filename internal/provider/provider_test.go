@@ -433,7 +433,7 @@ func TestDepQuery(t *testing.T) {
 		{"brew has no OSV ecosystem", "brew", Dep{Name: "openssl@4", Version: "4.1.0"}, vuln.Query{}, false},
 		{"a go module", "go", Dep{Name: "example.org/net", Version: "v0.50.0"}, vuln.Query{Ecosystem: "Go", Name: "example.org/net", Version: "v0.50.0"}, true},
 		{"an npm dependency", "npm", Dep{Name: "left-trim", Version: "1.0.2"}, vuln.Query{Ecosystem: "npm", Name: "left-trim", Version: "1.0.2"}, true},
-		{"a global composer package's dependency", "composer", Dep{Name: "acme/strings", Version: "1.2.0"}, vuln.Query{Ecosystem: "Packagist", Name: "acme/strings", Version: "1.2.0"}, true},
+		{"a composer dependency is a package of its own, asked about directly", "composer", Dep{Name: "acme/strings", Version: "1.2.0"}, vuln.Query{}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
