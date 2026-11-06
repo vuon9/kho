@@ -1029,7 +1029,7 @@ func TestHistory(t *testing.T) {
 			lacks: []string{"Collecting bramble", "\r", "\a"}},
 		{id: "/ filters the commands", keys: []string{"H", "/", "b", "r", "e", "w", "enter"}, want: []string{"🕘 History · 1", "brew info"}, lacks: []string{"pipx install"}},
 		{id: "c copies the selected command", keys: []string{"H", "j", "c"}, copied: []string{"pipx install --force bramble==26.10.1"}},
-		{id: "esc goes back to the packages", keys: []string{"H", "esc"}, want: []string{"✨ Sources"}, lacks: []string{"🕘 History"}},
+		{id: "esc goes back to the packages", keys: []string{"H", "esc"}, want: []string{"💻 Machine"}, lacks: []string{"🕘 History"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -2121,5 +2121,76 @@ func TestDependencyPopup(t *testing.T) {
 					top, strings.Join(got, "\n"), copied, opened, tt.top, strings.Join(tt.text, "\n"), tt.copied, tt.opened)
 			}
 		})
+	}
+}
+
+func TestRail(t *testing.T) {
+	many := func(t *testing.T) model {
+		var ps []provider.Provider
+		for i := range 12 {
+			ps = append(ps, fake{name: fmt.Sprintf("tool%02d", i)})
+		}
+		m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 120, Height: minHeight})
+		return press(t, m, "tab", "tab")
+	}
+	railX := 2
+	tests := []struct {
+		id    string
+		model func(*testing.T) model
+		msgs  []tea.Msg
+		check func(model) string
+	}{
+		{id: "the rail scrolls to keep the last row in view in a short terminal", model: many, msgs: []tea.Msg{key("G")},
+			check: func(m model) string {
+				if !strings.Contains(strings.Join(m.railBody(m.layout().bodyH-2), "\n"), "tool11") || m.curRow().name != "tool11" {
+					return "tool11 is selected but not on screen"
+				}
+				return ""
+			}},
+		{id: "and back to the top", model: many, msgs: []tea.Msg{key("G"), key("g")},
+			check: func(m model) string {
+				if !strings.Contains(strings.Join(m.railBody(m.layout().bodyH-2), "\n"), "All") || m.rail != 0 {
+					return "All is not back on screen"
+				}
+				return ""
+			}},
+		{id: "a click below the last row selects nothing", model: loaded,
+			msgs: []tea.Msg{tea.MouseClickMsg{X: railX, Y: 20, Button: tea.MouseLeft}},
+			check: func(m model) string {
+				if m.rail != 0 {
+					return fmt.Sprintf("rail moved to %q", m.curRow().name)
+				}
+				return ""
+			}},
+		{id: "the rail is headed Machine", model: loaded,
+			check: func(m model) string {
+				if !strings.Contains(screen(m), "💻 Machine") {
+					return "no Machine header"
+				}
+				return ""
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := tt.model(t)
+			for _, msg := range tt.msgs {
+				m = update(t, m, msg)
+			}
+			if why := tt.check(m); why != "" {
+				t.Error(why)
+			}
+		})
+	}
+}
+
+func TestHiddenDependencies(t *testing.T) {
+	m := loaded(t)
+	cobalt := provider.Package{Source: "brew", Name: "cobalt"}
+	if slices.Contains(names(m), "cobalt") {
+		t.Fatal("a clean dependency shows with deps hidden")
+	}
+	m.vulns[pkgKey(cobalt)] = []vuln.Advisory{redos}
+	if !slices.Contains(names(m), "cobalt") {
+		t.Error("a vulnerable dependency is hidden with deps hidden")
 	}
 }

@@ -194,11 +194,13 @@ type model struct {
 	vulns    map[string][]vuln.Advisory
 	depVulns map[string][]depAdvisory
 
-	focus  int
-	tab    int
-	rail   int
-	cursor int
-	offset int
+	focus int
+	tab   int
+	rail  int
+	// railTop is the first rail row shown when the rows don't all fit.
+	railTop int
+	cursor  int
+	offset  int
 	// picked is whether the person has done anything since kho started or
 	// rescanned. Until then the cursor stays on the first row as the
 	// sources answer; after, it stays on the package they are looking at.
@@ -211,8 +213,8 @@ type model struct {
 
 	sortCol   int
 	sortDesc  bool
-	filters   map[int]string
-	statuses  map[int]int
+	filters   map[string]string
+	statuses  map[string]int
 	filtering bool
 	showDeps  bool
 	help      bool
@@ -265,7 +267,7 @@ var (
 
 func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
-		filters: map[int]string{}, statuses: map[int]int{}}
+		filters: map[string]string{}, statuses: map[string]int{}}
 	m.reset()
 	return m
 }
@@ -851,7 +853,7 @@ func (m *model) move(key string) {
 		case "home", "g":
 			m.setRail(0)
 		case "end", "G":
-			m.setRail(len(m.providers))
+			m.setRail(len(m.railRows()) - 1)
 		default:
 			m.setRail(m.rail + step)
 		}
@@ -928,13 +930,6 @@ func sign(n int) int {
 	return 1
 }
 
-func (m *model) setRail(i int) {
-	i = max(min(i, len(m.providers)), 0)
-	if i != m.rail {
-		m.rail, m.cursor, m.offset = i, 0, 0
-	}
-}
-
 func (m *model) typeFilter(key, text string) {
 	f := m.filter()
 	switch key {
@@ -1005,6 +1000,7 @@ func (m *model) clamp() {
 	m.clampHistory()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
 	l := m.layout()
+	m.railTop = scroll(m.railTop, m.rail, l.bodyH-2)
 	m.offset = scroll(m.offset, m.cursor, l.rows)
 	if p, ok := m.current(); ok && pkgKey(p) != m.selected {
 		m.selected, m.sel = pkgKey(p), nil
@@ -1099,7 +1095,7 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 	var out []provider.Package
 	for _, p := range pkgs {
 		switch {
-		case p.Dependency && !m.showDeps:
+		case m.hiddenDep(p):
 		case !m.matchStatus(p):
 		case m.filter() != "" && !strings.Contains(strings.ToLower(p.Name), strings.ToLower(m.filter())):
 		default:
@@ -1110,12 +1106,7 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 }
 
 func (m model) rows() []provider.Package {
-	var rows []provider.Package
-	for i, p := range m.providers {
-		if m.rail == 0 || m.rail == i+1 {
-			rows = append(rows, m.visible(m.pkgs[p.Name()])...)
-		}
-	}
+	rows := m.visible(m.rowPkgs(m.curRow()))
 	m.sort(rows)
 	return rows
 }

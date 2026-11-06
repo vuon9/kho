@@ -32,7 +32,7 @@ func (m model) View() tea.View {
 		body = m.historyBody()
 	} else {
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			box(icon("All")+" Sources", m.railLines(), l.railW, l.bodyH, m.focus == focusRail),
+			box(icon("Machine")+" Machine", m.railBody(l.bodyH-2), l.railW, l.bodyH, m.focus == focusRail),
 			box(m.tableTitle(), m.tableLines(), l.tableW, l.bodyH, m.focus == focusTable),
 			m.sideBox(l.sideW, l.bodyH, m.focus == focusSide),
 		)
@@ -267,49 +267,9 @@ func (m model) footer() string {
 	return line
 }
 
-func (m model) railLines() []string {
-	inner := m.layout().railW - 2
-	var lines []string
-	for i := 0; i <= len(m.providers); i++ {
-		name := "All"
-		pkgs := m.allPkgs()
-		var mark string
-		if i > 0 {
-			name = m.providers[i-1].Name()
-			pkgs = m.pkgs[name]
-			switch {
-			case m.errs[name] != nil:
-				mark = red().Render("!")
-			case m.busy[name] != "":
-				mark = accent().Render(spinner[m.frame%len(spinner)])
-			}
-		}
-		t := m.count(pkgs)
-		var badges []string
-		if m.filters[i] != "" || m.statuses[i] != statusAll {
-			badges = append(badges, accent().Render("⌕"))
-		}
-		if t.vulnerable > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", t.vulnerable)))
-		}
-		if t.outdated > 0 {
-			badges = append(badges, yellow().Render(fmt.Sprintf("↑%d", t.outdated)))
-		}
-		line := fmt.Sprintf("  %s %s%s %s %s", icon(name), pad(name, max(inner-17, 6)), fmt.Sprintf("%4d", t.total), strings.Join(badges, " "), mark)
-		if i == m.rail {
-			line = selected(line, inner, m.focus == focusRail)
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
 func (m model) tableTitle() string {
-	title := icon("All") + " All"
-	if m.rail > 0 {
-		name := m.providers[m.rail-1].Name()
-		title = icon(name) + " " + name
-	}
+	r := m.curRow()
+	title := icon(r.name) + " " + r.name
 	if m.status() != statusAll {
 		title += " · " + statusNames[m.status()]
 	}
@@ -345,8 +305,8 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
-	if m.rail > 0 {
-		name := m.providers[m.rail-1].Name()
+	if r := m.curRow(); r.kind == rowProvider {
+		name := r.name
 		if err := m.errs[name]; err != nil && len(m.pkgs[name]) == 0 {
 			return []string{"", red().Render(" " + err.Error())}
 		}

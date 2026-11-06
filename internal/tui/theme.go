@@ -102,7 +102,7 @@ func selected(line string, width int, focused bool) string {
 }
 
 var icons = map[string]string{
-	"All": "✨", "brew": "🍺", "npm": "📦", "pipx": "🐍", "uv": "⚡", "go": "🐹", "mise": "🔧", "skills": "🧠",
+	"All": "✨", "Machine": "💻", "brew": "🍺", "composer": "🐘", "cargo": "🦀", "poetry": "📜", "pip": "🐍", "npm": "📦", "pipx": "🐍", "uv": "⚡", "go": "🐹", "mise": "🔧", "skills": "🧠",
 }
 
 func icon(name string) string {

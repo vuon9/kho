@@ -25,7 +25,7 @@ var helpSections = []struct {
 		{"R", "check security again, skipping the cache"},
 		{"q  ctrl+c", "quit"},
 	}},
-	{"Sources and packages", [][2]string{
+	{"Machine and packages", [][2]string{
 		{"↑ ↓  j k", "move"},
 		{"pgup pgdn  space", "page"},
 		{"g G", "first or last"},

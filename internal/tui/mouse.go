@@ -169,8 +169,8 @@ func (m *model) click(x, y int) tea.Cmd {
 	switch {
 	case x < l.tableX:
 		m.focus = focusRail
-		if r >= 0 {
-			m.setRail(r)
+		if i := m.railRowAt(r); i >= 0 {
+			m.setRail(i)
 		}
 	case x < l.sideX:
 		m.focus = focusTable

@@ -29,7 +29,7 @@ func (m model) filter() string {
 	if m.showHistory {
 		return m.hFilter
 	}
-	return m.filters[m.rail]
+	return m.filters[m.curRow().key]
 }
 
 func (m *model) setFilter(f string) {
@@ -37,13 +37,13 @@ func (m *model) setFilter(f string) {
 		m.hFilter, m.hCursor = f, 0
 		return
 	}
-	m.filters[m.rail] = f
+	m.filters[m.curRow().key] = f
 }
 
-func (m model) status() int { return m.statuses[m.rail] }
+func (m model) status() int { return m.statuses[m.curRow().key] }
 
 func (m *model) setStatus(s int) {
-	m.statuses[m.rail] = (s + len(statusNames)) % len(statusNames)
+	m.statuses[m.curRow().key] = (s + len(statusNames)) % len(statusNames)
 	m.cursor, m.offset = 0, 0
 }
 
@@ -79,18 +79,13 @@ func (m model) isStatus(p provider.Package, s int) bool {
 // each chip says how many packages it would show.
 func (m model) counts() []int {
 	n := make([]int, len(statusNames))
-	for i, p := range m.providers {
-		if m.rail != 0 && m.rail != i+1 {
+	for _, pkg := range m.rowPkgs(m.curRow()) {
+		if m.hiddenDep(pkg) || m.filter() != "" && !strings.Contains(strings.ToLower(pkg.Name), strings.ToLower(m.filter())) {
 			continue
 		}
-		for _, pkg := range m.pkgs[p.Name()] {
-			if pkg.Dependency && !m.showDeps || m.filter() != "" && !strings.Contains(strings.ToLower(pkg.Name), strings.ToLower(m.filter())) {
-				continue
-			}
-			for s := range statusNames {
-				if m.isStatus(pkg, s) {
-					n[s]++
-				}
+		for s := range statusNames {
+			if m.isStatus(pkg, s) {
+				n[s]++
 			}
 		}
 	}
