@@ -13,12 +13,14 @@ import (
 	"io"
 	"maps"
 	"os/exec"
+	"path"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -53,6 +55,10 @@ type Env struct {
 	// Major names a higher major module path that serves a version, so a Go
 	// tool that moved to /v2 is reported instead of "no published version".
 	Major func(context.Context, string, string) string
+	// FindProject reads a folder's lockfiles, and Latest looks up the newest
+	// version of a project's direct packages. main fills them.
+	FindProject func(context.Context, string) (project.Scan, error)
+	Latest      func(context.Context, []provider.Package) []provider.Package
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -62,6 +68,10 @@ usage:
   kho <folder>                         open the TUI on a folder, to read its project
   kho check [--json] [--refresh] [--require-complete] [--require uv,npm]
                                        am I safe? inventory plus known advisories
+  kho check --project [folder] [--prod-only] [--json] [--refresh]
+                                       is this project safe? reads its lockfiles,
+                                       not the machine; --prod-only leaves out
+                                       dev dependencies
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
                                        upgrade or downgrade; without --yes it only
@@ -218,16 +228,36 @@ type Advisory struct {
 }
 
 type Finding struct {
-	Source        string     `json:"source"`
-	Name          string     `json:"name"`
-	Version       string     `json:"version"`
-	Latest        string     `json:"latest,omitempty"`
-	Pinned        bool       `json:"pinned,omitempty"`
-	Dependency    string     `json:"dependency,omitempty"`
-	FixedIn       string     `json:"fixedIn,omitempty"`
-	LatestIsClear *bool      `json:"latestIsClear,omitempty"`
-	Fix           string     `json:"fix,omitempty"`
-	Advisories    []Advisory `json:"advisories"`
+	Source        string `json:"source"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Latest        string `json:"latest,omitempty"`
+	Pinned        bool   `json:"pinned,omitempty"`
+	Dependency    string `json:"dependency,omitempty"`
+	FixedIn       string `json:"fixedIn,omitempty"`
+	LatestIsClear *bool  `json:"latestIsClear,omitempty"`
+	Fix           string `json:"fix,omitempty"`
+	// Lockfile, Dev and Via describe a project package: where it was read,
+	// whether only development needs it, and what pulls it in.
+	Lockfile   string     `json:"lockfile,omitempty"`
+	Dev        bool       `json:"dev,omitempty"`
+	Via        []string   `json:"via,omitempty"`
+	Advisories []Advisory `json:"advisories"`
+}
+
+// ProjectReport is what `kho check --project` read.
+type ProjectReport struct {
+	Root      string           `json:"root"`
+	Lockfiles []LockfileReport `json:"lockfiles"`
+	Capped    string           `json:"capped,omitempty"`
+}
+
+type LockfileReport struct {
+	Path     string `json:"path"`
+	Manager  string `json:"manager"`
+	Packages int    `json:"packages"`
+	Missing  string `json:"missing,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 type RiskySkill struct {
@@ -275,6 +305,7 @@ type Report struct {
 	Skipped        map[string]string `json:"skipped,omitempty"`
 	Complete       bool              `json:"complete"`
 	Errors         map[string]string `json:"errors,omitempty"`
+	Project        *ProjectReport    `json:"project,omitempty"`
 }
 
 func advisories(advs []vuln.Advisory, version string) []Advisory {
@@ -302,8 +333,24 @@ func fixFor(advs []vuln.Advisory, version string) string {
 }
 
 func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
-	f := Finding{Source: p.Source, Name: p.Name, Version: p.Version, Latest: p.Latest, Pinned: p.Pinned, Advisories: advisories(advs, p.Version)}
+	f := Finding{Source: p.Source, Name: p.Name, Version: p.Version, Latest: p.Latest, Pinned: p.Pinned,
+		Lockfile: p.Lockfile, Dev: p.Dev, Via: p.Via, Advisories: advisories(advs, p.Version)}
 	f.FixedIn = fixFor(advs, p.Version)
+	if p.Lockfile != "" {
+		// kho never changes a project, so the fix is the project's own command.
+		target := f.FixedIn
+		if p.Latest != "" {
+			clear := !slices.ContainsFunc(advs, func(a vuln.Advisory) bool { return a.Affects(p.Latest) })
+			f.LatestIsClear = &clear
+			if target == "" && clear {
+				target = p.Latest
+			}
+		}
+		if target != "" {
+			f.Fix = project.FixCommand(p, target)
+		}
+		return f
+	}
 	if p.Latest != "" {
 		clear := true
 		for _, a := range advs {
@@ -376,13 +423,19 @@ func (env Env) check(args []string) int {
 	fs := env.flags("check")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	refresh := fs.Bool("refresh", false, "ask OSV and skills.sh again, skipping the cache")
+	inProject := fs.Bool("project", false, "check a project's lockfiles, in the folder given or the current one, instead of the machine")
+	prodOnly := fs.Bool("prod-only", false, "with --project, leave out dev dependencies")
 	// A script that branches on the exit code cannot tell a clean scan from a
 	// partial one, so it can name the managers it depends on, or ask for a full
 	// scan, and get a failure when that did not happen.
 	requireComplete := fs.Bool("require-complete", false, "fail when a manager or source could not be read")
 	require := fs.String("require", "", "comma separated sources that must be readable, like uv,npm")
-	if _, err := parse(fs, args); err != nil {
+	rest, err := parse(fs, args)
+	if err != nil {
 		return ExitUsage
+	}
+	if *inProject {
+		return env.checkProject(rest, *refresh, *prodOnly, *asJSON)
 	}
 	required, unknown := splitSources(*require)
 	if len(unknown) > 0 {
@@ -416,6 +469,63 @@ func (env Env) check(args []string) int {
 	}
 	if partial {
 		return ExitIncomplete
+	}
+	return ExitOK
+}
+
+// checkProject is `kho check --project`: the packages in a folder's
+// lockfiles, checked the same way as the machine's. A lockfile that could not
+// be read, a manifest with no lockfile, or a scan that stopped early leaves
+// the report incomplete, so a clean verdict never covers what wasn't read.
+func (env Env) checkProject(args []string, refresh, prodOnly, asJSON bool) int {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	ctx := context.Background()
+	scan, err := env.FindProject(ctx, dir)
+	if err != nil {
+		fmt.Fprintln(env.Err, err)
+		return ExitError
+	}
+	pr := &ProjectReport{Root: scan.Root, Capped: scan.Capped, Lockfiles: []LockfileReport{}}
+	errs := map[string]string{}
+	var unread []string
+	var pkgs []provider.Package
+	for _, p := range scan.Projects {
+		for _, lf := range p.Lockfiles {
+			pr.Lockfiles = append(pr.Lockfiles, LockfileReport{lf.Path, lf.Manager, len(lf.Packages), lf.Missing, lf.Err})
+			if lf.Err != "" {
+				errs[lf.Path] = lf.Err
+			}
+			if lf.Missing != "" {
+				unread = append(unread, lf.Path+" ("+lf.Missing+")")
+			}
+			for _, pkg := range lf.Packages {
+				if !prodOnly || !pkg.Dev {
+					pkgs = append(pkgs, pkg)
+				}
+			}
+		}
+	}
+	if scan.Capped != "" {
+		errs["scan"] = scan.Capped
+	}
+	pkgs = env.Latest(ctx, pkgs)
+	if err := env.secure(ctx, pkgs, refresh); err != nil {
+		errs["security"] = err.Error()
+	}
+	r := env.report(pkgs, errs)
+	r.Skipped, r.Project = nil, pr
+	r.NotCovered = append(r.NotCovered, unread...)
+	r.Complete = len(errs) == 0 && len(unread) == 0
+	if asJSON {
+		env.printJSON(r)
+	} else {
+		env.printReport(r)
+	}
+	if !r.Safe {
+		return ExitAtRisk
 	}
 	return ExitOK
 }
@@ -473,20 +583,32 @@ func whyIncomplete(r Report) string {
 func (env Env) printReport(r Report) {
 	w := env.Out
 	verdict := "✓ safe: no known advisories affect what's installed"
+	if r.Project != nil {
+		fmt.Fprintf(w, "project %s, %s\n", r.Project.Root, plural(len(r.Project.Lockfiles), "lockfile"))
+		verdict = "✓ safe: no known advisories affect what the lockfiles pin"
+	}
 	if !r.Safe {
 		verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package") + ", " + plural(r.Summary.RiskySkills, "risky skill")
+		if r.Project != nil {
+			verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package")
+		}
 	}
 	if r.Safe && !r.Complete {
 		verdict = "✓ safe for what was read: part of the machine could not be checked"
+		if r.Project != nil {
+			verdict = "✓ safe for what was read: part of the project could not be checked"
+		}
 	}
 	fmt.Fprintf(w, "%s\n%d packages · %d outdated · %d pinned · %d with vulnerable dependencies\n",
 		verdict, r.Summary.Packages, r.Summary.Outdated, r.Summary.Pinned, r.Summary.WithVulnerableDeps)
 	for _, f := range r.Vulnerable {
-		fmt.Fprintf(w, "\n%s/%s %s\n", f.Source, f.Name, f.Version)
+		fmt.Fprintf(w, "\n%s/%s %s%s\n", f.Source, f.Name, f.Version, where(f))
 		for _, a := range f.Advisories {
 			fmt.Fprintf(w, "  %-8s %s  %s (fixed in %s)\n", cmp.Or(a.Severity, "UNKNOWN"), a.ID, a.Summary, cmp.Or(a.FixedIn, "no fix yet"))
 		}
-		if f.Fix != "" {
+		if f.Fix != "" && f.Lockfile != "" && path.Dir(f.Lockfile) != "." {
+			fmt.Fprintf(w, "  fix, in %s: %s\n", path.Dir(f.Lockfile), f.Fix)
+		} else if f.Fix != "" {
 			fmt.Fprintf(w, "  fix: %s\n", f.Fix)
 		}
 	}
@@ -507,6 +629,22 @@ func (env Env) printReport(r Report) {
 	for src, err := range r.Errors {
 		fmt.Fprintf(w, "error from %s: %s\n", src, err)
 	}
+}
+
+// where says, for a project package, which lockfile it is from and what
+// pulls it in.
+func where(f Finding) string {
+	if f.Lockfile == "" {
+		return ""
+	}
+	parts := []string{f.Lockfile}
+	if f.Dev {
+		parts = append(parts, "dev")
+	}
+	if len(f.Via) > 0 {
+		parts = append(parts, "via "+strings.Join(f.Via, " > "))
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
 func plural(n int, thing string) string {

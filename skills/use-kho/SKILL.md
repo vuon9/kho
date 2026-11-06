@@ -1,11 +1,11 @@
 ---
 name: use-kho
-description: "Use when the user asks whether their machine is safe, which installed packages or agent skills have known vulnerabilities or failed audits, what is outdated, or to upgrade, downgrade, or fix packages installed through Homebrew, npm, pipx, uv, go install, mise, or the skills CLI. Drives the kho CLI, which reports the machine's packages and their security as JSON and installs versions only when told to."
+description: "Use when the user asks whether their machine or a project is safe, which installed packages, project dependencies or agent skills have known vulnerabilities or failed audits, what is outdated, or to upgrade, downgrade, or fix packages installed through Homebrew, npm, Composer, pipx, uv, go install, mise, or the skills CLI. Drives the kho CLI, which reports packages and their security as JSON and installs versions only when told to."
 ---
 
 # Use kho
 
-kho knows every package on this machine across Homebrew, npm globals, pipx, uv tools, `go install` binaries, mise, and agent skills. It checks them against OSV (osv.dev) and skills.sh audits, and keeps what it learns in a local cache. You read its JSON and report to the user. The user decides what changes.
+kho knows every package on this machine across Homebrew, npm globals, Composer globals, pipx, uv tools, `go install` binaries, mise, and agent skills. It also reads a project's lockfiles. It checks them against OSV (osv.dev) and skills.sh audits, and keeps what it learns in a local cache. You read its JSON and report to the user. The user decides what changes.
 
 If `kho` is missing, ask before installing it: `brew install vuon9/tap/kho` or `go install github.com/vuon9/kho@latest`.
 
@@ -21,6 +21,16 @@ kho check --json --refresh            # skip the 12-hour cache, ask OSV and skil
 check exits 0, 3 or 4, or 2 on a usage error. At risk wins: a scan that is at risk exits 3 even when `--require` or `--require-complete` also failed, and stderr still names what was not read. A failed OSV or skills.sh lookup does not change the exit code by itself: the report says `complete: false` and names it under `errors.security`, and `--require-complete` turns it into exit 4.
 
 Exit codes for every command: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete.
+
+## Check a project
+
+```bash
+kho check --project --json            # the lockfiles in this folder, not the machine
+kho check --project ../api --json     # another folder
+kho check --project --prod-only --json  # leave dev dependencies out of the verdict
+```
+
+kho reads `package-lock.json`, `composer.lock`, `go.mod`, `uv.lock`, `poetry.lock`, pinned `requirements*.txt` and `Cargo.lock`, four folders deep. It never runs the project's own tools. The exit codes are the same: 0 safe, 3 at risk. Each finding adds `lockfile`, `dev`, and `via`, the chain of packages that pulls it in. Its `fix` is the project's own command to run in that lockfile's folder, such as `npm update qs`. kho never changes a project, so don't use `kho install` for these. `project.lockfiles[]` lists what was read, and a manifest with no lockfile, a lockfile that failed to parse, or a scan that stopped early makes `complete` false and is named in `notCovered` or `errors`.
 
 `kho list` prints every package as JSON without the security checks, `kho version` prints the version, and `kho help` lists every command.
 

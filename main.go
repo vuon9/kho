@@ -10,6 +10,7 @@ import (
 
 	"github.com/vuon9/kho/internal/cli"
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/tui"
 	"github.com/vuon9/kho/internal/vuln"
@@ -52,19 +53,21 @@ func main() {
 	}
 	ready, skipped := provider.Detect()
 	os.Exit(cli.Main(cli.Env{
-		Version:   appVersion(),
-		Providers: ready,
-		Skipped:   skipped,
-		DB:        vuln.Load(vuln.Path()),
-		DBPath:    vuln.Path(),
-		Log:       log,
-		Out:       os.Stdout,
-		Err:       os.Stderr,
-		Now:       time.Now,
-		Scan:      vuln.Scan,
-		Audits:    vuln.SkillAudits,
-		History:   vuln.History,
-		Major:     provider.MajorModule,
+		Version:     appVersion(),
+		Providers:   ready,
+		Skipped:     skipped,
+		DB:          vuln.Load(vuln.Path()),
+		DBPath:      vuln.Path(),
+		Log:         log,
+		Out:         os.Stdout,
+		Err:         os.Stderr,
+		Now:         time.Now,
+		Scan:        vuln.Scan,
+		Audits:      vuln.SkillAudits,
+		History:     vuln.History,
+		Major:       provider.MajorModule,
+		FindProject: project.Find,
+		Latest:      provider.FillLatest,
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
 	}, os.Args[1:]))
