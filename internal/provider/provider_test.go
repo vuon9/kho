@@ -548,6 +548,8 @@ func TestQuery(t *testing.T) {
 		{"composer asks Packagist", Package{Source: "composer", Name: "acme/ledger", Version: "2.4.0"}, vuln.Query{Ecosystem: "Packagist", Name: "acme/ledger", Version: "2.4.0"}, true},
 		{"cargo asks crates.io", Package{Source: "cargo", Name: "tinyhash", Version: "1.0.5"}, vuln.Query{Ecosystem: "crates.io", Name: "tinyhash", Version: "1.0.5"}, true},
 		{"a go package is known by its module", Package{Source: "go", Name: "tidyup", Origin: "example.com/tidyup", Version: "v0.23.0"}, vuln.Query{Ecosystem: "Go", Name: "example.com/tidyup", Version: "v0.23.0"}, true},
+		{"a Composer branch is not a release to ask about", Package{Source: "composer", Name: "acme/ledger", Version: "dev-main"}, vuln.Query{}, false},
+		{"nor is a branch alias", Package{Source: "composer", Name: "acme/ledger", Version: "2.x-dev"}, vuln.Query{}, false},
 		{"mise has no OSV ecosystem", Package{Source: "mise", Name: "node", Version: "24.3.0"}, vuln.Query{}, false},
 	}
 	for _, tt := range tests {

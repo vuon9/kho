@@ -54,7 +54,7 @@ func Released(v string) bool {
 // Query is the OSV query for the installed version, if there is one to ask.
 func Query(p Package) (vuln.Query, bool) {
 	eco := Ecosystem(p)
-	if eco == "" || !Released(p.Version) {
+	if eco == "" || !Released(p.Version) || eco == "Packagist" && composerBranch(p.Version) {
 		return vuln.Query{}, false
 	}
 	return vuln.Query{Ecosystem: eco, Name: OSVName(p), Version: p.Version}, true
@@ -79,4 +79,10 @@ func DepQueries(p Package) []vuln.Query {
 		}
 	}
 	return qs
+}
+
+// composerBranch is a Composer version that names a branch, like dev-main
+// or 2.x-dev, rather than a release OSV could know about.
+func composerBranch(v string) bool {
+	return strings.HasPrefix(v, "dev-") || strings.HasSuffix(v, "-dev")
 }
