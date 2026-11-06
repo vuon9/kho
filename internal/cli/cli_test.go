@@ -540,6 +540,9 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 
 	var tokens, flags []string
 	for _, cmd := range commands {
+		if !IsCommand(cmd) {
+			t.Errorf("IsCommand(%q) is false, so a folder named %s would open the TUI instead", cmd, cmd)
+		}
 		tokens = append(tokens, "kho "+cmd)
 		var out, errOut bytes.Buffer
 		Main(Env{DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut, Now: func() time.Time { return clock }}, []string{cmd, "-h"})

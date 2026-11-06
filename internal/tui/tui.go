@@ -23,10 +23,11 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-func Run(log *history.Log, version string) error {
+// Run opens the TUI on dir, whose project kho reads alongside the machine.
+func Run(log *history.Log, version, dir string) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
-	m.log, m.version = log, version
+	m.log, m.version, m.dir = log, version, dir
 	m.themePath = filepath.Join(filepath.Dir(history.Path()), "theme")
 	if name, err := os.ReadFile(m.themePath); err == nil {
 		if t, ok := themeNamed(strings.TrimSpace(string(name))); ok {
@@ -231,7 +232,9 @@ type model struct {
 	resizing  int
 	grab      int
 
-	version     string
+	version string
+	// dir is the folder kho was opened on, whose project it reads.
+	dir         string
 	themePath   string
 	themePicked bool
 

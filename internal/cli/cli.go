@@ -59,6 +59,7 @@ const Usage = `kho - one place for every package manager on your machine
 
 usage:
   kho                                  open the TUI
+  kho <folder>                         open the TUI on a folder, to read its project
   kho check [--json] [--refresh] [--require-complete] [--require uv,npm]
                                        am I safe? inventory plus known advisories
   kho show <source>/<name> [--json]    one package, with every advisory
@@ -100,6 +101,12 @@ func Main(env Env, args []string) int {
 	}
 	fmt.Fprint(env.Err, Usage)
 	return ExitUsage
+}
+
+// IsCommand says whether name is one of Main's commands, so a folder with
+// the same name never shadows it.
+func IsCommand(name string) bool {
+	return slices.Contains([]string{"version", "check", "show", "install", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
 }
 
 func (env Env) flags(name string) *flag.FlagSet {

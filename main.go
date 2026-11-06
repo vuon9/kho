@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -38,8 +39,8 @@ func main() {
 		}
 		log.Add(e)
 	}
-	if len(os.Args) == 1 {
-		if err := tui.Run(log, appVersion()); err != nil {
+	if dir, ok := tuiFolder(os.Args[1:]); ok {
+		if err := tui.Run(log, appVersion(), dir); err != nil {
 			// 128 plus SIGHUP's number, as a shell reports a hung-up program.
 			if errors.Is(err, tui.ErrHangup) {
 				os.Exit(129)
@@ -67,4 +68,20 @@ func main() {
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
 	}, os.Args[1:]))
+}
+
+// tuiFolder is the folder the TUI opens on: the working folder with no
+// arguments, or the only argument when it is a folder and not a command.
+func tuiFolder(args []string) (string, bool) {
+	switch {
+	case len(args) == 0:
+		dir, _ := os.Getwd()
+		return dir, true
+	case len(args) == 1 && !cli.IsCommand(args[0]):
+		if fi, err := os.Stat(args[0]); err == nil && fi.IsDir() {
+			dir, err := filepath.Abs(args[0])
+			return dir, err == nil
+		}
+	}
+	return "", false
 }
