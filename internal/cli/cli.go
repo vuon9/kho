@@ -599,8 +599,14 @@ func (env Env) install(args []string) int {
 		fmt.Fprintln(env.Err, "usage: kho install <source>/<name>@<version|latest> [--yes] [--json]")
 		return ExitUsage
 	}
-	ref, version, ok := strings.Cut(rest[0], "@")
-	if !ok || version == "" {
+	// Split on the last @, because a scoped npm or Go module name carries one
+	// of its own: npm/@scope/tool@1.2.3 is one ref and one version, not two.
+	at := strings.LastIndex(rest[0], "@")
+	ref, version := rest[0], ""
+	if at > 0 {
+		ref, version = rest[0][:at], rest[0][at+1:]
+	}
+	if version == "" {
 		fmt.Fprintln(env.Err, "say which version: kho install <source>/<name>@<version|latest>")
 		return ExitUsage
 	}
