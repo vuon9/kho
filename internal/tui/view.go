@@ -293,6 +293,9 @@ func (m model) tableTitle() string {
 	if m.inProject() && m.proj.Capped != "" {
 		title += " · " + m.proj.Capped
 	}
+	if m.inProject() && len(m.proj.Shallow) > 0 {
+		title += " · not below " + m.proj.Shallow[0]
+	}
 	if m.inProject() && m.prodOnly {
 		title += " · dev hidden"
 	}

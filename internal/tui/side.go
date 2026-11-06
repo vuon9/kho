@@ -361,9 +361,15 @@ func (m model) infoLines(p provider.Package) []line {
 	if p.Repo != "" && "https://github.com/"+p.Repo != homeURL(p) {
 		add("repo", "github.com/"+p.Repo, "https://github.com/"+p.Repo)
 	}
-	if p.Source == "skills" {
+	switch {
+	case p.Source == "skills":
 		add("path", tilde(provider.RealPath(p)), "")
-	} else {
+	case p.Lockfile != "":
+		// For a project package, Path is its npm workspace member and Entry
+		// the alias it is required under.
+		add("member", p.Path, "")
+		add("alias", p.Entry, "")
+	default:
 		add("path", p.Path, "")
 	}
 	if p.Source == "skills" {

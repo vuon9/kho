@@ -515,6 +515,9 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireCom
 	if scan.Capped != "" {
 		errs["scan"] = scan.Capped
 	}
+	for _, dir := range scan.Shallow {
+		unread = append(unread, dir+" (kho doesn't look deeper than this)")
+	}
 	pkgs = env.Latest(ctx, pkgs)
 	if err := env.secure(ctx, pkgs, refresh); err != nil {
 		errs["security"] = err.Error()

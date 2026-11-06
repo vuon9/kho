@@ -726,6 +726,12 @@ func TestCheckProject(t *testing.T) {
 			}
 			return ""
 		}},
+		{"a folder deeper than kho looks leaves the check incomplete", project.Scan{Root: "/work/app", Shallow: []string{"a/b/c/d"}, Projects: web.Projects}, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string {
+			if !slices.Contains(r.NotCovered, "a/b/c/d (kho doesn't look deeper than this)") {
+				return fmt.Sprintf("not covered %v", r.NotCovered)
+			}
+			return ""
+		}},
 		{"at risk still wins over incomplete", web, vulnerable, []string{"--require-complete"}, ExitAtRisk, func(r Report) string { return "" }},
 		{"a complete clean project passes --require-complete", web, nil, []string{"--require-complete"}, ExitOK, func(r Report) string { return "" }},
 	}...)
