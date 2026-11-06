@@ -1,0 +1,17 @@
+[package]
+name = "dice-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tinyhash = "=0.4.1"
+
+[target.'cfg(unix)'.dependencies]
+byteview = "0.3"
+
+[dev-dependencies]
+byteview = "0.3"
+tmp = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+patternly = "1.5"

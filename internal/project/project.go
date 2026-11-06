@@ -37,6 +37,9 @@ type Scan struct {
 	Projects []Project `json:"projects,omitempty"`
 	// Capped says why the scan stopped early, or is "".
 	Capped string `json:"capped,omitempty"`
+	// Shallow names up to five folders at the depth limit whose subfolders
+	// were not read, relative to Root and slash separated.
+	Shallow []string `json:"shallow,omitempty"`
 }
 
 type Project struct {
@@ -73,13 +76,13 @@ func Find(ctx context.Context, start string) (Scan, error) {
 	ctx, cancel := context.WithTimeout(ctx, Budget)
 	defer cancel()
 	s := Scan{Root: root}
-	s.Projects, s.Capped = walk(ctx, root)
+	s.Projects, s.Capped, s.Shallow = walk(ctx, root)
 	if len(s.Projects) == 0 && s.Capped == "" {
 		// A home folder kept in git for its dotfiles is not a project to walk.
 		home, _ := os.UserHomeDir()
 		if top := gitRoot(root); top != "" && top != root && top != home {
 			s.Root = top
-			s.Projects, s.Capped = walk(ctx, top)
+			s.Projects, s.Capped, s.Shallow = walk(ctx, top)
 		}
 	}
 	if err := parent.Err(); err != nil {
@@ -127,10 +130,10 @@ type folder struct {
 }
 
 // walk goes breadth first, so when a cap stops it the folders nearest the
-// root are the ones read.
-func walk(ctx context.Context, root string) ([]Project, string) {
+// root are the ones read. shallow names the first few folders at MaxDepth
+// that had folders below them, so a person knows what went unread.
+func walk(ctx context.Context, root string) (projects []Project, capped string, shallow []string) {
 	var found []Lockfile
-	capped := ""
 	read := 0
 	queue := []folder{{}}
 scan:
@@ -152,6 +155,15 @@ scan:
 			switch {
 			case !e.IsDir():
 				files[e.Name()] = true
+			case e.Name() == "requirements":
+				// pip projects keep their requirements files here, as part of
+				// the project above.
+				sub, _ := os.ReadDir(filepath.Join(dir, e.Name()))
+				for _, s := range sub {
+					if !s.IsDir() {
+						files["requirements/"+s.Name()] = true
+					}
+				}
 			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), ".") && clean(e.Name()) == e.Name():
 				dirs = append(dirs, e.Name())
 			}
@@ -173,13 +185,16 @@ scan:
 			read++
 			found = append(found, readLockfile(root, lf.Path, lf.Manager))
 		}
-		if f.depth < MaxDepth {
+		switch {
+		case f.depth < MaxDepth:
 			for _, d := range dirs {
 				queue = append(queue, folder{rel: path.Join(f.rel, d), depth: f.depth + 1, locked: locked})
 			}
+		case len(dirs) > 0 && len(shallow) < 5:
+			shallow = append(shallow, f.rel)
 		}
 	}
-	return group(found), capped
+	return group(found), capped, shallow
 }
 
 // detect lists the lockfiles in one folder, plus notes for manifests that
@@ -224,7 +239,7 @@ func detect(dir, rel string, files, above map[string]bool) ([]Lockfile, map[stri
 
 	var reqs []string
 	for name := range files {
-		if strings.HasPrefix(name, "requirements") && strings.HasSuffix(name, ".txt") {
+		if strings.HasPrefix(name, "requirements") && strings.HasSuffix(name, ".txt") && clean(name) == name {
 			reqs = append(reqs, name)
 		}
 	}
@@ -270,11 +285,11 @@ func firstOf(files map[string]bool, names ...string) string {
 
 func group(lfs []Lockfile) []Project {
 	slices.SortFunc(lfs, func(a, b Lockfile) int {
-		return cmp.Or(strings.Compare(dirOf(a.Path), dirOf(b.Path)), strings.Compare(a.Manager, b.Manager), strings.Compare(a.Path, b.Path))
+		return cmp.Or(strings.Compare(projectOf(a), projectOf(b)), strings.Compare(a.Manager, b.Manager), strings.Compare(a.Path, b.Path))
 	})
 	var out []Project
 	for _, lf := range lfs {
-		d := dirOf(lf.Path)
+		d := projectOf(lf)
 		if len(out) == 0 || out[len(out)-1].Dir != d {
 			out = append(out, Project{Dir: d})
 		}
@@ -288,6 +303,16 @@ func dirOf(p string) string {
 		return d
 	}
 	return ""
+}
+
+// projectOf is the folder a lockfile belongs to. Requirements files kept in
+// a requirements folder belong to the project above it.
+func projectOf(lf Lockfile) string {
+	d := dirOf(lf.Path)
+	if lf.Manager == "pip" && path.Base(d) == "requirements" {
+		return dirOf(d)
+	}
+	return d
 }
 
 var readers = map[string]func(dir, name string) ([]provider.Package, error){
@@ -330,7 +355,7 @@ func tidy(pkgs []provider.Package) []provider.Package {
 	slices.SortFunc(pkgs, func(a, b provider.Package) int {
 		if c := cmp.Or(strings.Compare(a.Name, b.Name), vuln.Compare(a.Version, b.Version),
 			cmp.Compare(boolRank(a.Dependency), boolRank(b.Dependency)), cmp.Compare(boolRank(a.Dev), boolRank(b.Dev)),
-			cmp.Compare(reach(a), reach(b))); c != 0 {
+			cmp.Compare(reach(a), reach(b)), strings.Compare(a.Path, b.Path), strings.Compare(a.Entry, b.Entry)); c != 0 {
 			return c
 		}
 		return slices.Compare(a.Via, b.Via)
@@ -446,25 +471,35 @@ func readJSON(file string, v any) error {
 // version, or "" when kho can't say. For pip it is an edit to make, not a
 // command. Every part comes from a lockfile anyone could have written, so a
 // command is only built from names and versions that a shell reads as
-// plain words.
+// plain words, and that the tool can't take for a flag.
 func FixCommand(p provider.Package, version string) string {
-	for _, part := range []string{p.Name, p.Version, version, path.Base(p.Lockfile)} {
-		if part != "" && part != "." && !shellSafe.MatchString(part) {
+	plain := func(s string) bool { return shellSafe.MatchString(s) && !strings.HasPrefix(s, "-") }
+	for _, part := range []string{p.Name, p.Version, version, path.Base(p.Lockfile), p.Path, p.Entry} {
+		if part != "" && part != "." && !plain(part) {
 			return ""
 		}
 	}
-	if p.Source == "go" && !shellSafe.MatchString(p.Origin) {
+	if p.Source == "go" && !plain(p.Origin) {
 		return ""
 	}
 	switch p.Source {
 	case "npm":
+		// readNpm sets Path to the workspace member and Entry to the alias.
+		name, spec := p.Name, p.Name+"@"+version
+		if p.Entry != "" {
+			name, spec = p.Entry, p.Entry+"@npm:"+p.Name+"@"+version
+		}
+		in := ""
+		if p.Path != "" {
+			in = " -w " + p.Path
+		}
 		switch {
 		case p.Dependency:
-			return "npm update " + p.Name
+			return "npm update " + name + in
 		case p.Dev:
-			return "npm install -D " + p.Name + "@" + version
+			return "npm install -D " + spec + in
 		}
-		return "npm install " + p.Name + "@" + version
+		return "npm install " + spec + in
 	case "composer":
 		switch {
 		case p.Dependency:
@@ -489,7 +524,11 @@ func FixCommand(p provider.Package, version string) string {
 		}
 		return "poetry update " + p.Name
 	case "pip":
-		return "pin " + p.Name + "==" + version + " in " + path.Base(p.Lockfile)
+		file := path.Base(p.Lockfile)
+		if path.Base(path.Dir(p.Lockfile)) == "requirements" {
+			file = "requirements/" + file
+		}
+		return "pin " + p.Name + "==" + version + " in " + file
 	case "cargo":
 		// cargo add rewrites the requirement, so it also crosses a major
 		// version. Naming the locked version picks the right one when two

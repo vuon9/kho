@@ -11,6 +11,7 @@ import (
 // readGoMod reads the require lines of go.mod. A module replaced by another
 // version is reported at the version that gets built, since a replace is how
 // projects pin a fixed release. One replaced by a local folder is left out.
+// As in Go, a replace of the required version wins over one of every version.
 func readGoMod(dir, name string) ([]provider.Package, error) {
 	file := filepath.Join(dir, name)
 	data, err := readFile(file)
@@ -25,7 +26,14 @@ func readGoMod(dir, name string) ([]provider.Package, error) {
 	for _, r := range f.Require {
 		mod := r.Mod
 		for _, rep := range f.Replace {
-			if rep.Old.Path == r.Mod.Path && (rep.Old.Version == "" || rep.Old.Version == r.Mod.Version) {
+			if rep.Old.Path != r.Mod.Path {
+				continue
+			}
+			if rep.Old.Version == r.Mod.Version {
+				mod = rep.New
+				break
+			}
+			if rep.Old.Version == "" {
 				mod = rep.New
 			}
 		}

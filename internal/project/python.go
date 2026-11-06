@@ -116,6 +116,10 @@ type poetryPkg struct {
 	Source       struct{ Type string }
 }
 
+// marked says the lockfile tells dev itself. Poetry 1.5 to 1.8 write neither
+// groups nor the older category.
+func (p poetryPkg) marked() bool { return len(p.Groups) > 0 || p.Category != "" }
+
 // dev reads the newer groups list, or the older category.
 func (p poetryPkg) dev() bool {
 	if len(p.Groups) > 0 {
@@ -126,7 +130,9 @@ func (p poetryPkg) dev() bool {
 
 // readPoetry reads poetry.lock, with direct dependencies from pyproject.toml
 // beside it. Dependency keys are written as the package spells its name
-// ("MarkupSafe" for markupsafe), so names are matched normalized.
+// ("MarkupSafe" for markupsafe), so names are matched normalized. When the
+// lockfile doesn't mark dev, a package is dev when only the pyproject's dev
+// groups pull it in, as for uv.
 func readPoetry(dir, name string) ([]provider.Package, error) {
 	var lock struct{ Package []poetryPkg }
 	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
@@ -136,9 +142,9 @@ func readPoetry(dir, name string) ([]provider.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	var declared map[string]bool
+	var prodNames, devNames map[string]bool
 	if manifest != nil {
-		declared = manifest.names()
+		prodNames, devNames = manifest.names()
 	}
 	pkgs := lock.Package
 	byName := map[string][]int{}
@@ -150,11 +156,12 @@ func readPoetry(dir, name string) ([]provider.Package, error) {
 	direct := map[int]bool{}
 	var prod, dev []int
 	for i, p := range pkgs {
-		if manifest != nil && !declared[provider.NormalizePyPI(p.Name)] {
+		n := provider.NormalizePyPI(p.Name)
+		if manifest != nil && !prodNames[n] && !devNames[n] {
 			continue
 		}
 		direct[i] = true
-		if p.dev() {
+		if p.marked() && p.dev() || !p.marked() && devNames[n] && !prodNames[n] {
 			dev = append(dev, i)
 		} else {
 			prod = append(prod, i)
@@ -167,7 +174,7 @@ func readPoetry(dir, name string) ([]provider.Package, error) {
 		}
 		return out
 	}
-	via, _ := trace(prod, dev, children, func(i int) string { return pkgs[i].Name })
+	via, devOnly := trace(prod, dev, children, func(i int) string { return pkgs[i].Name })
 
 	var out []provider.Package
 	for i, p := range pkgs {
@@ -175,7 +182,10 @@ func readPoetry(dir, name string) ([]provider.Package, error) {
 		case "git", "directory", "file":
 			continue
 		}
-		pkg := provider.Package{Name: p.Name, Version: p.Version, Dependency: !direct[i], Dev: p.dev()}
+		pkg := provider.Package{Name: p.Name, Version: p.Version, Dependency: !direct[i], Dev: devOnly(i)}
+		if p.marked() {
+			pkg.Dev = p.dev()
+		}
 		if pkg.Dependency {
 			pkg.Via = via[i]
 		}
@@ -215,37 +225,45 @@ func readPyproject(dir string) (*pyproject, error) {
 }
 
 // names are the normalized names of every dependency the project declares,
-// in the PEP 621 and PEP 735 tables and in Poetry's own.
-func (p *pyproject) names() map[string]bool {
-	out := map[string]bool{}
+// in the PEP 621 and PEP 735 tables and in Poetry's own. Extras ship with
+// the package, so they are prod; dependency groups and Poetry's groups other
+// than main are dev.
+func (p *pyproject) names() (prod, dev map[string]bool) {
+	prod, dev = map[string]bool{}, map[string]bool{}
 	for _, s := range p.Project.Dependencies {
-		out[provider.NormalizePyPI(requirementName(s))] = true
+		prod[provider.NormalizePyPI(requirementName(s))] = true
 	}
 	for _, deps := range p.Project.OptionalDependencies {
 		for _, s := range deps {
-			out[provider.NormalizePyPI(requirementName(s))] = true
+			prod[provider.NormalizePyPI(requirementName(s))] = true
 		}
 	}
 	for _, deps := range p.DependencyGroups {
 		for _, d := range deps {
 			if s, ok := d.(string); ok {
-				out[provider.NormalizePyPI(requirementName(s))] = true
+				dev[provider.NormalizePyPI(requirementName(s))] = true
 			}
 		}
 	}
 	if poetry := p.Tool.Poetry; poetry != nil {
-		tables := []map[string]any{poetry.Dependencies, poetry.DevDependencies}
-		for _, g := range poetry.Group {
-			tables = append(tables, g.Dependencies)
+		for n := range poetry.Dependencies {
+			prod[provider.NormalizePyPI(n)] = true
 		}
-		for _, t := range tables {
-			for n := range t {
-				out[provider.NormalizePyPI(n)] = true
+		for n := range poetry.DevDependencies {
+			dev[provider.NormalizePyPI(n)] = true
+		}
+		for g, t := range poetry.Group {
+			for n := range t.Dependencies {
+				if g == "main" {
+					prod[provider.NormalizePyPI(n)] = true
+				} else {
+					dev[provider.NormalizePyPI(n)] = true
+				}
 			}
 		}
-		delete(out, "python")
+		delete(prod, "python")
 	}
-	return out
+	return prod, dev
 }
 
 // requirementName is the name at the start of a PEP 508 requirement such as
@@ -265,10 +283,15 @@ func requirementName(s string) string {
 // it declares no dependencies. Many hold only tool settings, such as ruff's.
 func pyprojectManager(dir string) string {
 	p, err := readPyproject(dir)
-	switch {
-	case err != nil:
+	if err != nil {
 		return "uv"
-	case p == nil || len(p.names()) == 0:
+	}
+	if p == nil {
+		return ""
+	}
+	prod, dev := p.names()
+	switch {
+	case len(prod)+len(dev) == 0:
 		return ""
 	case p.Tool.Poetry != nil || strings.Contains(p.BuildSystem.BuildBackend, "poetry"):
 		return "poetry"
@@ -286,8 +309,10 @@ func readRequirements(dir, name string) ([]provider.Package, error) {
 	}
 	lower := strings.ToLower(name)
 	dev := strings.Contains(lower, "dev") || strings.Contains(lower, "test")
+	text := strings.TrimPrefix(string(data), "\ufeff")
 	var pkgs []provider.Package
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.ReplaceAll(line, "\t", " ")
 		line, _, _ = strings.Cut(line, "#")
 		line, _, _ = strings.Cut(line, ";")
 		line, _, _ = strings.Cut(line, " --")

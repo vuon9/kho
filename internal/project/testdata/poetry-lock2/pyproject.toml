@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "groups-app"
+version = "0.1.0"
+description = ""
+authors = ["Someone"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+inkpot = "^3.1"
+webkit-lite = "^2.31"
+
+[tool.poetry.group.dev.dependencies]
+checkmate = "^9.1"
+Webkit_Lite = "^2.31"
+
+[tool.poetry.dev-dependencies]
+pagewright = "^1.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
