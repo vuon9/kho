@@ -309,8 +309,8 @@ type column struct {
 // and narrows the version columns before it squeezes names.
 func (m model) tableColumns() []column {
 	inner := m.layout().tableW - 4
-	cols := []column{{colName, 0}, {colSource, 7}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
-	if inner < 10+8+14+14+12 {
+	cols := []column{{colName, 0}, {colSource, 8}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
+	if inner < 10+9+14+14+12 {
 		cols = []column{{colName, 0}, {colVersion, 10}, {colLatest, 10}, {colStatus, 11}}
 	}
 	fixed := 0

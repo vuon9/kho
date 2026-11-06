@@ -2314,6 +2314,20 @@ func TestProject(t *testing.T) {
 			}
 			return ""
 		}},
+		{"a direct package lists what it pulls in from the lockfile", func(t *testing.T) model {
+			m := header(withProject(t, one, false))
+			m.focus = focusTable
+			for names(m)[m.cursor] != "left-trim" {
+				m = press(t, m, "j")
+			}
+			return m
+		}, func(m model) string {
+			deps := m.deps[cacheKey(provider.Package{Source: "npm", Name: "left-trim", Version: "1.0.2", Lockfile: "package-lock.json"})]
+			if deps == nil || len(deps.val) != 2 || deps.val[0].Name != "bramble" || !deps.val[0].Direct {
+				return fmt.Sprintf("deps %+v", deps)
+			}
+			return ""
+		}},
 		{"several projects get a row per folder", func(t *testing.T) model { return press(t, header(withProject(t, several, false)), "enter") },
 			func(m model) string {
 				if r := rail(m); !strings.Contains(r, "code · 2 projects") || !strings.Contains(r, "api") || !strings.Contains(r, "web") {

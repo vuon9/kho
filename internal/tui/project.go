@@ -235,6 +235,19 @@ func (m model) lockfile(file string) (project.Lockfile, bool) {
 	return project.Lockfile{}, false
 }
 
+// pulledIn is what p pulls into its project: every package in its lockfile
+// whose chain runs through p, direct when p is the last link. The lockfile
+// already has them, so nothing is fetched.
+func (m model) pulledIn(p provider.Package) []provider.Dep {
+	var deps []provider.Dep
+	for _, q := range m.projPkgs() {
+		if q.Lockfile == p.Lockfile && slices.Contains(q.Via, p.Name) {
+			deps = append(deps, provider.Dep{Name: q.Name, Version: q.Version, Direct: q.Via[len(q.Via)-1] == p.Name})
+		}
+	}
+	return deps
+}
+
 // projectFix is the command that clears p's advisories in its project: to
 // the lowest version that fixes them all, or to the latest when it is clear.
 func (m model) projectFix(p provider.Package) string {

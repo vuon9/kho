@@ -629,8 +629,7 @@ func (m *model) load() tea.Cmd {
 			m.versions[key] = &lazy[[]provider.Release]{err: fmt.Errorf("kho has no version list for %s packages yet", p.Source), done: true}
 			return nil
 		}
-		// A lockfile already lists a project package's dependencies as rows.
-		m.deps[key] = &lazy[[]provider.Dep]{done: true}
+		m.deps[key] = &lazy[[]provider.Dep]{val: m.pulledIn(p), done: true}
 	}
 	if prov == nil {
 		return nil
