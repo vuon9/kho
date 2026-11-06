@@ -6,12 +6,14 @@
 
 **One place for every package manager on your machine, with security checks.**
 
-![kho listing packages from several managers, with a vulnerable npm package selected and its advisory open](docs/screenshot.png)
+![kho with a project's lockfiles open under the machine's package managers, a vulnerable dependency selected, and the command that fixes it](docs/screenshot.png)
 
 *Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, Composer, pipx, uv, `go install`, mise and the skills CLI have put on your machine, and what the project in front of you depends on. It tells you which of those packages have known vulnerabilities, and upgrades the machine's only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
 
 <details>
 <summary>See it run</summary>
+
+This recording is from v0.1.1, before Composer and project scanning. The latest version does a lot more, so try it yourself.
 
 https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
