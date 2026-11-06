@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // latestURL is where a package's registry says its newest version, by OSV
@@ -19,6 +21,8 @@ func latestURL(p Package) string {
 		return "https://proxy.golang.org/" + escapeModule(p.Origin) + "/@latest"
 	case "crates.io":
 		return "https://crates.io/api/v1/crates/" + url.PathEscape(p.Name)
+	case "Packagist":
+		return "https://repo.packagist.org/p2/" + p.Name + ".json"
 	}
 	return ""
 }
@@ -48,8 +52,26 @@ func RegistryLatest(ctx context.Context, p Package) (string, error) {
 		}
 		err := getJSON(ctx, u, http.Header{"User-Agent": {"kho (https://github.com/vuon9/kho)"}}, &c)
 		return c.Crate.MaxStableVersion, err
+	case "Packagist":
+		var raw json.RawMessage
+		if err := getJSON(ctx, u, nil, &raw); err != nil {
+			return "", err
+		}
+		rels, _, err := parsePackagist(p.Name, raw)
+		return newestStable(rels), err
 	}
 	return "", nil
+}
+
+// newestStable is the newest release that isn't a preview like 3.0.0-beta1,
+// from a list that is newest first.
+func newestStable(rels []Release) string {
+	for _, r := range rels {
+		if !strings.ContainsAny(r.Version, "-@") && !strings.Contains(strings.ToLower(r.Version), "dev") {
+			return r.Version
+		}
+	}
+	return ""
 }
 
 // FillLatest looks up the newest version of every direct package in pkgs.
