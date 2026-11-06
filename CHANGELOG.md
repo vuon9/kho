@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.7](https://github.com/vuon9/kho/compare/v0.1.6...v0.1.7) (2026-11-06)
+
+
+### Features
+
+* Composer, project lockfile scanning, and kho check --project ([#32](https://github.com/vuon9/kho/issues/32)) ([bfac8be](https://github.com/vuon9/kho/commit/bfac8be9556d45b6f11787aaa317ff840b89a172))
+
+
+### Bug Fixes
+
+* **install:** read a scoped name whole when splitting off the version ([#30](https://github.com/vuon9/kho/issues/30)) ([5ee2857](https://github.com/vuon9/kho/commit/5ee28573681a06a6f0fed6e9f927aa1192ee3c72))
+
 ## [0.1.6](https://github.com/vuon9/kho/compare/v0.1.5...v0.1.6) (2026-11-05)
 
 
