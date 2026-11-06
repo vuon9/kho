@@ -710,6 +710,25 @@ func TestCheckProject(t *testing.T) {
 			return ""
 		}},
 	}
+	empty := project.Scan{Root: "/work/empty"}
+	tests = append(tests, []struct {
+		id    string
+		scan  project.Scan
+		hits  map[string][]string
+		args  []string
+		code  int
+		check func(Report) string
+	}{
+		{"--require-complete fails a project with a bare manifest", noLock, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string { return "" }},
+		{"--require-complete fails a folder with no lockfiles", empty, nil, []string{"--require-complete"}, ExitIncomplete, func(r Report) string {
+			if !slices.Contains(r.NotCovered, "no lockfiles found in /work/empty") {
+				return fmt.Sprintf("not covered %v", r.NotCovered)
+			}
+			return ""
+		}},
+		{"at risk still wins over incomplete", web, vulnerable, []string{"--require-complete"}, ExitAtRisk, func(r Report) string { return "" }},
+		{"a complete clean project passes --require-complete", web, nil, []string{"--require-complete"}, ExitOK, func(r Report) string { return "" }},
+	}...)
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
 			got, _ := projectKho(t, tt.scan, tt.hits, append([]string{"check", "--project", "--json"}, tt.args...)...)
@@ -741,5 +760,12 @@ func TestCheckProjectFolder(t *testing.T) {
 	}
 	if got.code != ExitAtRisk {
 		t.Errorf("exit %d", got.code)
+	}
+}
+
+func TestCheckProjectRefusesRequire(t *testing.T) {
+	got, _ := projectKho(t, project.Scan{}, nil, "check", "--project", "--require", "npm")
+	if got.code != ExitUsage || !strings.Contains(got.err, "use --require-complete") {
+		t.Errorf("exit %d, stderr %q", got.code, got.err)
 	}
 }

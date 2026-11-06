@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 // latestURL is where a package's registry says its newest version, by OSV
@@ -86,15 +88,20 @@ func RegistryLatest(ctx context.Context, p Package) (string, error) {
 	return "", nil
 }
 
-// newestStable is the newest release that isn't a preview like 3.0.0-beta1,
-// from a list that is newest first.
+// newestStable is the highest release that isn't a preview like
+// 3.0.0-beta1. It goes by version, not date, since a backport to an older
+// line is often published after the newest release.
 func newestStable(rels []Release) string {
+	best := ""
 	for _, r := range rels {
-		if !strings.ContainsAny(r.Version, "-@") && !strings.Contains(strings.ToLower(r.Version), "dev") {
-			return r.Version
+		if strings.ContainsAny(r.Version, "-@") || strings.Contains(strings.ToLower(r.Version), "dev") {
+			continue
+		}
+		if best == "" || vuln.Compare(TagVersion(r.Version), TagVersion(best)) > 0 {
+			best = r.Version
 		}
 	}
-	return ""
+	return best
 }
 
 // MaxLatest caps the registry lookups one project can cause.

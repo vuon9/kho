@@ -435,7 +435,11 @@ func (env Env) check(args []string) int {
 		return ExitUsage
 	}
 	if *inProject {
-		return env.checkProject(rest, *refresh, *prodOnly, *asJSON)
+		if *require != "" {
+			fmt.Fprintln(env.Err, "--require names machine package managers; with --project, use --require-complete")
+			return ExitUsage
+		}
+		return env.checkProject(rest, *refresh, *prodOnly, *asJSON, *requireComplete)
 	}
 	required, unknown := splitSources(*require)
 	if len(unknown) > 0 {
@@ -477,7 +481,7 @@ func (env Env) check(args []string) int {
 // lockfiles, checked the same way as the machine's. A lockfile that could not
 // be read, a manifest with no lockfile, or a scan that stopped early leaves
 // the report incomplete, so a clean verdict never covers what wasn't read.
-func (env Env) checkProject(args []string, refresh, prodOnly, asJSON bool) int {
+func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireComplete bool) int {
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
@@ -518,16 +522,35 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON bool) int {
 	r := env.report(pkgs, errs)
 	r.Skipped, r.Project = nil, pr
 	r.NotCovered = append(r.NotCovered, unread...)
+	if len(pr.Lockfiles) == 0 {
+		unread = append(unread, "no lockfiles found in "+scan.Root)
+		r.NotCovered = append(r.NotCovered, unread[len(unread)-1])
+	}
 	r.Complete = len(errs) == 0 && len(unread) == 0
 	if asJSON {
 		env.printJSON(r)
 	} else {
 		env.printReport(r)
 	}
-	if !r.Safe {
+	if requireComplete && !r.Complete {
+		fmt.Fprintf(env.Err, "check was not complete: %s\n", whyProjectIncomplete(r, unread))
+	}
+	switch {
+	case !r.Safe:
 		return ExitAtRisk
+	case requireComplete && !r.Complete:
+		return ExitIncomplete
 	}
 	return ExitOK
+}
+
+// whyProjectIncomplete names what kept a project check from reading it all.
+func whyProjectIncomplete(r Report, unread []string) string {
+	reasons := slices.Clone(unread)
+	for _, src := range slices.Sorted(maps.Keys(r.Errors)) {
+		reasons = append(reasons, src+": "+r.Errors[src])
+	}
+	return strings.Join(reasons, ", ")
 }
 
 // splitSources reads the --require list as provider names, so "cask" from the

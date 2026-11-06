@@ -34,6 +34,7 @@ func TestNewestStable(t *testing.T) {
 		want string
 	}{
 		{"previews are skipped", []Release{{Version: "v3.0.0-beta1"}, {Version: "v3.0.0-RC2"}, {Version: "v2.4.1"}}, "v2.4.1"},
+		{"a backport published last doesn't beat a higher version", []Release{{Version: "v12.71.0"}, {Version: "v13.40.0"}, {Version: "v12.70.2"}}, "v13.40.0"},
 		{"the newest stable one wins", []Release{{Version: "2.5.0"}, {Version: "2.4.1"}}, "2.5.0"},
 		{"nothing stable", []Release{{Version: "1.0.0-alpha"}}, ""},
 	}
