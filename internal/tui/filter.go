@@ -80,7 +80,7 @@ func (m model) isStatus(p provider.Package, s int) bool {
 func (m model) counts() []int {
 	n := make([]int, len(statusNames))
 	for _, pkg := range m.rowPkgs(m.curRow()) {
-		if m.hiddenDep(pkg) || m.filter() != "" && !strings.Contains(strings.ToLower(pkg.Name), strings.ToLower(m.filter())) {
+		if m.hidden(pkg) || m.filter() != "" && !strings.Contains(strings.ToLower(pkg.Name), strings.ToLower(m.filter())) {
 			continue
 		}
 		for s := range statusNames {

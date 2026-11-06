@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -28,6 +29,9 @@ func Run(log *history.Log, version, dir string) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
 	m.log, m.version, m.dir = log, version, dir
+	if dir != "" {
+		m.projBusy = projReading
+	}
 	m.themePath = filepath.Join(filepath.Dir(history.Path()), "theme")
 	if name, err := os.ReadFile(m.themePath); err == nil {
 		if t, ok := themeNamed(strings.TrimSpace(string(name))); ok {
@@ -233,8 +237,17 @@ type model struct {
 	grab      int
 
 	version string
-	// dir is the folder kho was opened on, whose project it reads.
+	// dir is the folder kho was opened on, whose project it reads. proj is
+	// what the last scan found, nil until one comes back. projGen counts
+	// scans, so an answer for an older one is dropped.
 	dir         string
+	proj        *project.Scan
+	projErr     error
+	projBusy    string
+	projOpen    bool
+	projGen     int
+	projStamps  map[string]time.Time
+	prodOnly    bool
 	themePath   string
 	themePicked bool
 
@@ -278,7 +291,11 @@ func newModel(ps []provider.Provider, dbPath string) model {
 // Init lists every provider and starts the spinner, which newModel already
 // counts as ticking.
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.scan(), tick(), tea.RequestBackgroundColor)
+	cmds := []tea.Cmd{m.scan(), tick(), tea.RequestBackgroundColor}
+	if m.projBusy == projReading {
+		cmds = append(cmds, m.findCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 func tick() tea.Cmd {
@@ -337,7 +354,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.inst.running()
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running()
 }
 
 // startTicking runs the spinner while something is loading.
@@ -359,6 +376,11 @@ func (m model) provider(name string) provider.Provider {
 }
 
 func pkgKey(p provider.Package) string {
+	// A lockfile can hold two versions of one package, and two lockfiles the
+	// same one, so a project package is known by all three.
+	if p.Lockfile != "" {
+		return p.Lockfile + "\x00" + p.Name + "\x00" + p.Version
+	}
 	return p.Source + "\x00" + p.Name
 }
 
@@ -412,6 +434,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(m.busy, msg.name)
 		m.reindex()
+	case projectMsg:
+		cmds = append(cmds, m.gotProject(msg))
+	case projectLatestMsg:
+		m.gotProjectLatest(msg)
+	case watchMsg:
+		cmds = append(cmds, m.gotWatch(msg))
 	case depsMsg:
 		m.deps[msg.key] = &lazy[[]provider.Dep]{msg.deps, msg.err, true}
 	case versionsMsg:
@@ -596,6 +624,14 @@ func (m *model) load() tea.Cmd {
 		return nil
 	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
+	if p.Lockfile != "" {
+		if prov = versionsFrom(p); prov == nil {
+			m.versions[key] = &lazy[[]provider.Release]{err: fmt.Errorf("kho has no version list for %s packages yet", p.Source), done: true}
+			return nil
+		}
+		// A lockfile already lists a project package's dependencies as rows.
+		m.deps[key] = &lazy[[]provider.Dep]{done: true}
+	}
 	if prov == nil {
 		return nil
 	}
@@ -747,11 +783,17 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "d":
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
+	case "p":
+		m.prodOnly = !m.prodOnly
+		m.cursor, m.offset = 0, 0
 	case "s":
 		m.sortCol = (m.sortCol + 1) % 5
 	case "S":
 		m.sortDesc = !m.sortDesc
 	case "c":
+		if p, ok := m.current(); ok && m.activeTab() == tabSecurity && m.projectFix(p) != "" {
+			return m.copy(m.projectFix(p)), false
+		}
 		return m.copyArea(), false
 	case "<":
 		m.grow(-2)
@@ -787,7 +829,7 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return m.openReleasePage(), false
 	case "r":
 		m.reset()
-		return m.scan(), false
+		return tea.Batch(m.scan(), m.scanProject()), false
 	case "R":
 		var all []provider.Package
 		for _, pkgs := range m.pkgs {
@@ -852,7 +894,11 @@ func (m *model) move(key string) {
 	case focusRail:
 		switch key {
 		case "enter":
-			m.focus = focusTable
+			if m.curRow().kind == rowProject {
+				m.projOpen = !m.projOpen
+			} else {
+				m.focus = focusTable
+			}
 		case "home", "g":
 			m.setRail(0)
 		case "end", "G":
@@ -1003,7 +1049,8 @@ func (m *model) clamp() {
 	m.clampHistory()
 	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
 	l := m.layout()
-	m.railTop = scroll(m.railTop, m.rail, l.bodyH-2)
+	m.rail = max(min(m.rail, len(m.railRows())-1), 0)
+	m.railTop = scroll(m.railTop, m.railLineOf(m.rail), l.bodyH-2)
 	m.offset = scroll(m.offset, m.cursor, l.rows)
 	if p, ok := m.current(); ok && pkgKey(p) != m.selected {
 		m.selected, m.sel = pkgKey(p), nil
@@ -1098,7 +1145,7 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 	var out []provider.Package
 	for _, p := range pkgs {
 		switch {
-		case m.hiddenDep(p):
+		case m.hidden(p):
 		case !m.matchStatus(p):
 		case m.filter() != "" && !strings.Contains(strings.ToLower(p.Name), strings.ToLower(m.filter())):
 		default:

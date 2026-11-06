@@ -25,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -107,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg:
+		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -2192,5 +2193,158 @@ func TestHiddenDependencies(t *testing.T) {
 	m.vulns[pkgKey(cobalt)] = []vuln.Advisory{redos}
 	if !slices.Contains(names(m), "cobalt") {
 		t.Error("a vulnerable dependency is hidden with deps hidden")
+	}
+}
+
+// withProject is the loaded model opened on a made-up project, with its
+// scan already back unless pending.
+func withProject(t *testing.T, scan project.Scan, pending bool) model {
+	m := loaded(t)
+	watchEvery = time.Millisecond
+	findProject = func(context.Context, string) (project.Scan, error) { return scan, nil }
+	projectLatest = func(_ context.Context, pkgs []provider.Package) []provider.Package {
+		for i := range pkgs {
+			if !pkgs[i].Dependency {
+				pkgs[i].Latest = "9.9.9"
+				pkgs[i].Outdated = true
+			}
+		}
+		return pkgs
+	}
+	m.dir, m.projBusy = "/work/app", projReading
+	if pending {
+		return m
+	}
+	return update(t, m, m.findCmd()())
+}
+
+func TestProject(t *testing.T) {
+	npm := func(name, version string, dep, dev bool, via ...string) provider.Package {
+		return provider.Package{Source: "npm", Name: name, Version: version, Dependency: dep, Dev: dev, Via: via, Lockfile: "package-lock.json"}
+	}
+	one := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
+		{Path: "package-lock.json", Manager: "npm", Packages: []provider.Package{
+			npm("left-trim", "1.0.2", false, false),
+			npm("bramble", "22.12.0", true, false, "left-trim"),
+			npm("clean-dep", "1.0.0", true, false, "left-trim"),
+			npm("test-kit", "3.0.0", false, true),
+		}},
+		{Path: "composer.json", Manager: "composer", Missing: "no lockfile, versions unknown. Run composer install to create one"},
+	}}}}
+	several := project.Scan{Root: "/work/code", Projects: []project.Project{
+		{Dir: "api", Lockfiles: []project.Lockfile{{Path: "api/go.mod", Manager: "go"}}},
+		{Dir: "web", Lockfiles: []project.Lockfile{{Path: "web/package-lock.json", Manager: "npm"}}},
+	}}
+	rail := func(m model) string { return ansi.Strip(strings.Join(m.railBody(m.layout().bodyH-2), "\n")) }
+	header := func(m model) model {
+		m.focus = focusRail
+		return press(t, m, "G")
+	}
+	tests := []struct {
+		id    string
+		model func(*testing.T) model
+		check func(model) string
+	}{
+		{"while the lockfiles are read, the project can't be selected and Machine stays selected", func(t *testing.T) model { return withProject(t, one, true) },
+			func(m model) string {
+				m.focus = focusRail
+				m = press(t, m, "G")
+				if !strings.Contains(rail(m), "reading lockfiles") || m.curRow().kind != rowProvider {
+					return fmt.Sprintf("rail %q, selected %+v", rail(m), m.curRow())
+				}
+				return ""
+			}},
+		{"closed, the header still shows the project's risk", func(t *testing.T) model { return withProject(t, one, false) },
+			func(m model) string {
+				if !strings.Contains(rail(m), "▸ 📁 app") || !strings.Contains(rail(m), "⚠1") || m.curRow().kind != rowAll {
+					return fmt.Sprintf("rail %q", rail(m))
+				}
+				return ""
+			}},
+		{"a vulnerable dependency shows with deps hidden, a clean one doesn't", func(t *testing.T) model { return header(withProject(t, one, false)) },
+			func(m model) string {
+				if got := names(m); !slices.Contains(got, "bramble") || slices.Contains(got, "clean-dep") || !slices.Contains(got, "test-kit") {
+					return fmt.Sprintf("rows %v", got)
+				}
+				if !strings.Contains(screen(m), "bramble via") || !strings.Contains(screen(m), "via       left-trim") {
+					return "no via on the vulnerable dependency"
+				}
+				return ""
+			}},
+		{"p hides dev packages", func(t *testing.T) model { return press(t, header(withProject(t, one, false)), "p") },
+			func(m model) string {
+				if got := names(m); slices.Contains(got, "test-kit") || !strings.Contains(screen(m), "dev hidden") {
+					return fmt.Sprintf("rows %v", got)
+				}
+				return ""
+			}},
+		{"the status bar counts the project while it is selected", func(t *testing.T) model { return header(withProject(t, one, false)) },
+			func(m model) string {
+				if !strings.Contains(screen(m), "4 in app") {
+					return "status bar does not count the project"
+				}
+				return ""
+			}},
+		{"enter opens it with a row per lockfile, and a bare manifest says what to run", func(t *testing.T) model {
+			return press(t, header(withProject(t, one, false)), "enter", "G")
+		}, func(m model) string {
+			if !strings.Contains(rail(m), "▾ 📁 app") || m.curRow().name != "composer" || !strings.Contains(screen(m), "composer.json: no lockfile, versions unknown. Run composer") {
+				return fmt.Sprintf("rail %q, selected %+v", rail(m), m.curRow())
+			}
+			return ""
+		}},
+		{"enter on the header closes it again", func(t *testing.T) model {
+			return press(t, header(withProject(t, one, false)), "enter", "G", "k", "k", "enter")
+		}, func(m model) string {
+			if m.projOpen || strings.Contains(rail(m), "composer") {
+				return fmt.Sprintf("rail %q", rail(m))
+			}
+			return ""
+		}},
+		{"the fix command shows in Security and c copies it", func(t *testing.T) model {
+			m := header(withProject(t, one, false))
+			m.focus = focusTable
+			for names(m)[m.cursor] != "bramble" {
+				m = press(t, m, "j")
+			}
+			return press(t, m, "a", "c")
+		}, func(m model) string {
+			if !strings.Contains(screen(m), "npm update bramble") || !slices.Contains(copied, "npm update bramble") {
+				return fmt.Sprintf("copied %v", copied)
+			}
+			return ""
+		}},
+		{"several projects get a row per folder", func(t *testing.T) model { return press(t, header(withProject(t, several, false)), "enter") },
+			func(m model) string {
+				if r := rail(m); !strings.Contains(r, "code · 2 projects") || !strings.Contains(r, "api") || !strings.Contains(r, "web") {
+					return fmt.Sprintf("rail %q", r)
+				}
+				return ""
+			}},
+		{"a folder with no lockfiles says so and has nothing to select", func(t *testing.T) model { return header(withProject(t, project.Scan{Root: "/work/empty"}, false)) },
+			func(m model) string {
+				if !strings.Contains(rail(m), "empty · no lockfiles") || m.curRow().kind != rowProvider {
+					return fmt.Sprintf("rail %q, selected %+v", rail(m), m.curRow())
+				}
+				return ""
+			}},
+		{"a changed lockfile is read again, and an answer for the older scan is dropped", func(t *testing.T) model {
+			m := withProject(t, one, false)
+			m = update(t, m, watchMsg{gen: m.projGen, changed: true})
+			tm, _ := m.Update(projectMsg{gen: 0, scan: several})
+			return tm.(model)
+		}, func(m model) string {
+			if m.projGen != 1 || m.proj.Root != "/work/app" {
+				return fmt.Sprintf("gen %d, root %q", m.projGen, m.proj.Root)
+			}
+			return ""
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if why := tt.check(tt.model(t)); why != "" {
+				t.Error(why)
+			}
+		})
 	}
 }

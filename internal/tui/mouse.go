@@ -171,6 +171,9 @@ func (m *model) click(x, y int) tea.Cmd {
 		m.focus = focusRail
 		if i := m.railRowAt(r); i >= 0 {
 			m.setRail(i)
+			if m.curRow().kind == rowProject {
+				m.projOpen = !m.projOpen
+			}
 		}
 	case x < l.sideX:
 		m.focus = focusTable

@@ -151,8 +151,12 @@ func (m model) titleBar() string {
 
 // statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
-	t := m.count(m.allPkgs())
-	parts := []string{" " + pillOn(fmt.Sprintf("%d packages", t.total), th.subtle, th.selFg)}
+	pkgs, label := m.allPkgs(), "packages"
+	if m.inProject() {
+		pkgs, label = m.projPkgs(), "in "+m.projName()
+	}
+	t := m.count(pkgs)
+	parts := []string{" " + pillOn(fmt.Sprintf("%d %s", t.total, label), th.subtle, th.selFg)}
 	if t.vulnerable > 0 {
 		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d vulnerable", t.vulnerable), th.red, th.selFg))
 	} else if len(m.db.Checked) > 0 {
@@ -174,6 +178,9 @@ func (m model) activity() string {
 		if m.busy[p.Name()] != "" {
 			busy = append(busy, p.Name())
 		}
+	}
+	if m.projBusy != "" {
+		busy = append(busy, "lockfiles")
 	}
 	if m.scanning > 0 {
 		busy = append(busy, "security")
@@ -242,8 +249,14 @@ func (m model) footer() string {
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")
 	case m.showHistory:
 		line = keys("↑↓", "move", "/", "filter", "f", "kind", "c", "copy command", "H esc", "back", "?", "help")
+	case m.focus == focusRail && m.curRow().kind == rowProject && m.projOpen:
+		line = keys("↑↓", "source", "enter", "close project", "p", "dev", "tab", "panel", "?", "help", "q", "quit")
+	case m.focus == focusRail && m.curRow().kind == rowProject:
+		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
+	case m.focus == focusTable && m.inProject():
+		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "?", "help")
 	case m.focus == focusTable:
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
 	case m.activeTab() == tabVersions:
@@ -269,7 +282,16 @@ func (m model) footer() string {
 
 func (m model) tableTitle() string {
 	r := m.curRow()
-	title := icon(r.name) + " " + r.name
+	title := icon(r.icon) + " " + r.name
+	if r.kind == rowPart {
+		title = icon("project") + " " + m.projName() + " · " + r.name
+	}
+	if m.inProject() && m.proj.Capped != "" {
+		title += " · " + m.proj.Capped
+	}
+	if m.inProject() && m.prodOnly {
+		title += " · dev hidden"
+	}
 	if m.status() != statusAll {
 		title += " · " + statusNames[m.status()]
 	}
@@ -297,7 +319,7 @@ func (m model) tableColumns() []column {
 	}
 	longest := 0
 	for _, p := range m.rows() {
-		longest = max(longest, len(p.Name))
+		longest = max(longest, lipgloss.Width(p.Name+nameTag(p)))
 	}
 	cols[0].width = max(min(longest+2, inner-fixed), 10)
 	cols[len(cols)-1].width = max(inner-fixed+11-cols[0].width, 11)
@@ -305,6 +327,14 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
+	if lf, ok := m.lockfile(m.curRow().lockfile); ok && len(lf.Packages) == 0 {
+		switch {
+		case lf.Err != "":
+			return append([]string{""}, styled(red(), wrap(lf.Path+": "+lf.Err, m.layout().tableW-4))...)
+		case lf.Missing != "":
+			return append([]string{""}, styled(yellow(), wrap("◌ "+lf.Path+": "+lf.Missing, m.layout().tableW-4))...)
+		}
+	}
 	if r := m.curRow(); r.kind == rowProvider {
 		name := r.name
 		if err := m.errs[name]; err != nil && len(m.pkgs[name]) == 0 {
@@ -343,6 +373,9 @@ func (m model) tableLines() []string {
 		if p.Dependency {
 			name = faint().Render(name)
 		}
+		if tag := nameTag(p); tag != "" {
+			name += faint().Render(tag)
+		}
 		line := "  " + row([5]string{name, p.Source, ver, p.Latest, m.statusCell(p)})
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
@@ -360,6 +393,28 @@ func (m model) tableLines() []string {
 		lines = append(lines, "")
 	}
 	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+}
+
+// nameTag follows a project package's name: dev, and the direct package
+// that pulls it in.
+func nameTag(p provider.Package) string {
+	var tag string
+	if p.Dev {
+		tag += " dev"
+	}
+	if len(p.Via) > 0 {
+		tag += " via " + p.Via[0]
+	}
+	return tag
+}
+
+// styled renders each line in style, one space in from the edge.
+func styled(style lipgloss.Style, lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = style.Render(" " + l)
+	}
+	return out
 }
 
 func (m model) statusCell(p provider.Package) string {

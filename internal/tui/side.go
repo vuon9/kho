@@ -338,6 +338,18 @@ func (m model) infoLines(p provider.Package) []line {
 		version += " → " + green().Render(p.Latest)
 	}
 	add("version", version, "")
+	if p.Lockfile != "" {
+		kind := "direct"
+		if p.Dependency {
+			kind = "dependency"
+		}
+		if p.Dev {
+			kind += ", dev only"
+		}
+		add("lockfile", p.Lockfile, "")
+		add("kind", kind, "")
+		add("via", strings.Join(p.Via, " › "), "")
+	}
 	if len(p.Versions) > 1 {
 		add("installed", strings.Join(p.Versions, ", "), "")
 	}
@@ -358,10 +370,10 @@ func (m model) infoLines(p provider.Package) []line {
 		add("agents", strings.Join(p.Agents, ", "), "")
 	}
 	add("note", p.Note, "")
-	if p.Dependency {
+	if p.Dependency && p.Lockfile == "" {
 		add("note", "installed as a dependency", "")
 	}
-	if err := m.errs[provider.ProviderOf(p)]; err != nil {
+	if err := m.errs[provider.ProviderOf(p)]; err != nil && p.Lockfile == "" {
 		add("error", red().Render(err.Error()), "")
 	}
 	return lines
@@ -675,7 +687,16 @@ func (m model) advisoryLines(p provider.Package, inner int) []line {
 		_, version, _ = strings.Cut(e.dep, "@")
 		latest = ""
 	}
-	return m.advisoryDetail(e.adv, e.dep, version, latest, inner)
+	lines := m.advisoryDetail(e.adv, e.dep, version, latest, inner)
+	if fix := m.projectFix(p); fix != "" {
+		where := ""
+		if d := dirOf(p.Lockfile); d != "" {
+			where = " in " + d
+		}
+		fixLine := field("fix", accent().Render(fix)+faint().Render(where+" · c copies it"), "")
+		lines = append(lines[:2], append([]line{fixLine}, lines[2:]...)...)
+	}
+	return lines
 }
 
 // advisoryDetail is one advisory as it affects version, reached through a
