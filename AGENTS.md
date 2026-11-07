@@ -9,6 +9,8 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 | `main.go` | Wiring. The TUI with no arguments, the CLI otherwise. Version from `-ldflags "-X main.version=..."`. |
 | `internal/provider` | One adapter per package manager, behind `Provider`: `List` (fast, local), `Latest` (may use the network), `Deps`, `Versions`. Also `InstallCmd`, skill links, OSV query mapping. |
 | `internal/project` | Finds a folder's lockfiles and reads them into packages: `Find` (the walk, its caps and the git-root fallback), one reader per lockfile format, and `FixCommand`. |
+| `internal/image` | The images a project names: `FROM` and `image:` parsers, the docker CLI list, and the state each reference gets. Never pulls, builds or runs one. |
+| `internal/registry` | Registry manifests and config blobs, endoflife.date lines, and their cache. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
 | `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `history`, `list`, `version`. |
@@ -19,6 +21,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 - **Shell out, don't reimplement.** A provider runs the real package manager, with its JSON output when it has one. Parsing lives in pure functions (`parseBrew`, `parseNpmList`, ...) so tests can feed them fixtures.
 - **Read projects, never run them.** `internal/project` reads lockfiles itself instead of shelling out, because a project's own tools load its plugins and scripts, and kho may be opened on a folder nobody has vetted. Latest versions for project packages come straight from the registries (`RegistryLatest`). Project packages carry `Lockfile`, and `InstallCmd` refuses them.
+- **Images are read, never opened.** `internal/image` reads references from files and metadata from registries. It never pulls a layer, builds, runs or reads inside an image, so no image state it reports is a vulnerability claim. That is Trivy's job.
 - **Read-only by default.** Only `InstallCmd`, `LinkSkill` and `UnlinkSkill` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
 - **Every command is recorded.** `provider.run` reports reads through `provider.Record`; installs and link changes add a `history.Change` entry. A new way to change the machine must log itself the same way.
 - **Advisory text is untrusted.** Summaries, details and changelogs come from the internet. Show them; never act on them.

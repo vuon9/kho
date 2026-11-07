@@ -15,11 +15,13 @@ import (
 	"os/exec"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
@@ -59,6 +61,12 @@ type Env struct {
 	// version of a project's direct packages. main fills them.
 	FindProject func(context.Context, string) (project.Scan, error)
 	Latest      func(context.Context, []provider.Package) []provider.Package
+	// FindImages reads the images a folder's Dockerfiles and compose files
+	// name, LocalImages lists what docker holds, and InspectImages fills in
+	// what the registries and lifecycle pages say. main fills them.
+	FindImages    func(context.Context, string) (image.Scan, error)
+	LocalImages   func(context.Context) ([]image.LocalImage, error)
+	InspectImages func(context.Context, []image.Ref, []image.LocalImage, bool) []image.Ref
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -68,10 +76,10 @@ usage:
   kho <folder>                         open the TUI on a folder, to read its project
   kho check [--json] [--refresh] [--require-complete] [--require uv,npm]
                                        am I safe? inventory plus known advisories
-  kho check --project [folder] [--prod-only] [--json] [--refresh]
-                                       is this project safe? reads its lockfiles,
-                                       not the machine; --prod-only leaves out
-                                       dev dependencies
+  kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]
+                                       is this project safe? reads its lockfiles
+                                       and its images, not the machine;
+                                       --prod-only leaves out dev dependencies
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
                                        upgrade or downgrade; without --yes it only
@@ -284,6 +292,11 @@ type Summary struct {
 	RiskySkills        int `json:"riskySkills"`
 	Outdated           int `json:"outdated"`
 	Pinned             int `json:"pinned"`
+	// Images counts the container images a project names, and how many of
+	// them are behind or past their line. Zero on the machine report.
+	Images      int `json:"images,omitempty"`
+	ImagesStale int `json:"imagesStale,omitempty"`
+	ImagesEOL   int `json:"imagesEol,omitempty"`
 }
 
 // Report is what `kho check --json` prints. Safe is false when an installed
@@ -306,6 +319,9 @@ type Report struct {
 	Complete       bool              `json:"complete"`
 	Errors         map[string]string `json:"errors,omitempty"`
 	Project        *ProjectReport    `json:"project,omitempty"`
+	// Images are the container images the project names. kho reads their
+	// references and their registry metadata, never their contents.
+	Images []image.Ref `json:"images,omitempty"`
 }
 
 func advisories(advs []vuln.Advisory, version string) []Advisory {
@@ -430,6 +446,7 @@ func (env Env) check(args []string) int {
 	// scan, and get a failure when that did not happen.
 	requireComplete := fs.Bool("require-complete", false, "fail when a manager or source could not be read")
 	require := fs.String("require", "", "comma separated sources that must be readable, like uv,npm")
+	requireImages := fs.Bool("require-images", false, "with --project, also fail on a stale image, and on an image kho could not read")
 	rest, err := parse(fs, args)
 	if err != nil {
 		return ExitUsage
@@ -439,7 +456,7 @@ func (env Env) check(args []string) int {
 			fmt.Fprintln(env.Err, "--require names machine package managers; with --project, use --require-complete")
 			return ExitUsage
 		}
-		return env.checkProject(rest, *refresh, *prodOnly, *asJSON, *requireComplete)
+		return env.checkProject(rest, *refresh, *prodOnly, *asJSON, *requireComplete, *requireImages)
 	}
 	required, unknown := splitSources(*require)
 	if len(unknown) > 0 {
@@ -477,11 +494,63 @@ func (env Env) check(args []string) int {
 	return ExitOK
 }
 
+// images reads the images a folder's Dockerfiles and compose files name, and
+// asks the registries and lifecycle pages about them. It never pulls, builds
+// or runs anything, so a state here is never a claim about what is inside an
+// image.
+func (env Env) images(ctx context.Context, dir string) ([]image.Ref, map[string]string) {
+	errs := map[string]string{}
+	if env.FindImages == nil {
+		return nil, errs
+	}
+	scan, err := env.FindImages(ctx, dir)
+	if err != nil {
+		errs["images"] = err.Error()
+		return nil, errs
+	}
+	if scan.Capped != "" {
+		errs["images"] = scan.Capped
+	}
+	if len(scan.Refs) == 0 {
+		return nil, errs
+	}
+	var local []image.LocalImage
+	asked := false
+	if env.LocalImages != nil {
+		if l, err := env.LocalImages(ctx); err == nil {
+			local, asked = l, true
+		}
+	}
+	if env.InspectImages == nil {
+		return scan.Refs, errs
+	}
+	return env.InspectImages(ctx, scan.Refs, local, asked), errs
+}
+
+// imageRisk splits what images say into what makes a scan unsafe and what
+// makes it incomplete. A closed line or an unpublished tag is a real
+// problem; a stale tag is a hint, unless the caller asked for it to count.
+func imageRisk(refs []image.Ref, staleCounts bool) (atRisk, incomplete bool) {
+	for _, r := range refs {
+		switch {
+		case r.Unresolved:
+			incomplete = true
+		case r.State == image.EOL || r.State == image.Gone:
+			atRisk = true
+		case r.State == image.Unknown:
+			incomplete = true
+		case staleCounts && r.State == image.Stale:
+			atRisk = true
+		}
+	}
+	return atRisk, incomplete
+}
+
 // checkProject is `kho check --project`: the packages in a folder's
 // lockfiles, checked the same way as the machine's. A lockfile that could not
 // be read, a manifest with no lockfile, or a scan that stopped early leaves
 // the report incomplete, so a clean verdict never covers what wasn't read.
-func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireComplete bool) int {
+func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireComplete, requireImages bool) int {
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
@@ -522,26 +591,44 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireCom
 	if err := env.secure(ctx, pkgs, refresh); err != nil {
 		errs["security"] = err.Error()
 	}
+	refs, imageErrs := env.images(ctx, dir)
+	for k, v := range imageErrs {
+		errs[k] = v
+	}
 	r := env.report(pkgs, errs)
+	r.Images = refs
+	r.Summary.Images = len(refs)
+	for _, ref := range refs {
+		switch ref.State {
+		case image.Stale:
+			r.Summary.ImagesStale++
+		case image.EOL:
+			r.Summary.ImagesEOL++
+		}
+	}
+	atRisk, imageIncomplete := imageRisk(refs, requireImages)
+	if atRisk {
+		r.Safe = false
+	}
 	r.Skipped, r.Project = nil, pr
 	r.NotCovered = append(r.NotCovered, unread...)
 	if len(pr.Lockfiles) == 0 {
 		unread = append(unread, "no lockfiles found in "+scan.Root)
 		r.NotCovered = append(r.NotCovered, unread[len(unread)-1])
 	}
-	r.Complete = len(errs) == 0 && len(unread) == 0
+	r.Complete = len(errs) == 0 && len(unread) == 0 && !(requireImages && imageIncomplete)
 	if asJSON {
 		env.printJSON(r)
 	} else {
 		env.printReport(r)
 	}
-	if requireComplete && !r.Complete {
+	if (requireComplete || requireImages) && !r.Complete {
 		fmt.Fprintf(env.Err, "check was not complete: %s\n", whyProjectIncomplete(r, unread))
 	}
 	switch {
 	case !r.Safe:
 		return ExitAtRisk
-	case requireComplete && !r.Complete:
+	case (requireComplete || requireImages) && !r.Complete:
 		return ExitIncomplete
 	}
 	return ExitOK
@@ -618,6 +705,12 @@ func (env Env) printReport(r Report) {
 		if r.Project != nil {
 			verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package")
 		}
+		if r.Summary.ImagesEOL > 0 {
+			verdict = "⚠ at risk: " + plural(r.Summary.ImagesEOL, "image past its line")
+			if r.Summary.Vulnerable > 0 {
+				verdict += ", " + plural(r.Summary.Vulnerable, "vulnerable package")
+			}
+		}
 	}
 	if r.Safe && !r.Complete {
 		verdict = "✓ safe for what was read: part of the machine could not be checked"
@@ -640,6 +733,25 @@ func (env Env) printReport(r Report) {
 	}
 	for _, s := range r.RiskySkills {
 		fmt.Fprintf(w, "\nskill %s (%s): Gen %s, Socket %s, Snyk %s\n  report: %s\n", s.Name, s.Repo, s.Gen, s.Socket, s.Snyk, s.Report)
+	}
+	if len(r.Images) > 0 {
+		fmt.Fprintf(w, "\n%d images · %d stale · %d past their line\n", len(r.Images), r.Summary.ImagesStale, r.Summary.ImagesEOL)
+		for _, img := range r.Images {
+			line := fmt.Sprintf("  %s %-34s %-13s", presenceMark(img), img.Image, stateWord(img))
+			if img.Upstream != "" {
+				line += " " + img.Upstream
+			}
+			if img.File != "" {
+				line += "  (" + img.File + ":" + itoa(img.Line) + ")"
+			}
+			fmt.Fprintln(w, line)
+			if img.Unresolved {
+				fmt.Fprintf(w, "    chosen at build time by %s, so kho cannot say which image this is\n", img.Via)
+			}
+			if img.State == image.EOL {
+				fmt.Fprintf(w, "    %s stopped getting fixes on %s\n", img.Repo, img.EOL.Format("2006-01-02"))
+			}
+		}
 	}
 	if len(r.NotCovered) > 0 {
 		fmt.Fprintf(w, "\nnot covered by OSV: %s\n", strings.Join(r.NotCovered, ", "))
@@ -672,6 +784,42 @@ func where(f Finding) string {
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
 }
+
+// presenceMark says whether docker holds the image, in one character.
+func presenceMark(r image.Ref) string {
+	switch r.Presence {
+	case image.OnDisk:
+		return "●"
+	case image.NotPulled:
+		return "○"
+	}
+	return "?"
+}
+
+// stateWord is what a person reads for an image state.
+func stateWord(r image.Ref) string {
+	switch r.State {
+	case image.Fresh:
+		return "fresh"
+	case image.Stale:
+		return "stale"
+	case image.EOL:
+		return "past its line"
+	case image.Gone:
+		return "tag gone"
+	case image.Pinned:
+		return "pinned"
+	case image.Local:
+		return "built here"
+	case image.None:
+		return "nothing to ask"
+	case image.Unknown:
+		return "could not ask"
+	}
+	return "build time"
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 func plural(n int, thing string) string {
 	if n == 1 {

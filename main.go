@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/vuon9/kho/internal/cli"
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/registry"
 	"github.com/vuon9/kho/internal/tui"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -52,7 +55,8 @@ func main() {
 		return
 	}
 	ready, skipped := provider.Detect()
-	os.Exit(cli.Main(cli.Env{
+	registries := registry.New(registry.Path())
+	code := cli.Main(cli.Env{
 		Version:     appVersion(),
 		Providers:   ready,
 		Skipped:     skipped,
@@ -68,9 +72,18 @@ func main() {
 		Major:       provider.MajorModule,
 		FindProject: project.Find,
 		Latest:      provider.FillLatest,
+		FindImages:  image.Find,
+		LocalImages: image.ListLocal,
+		InspectImages: func(ctx context.Context, refs []image.Ref, local []image.LocalImage, asked bool) []image.Ref {
+			return image.Inspect(ctx, refs, local, asked, registries, time.Now())
+		},
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
-	}, os.Args[1:]))
+	}, os.Args[1:])
+	if err := registries.Cache.Save(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(code)
 }
 
 // tuiFolder is the folder the TUI opens on: the working folder with no

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
@@ -650,6 +651,104 @@ func projectKho(t *testing.T, scan project.Scan, hits map[string][]string, args 
 	r.code = Main(env, args)
 	r.out, r.err = out.String(), errOut.String()
 	return r, asked
+}
+
+// projectImagesKho runs kho against a made-up project scan and a made-up set
+// of images, which carry the states the registries would have given them.
+func projectImagesKho(t *testing.T, scan project.Scan, refs []image.Ref, args ...string) run {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	var r run
+	env := Env{
+		Version:   "v9.9.9",
+		Providers: []provider.Provider{fake{name: "pipx", listErr: errors.New("the machine was read")}},
+		DB:        vuln.NewDB(),
+		Log:       history.Open(""),
+		Out:       &out, Err: &errOut,
+		Now: func() time.Time { return clock },
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits:      func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+		FindProject: func(context.Context, string) (project.Scan, error) { return scan, nil },
+		Latest:      func(_ context.Context, pkgs []provider.Package) []provider.Package { return pkgs },
+		FindImages: func(context.Context, string) (image.Scan, error) {
+			return image.Scan{Root: scan.Root, Refs: refs, Files: []string{"Dockerfile"}}, nil
+		},
+		LocalImages: func(context.Context) ([]image.LocalImage, error) { return nil, nil },
+		InspectImages: func(_ context.Context, refs []image.Ref, _ []image.LocalImage, _ bool) []image.Ref {
+			return refs
+		},
+	}
+	r.code = Main(env, args)
+	r.out, r.err = out.String(), errOut.String()
+	return r
+}
+
+func TestCheckProjectImages(t *testing.T) {
+	clean := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
+		{Path: "package-lock.json", Manager: "npm", Packages: []provider.Package{{Source: "npm", Name: "left-trim", Version: "1.0.2", Lockfile: "package-lock.json"}}},
+	}}}}
+	closed := image.Ref{Image: "python:3.9-slim", Registry: "docker.io", Repo: "python", Tag: "3.9-slim",
+		File: "Dockerfile", Line: 1, Source: "dockerfile", State: image.EOL, EOL: clock.AddDate(-1, 0, 0), Presence: image.NotPulled}
+	stale := image.Ref{Image: "node:22-alpine", Registry: "docker.io", Repo: "node", Tag: "22-alpine",
+		File: "Dockerfile", Line: 3, Source: "dockerfile", State: image.Stale, Presence: image.OnDisk, Upstream: "22.23.4"}
+	open := image.Ref{Image: "${BASE}", Raw: "${BASE}", Via: "BASE", File: "Dockerfile", Line: 5,
+		Source: "dockerfile", Unresolved: true}
+	tests := []struct {
+		id    string
+		refs  []image.Ref
+		args  []string
+		code  int
+		check func(Report) string
+	}{
+		{id: "a closed line puts the project at risk", refs: []image.Ref{closed}, code: ExitAtRisk, check: func(r Report) string {
+			if r.Safe || r.Summary.Images != 1 || r.Summary.ImagesEOL != 1 || r.Images[0].State != image.EOL {
+				return fmt.Sprintf("report %+v", r)
+			}
+			return ""
+		}},
+		{id: "a stale tag is a hint, not a gate", refs: []image.Ref{stale}, code: ExitOK, check: func(r Report) string {
+			if !r.Safe || !r.Complete || r.Summary.ImagesStale != 1 || r.Images[0].Presence != image.OnDisk {
+				return fmt.Sprintf("report %+v", r)
+			}
+			return ""
+		}},
+		{id: "a stale tag gates when asked", refs: []image.Ref{stale}, args: []string{"--require-images"}, code: ExitAtRisk, check: func(r Report) string { return "" }},
+		{id: "an image chosen at build time leaves the scan complete by default", refs: []image.Ref{open}, code: ExitOK, check: func(r Report) string {
+			if !r.Complete || !r.Images[0].Unresolved || r.Images[0].Via != "BASE" {
+				return fmt.Sprintf("report %+v", r)
+			}
+			return ""
+		}},
+		{id: "an image chosen at build time is incomplete when asked", refs: []image.Ref{open}, args: []string{"--require-images"}, code: ExitIncomplete, check: func(r Report) string {
+			if r.Complete {
+				return "complete should be false"
+			}
+			return ""
+		}},
+		{id: "no images is still a clean project", refs: nil, code: ExitOK, check: func(r Report) string {
+			if !r.Safe || !r.Complete || len(r.Images) != 0 {
+				return fmt.Sprintf("report %+v", r)
+			}
+			return ""
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			got := projectImagesKho(t, clean, tt.refs, append([]string{"check", "--project", "--json"}, tt.args...)...)
+			var r Report
+			if err := json.Unmarshal([]byte(got.out), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s%s", err, got.out, got.err)
+			}
+			if got.code != tt.code {
+				t.Errorf("exit %d, want %d", got.code, tt.code)
+			}
+			if why := tt.check(r); why != "" {
+				t.Error(why)
+			}
+		})
+	}
 }
 
 func TestCheckProject(t *testing.T) {
