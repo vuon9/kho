@@ -303,6 +303,9 @@ func TestImageTabStatus(t *testing.T) {
 	if !strings.Contains(strings.Join(box, "\n"), "→ 3.9-slim") {
 		t.Errorf("the tag in use should still be listed:\n%s", strings.Join(box, "\n"))
 	}
+	if n := strings.Count(strings.Join(box, "\n"), "tags · "); n != 1 {
+		t.Errorf("the registry should be named once, at the foot, found %d:\n%s", n, strings.Join(box, "\n"))
+	}
 }
 
 // Opening Security scans without being asked.

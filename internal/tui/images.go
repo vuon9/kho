@@ -755,13 +755,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 		}
 		return plain(faint().Render(" press v again to ask " + r.Registry))
 	}
-	// Newest line first, and the tag in use always shows, even when the
-	// repository lists more than kho asked for.
-	tagOrder(tags)
-	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
-		tags = append([]image.Tag{{Name: r.Tag}}, tags...)
-	}
-	lines := plain(faint().Render("── tags · " + r.Registry + " " + strings.Repeat("─", 12)))
+	var lines []line
 	for _, t := range tags {
 		mark := "  "
 		if t.Name == r.Tag {
