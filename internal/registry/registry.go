@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vuon9/kho/internal/image"
@@ -33,6 +34,10 @@ type Client struct {
 	HubBase  string
 	// NoCache asks the registries again, for --refresh.
 	NoCache bool
+
+	mu      sync.Mutex
+	tokens  map[string]string
+	demands map[string]string
 }
 
 func (c *Client) base(host string) string {
@@ -44,9 +49,17 @@ func (c *Client) base(host string) string {
 
 // New is a client with a timeout and a cache at path, which may be "".
 func New(cachePath string) *Client {
+	// Images are asked about in parallel, so the pool has to be wider than the
+	// two connections net/http keeps per host by default, or every lookup pays
+	// for a new handshake.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 16
 	return &Client{
-		HTTP:  &http.Client{Timeout: 15 * time.Second},
-		Cache: Open(cachePath, 6*time.Hour),
+		HTTP:    &http.Client{Timeout: 15 * time.Second, Transport: transport},
+		Cache:   Open(cachePath, 6*time.Hour),
+		tokens:  map[string]string{},
+		demands: map[string]string{},
 	}
 }
 
@@ -212,16 +225,38 @@ func baseFromTag(tag string) string {
 
 // get asks for a URL, taking a bearer token when the registry asks for one.
 func (c *Client) get(ctx context.Context, raw, host, repo string) (body []byte, media string, status int, err error) {
+	// A registry that asked for a token once will ask again, and every probe
+	// costs a round trip: remember the challenge and skip it.
+	if challenge := c.remembered(host); challenge != "" {
+		if token, terr := c.token(ctx, challenge, repo); terr == nil {
+			body, media, status, _, err = c.do(ctx, raw, token)
+			return body, media, status, err
+		}
+	}
 	body, media, status, challenge, err := c.do(ctx, raw, "")
 	if status != http.StatusUnauthorized || challenge == "" {
 		return body, media, status, err
 	}
+	c.remember(host, challenge)
 	token, err := c.token(ctx, challenge, repo)
 	if err != nil {
 		return nil, "", status, err
 	}
 	body, media, status, _, err = c.do(ctx, raw, token)
 	return body, media, status, err
+}
+
+// remembered is the challenge a host gave last time, or "".
+func (c *Client) remembered(host string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.demands[host]
+}
+
+func (c *Client) remember(host, challenge string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.demands[host] = challenge
 }
 
 func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media string, status int, challenge string, err error) {
@@ -249,6 +284,30 @@ func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media 
 // token follows a registry's bearer challenge, which is how public images on
 // Docker Hub and ghcr are read without an account.
 func (c *Client) token(ctx context.Context, challenge, repo string) (string, error) {
+	realm, service, scope := challengeScope(challenge, repo)
+	if realm == "" {
+		return "", fmt.Errorf("registry wants credentials")
+	}
+	key := realm + "|" + service + "|" + scope
+	c.mu.Lock()
+	cached := c.tokens[key]
+	c.mu.Unlock()
+	if cached != "" {
+		return cached, nil
+	}
+	tok, err := c.askToken(ctx, realm, service, scope)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	c.tokens[key] = tok
+	c.mu.Unlock()
+	return tok, nil
+}
+
+// challengeScope reads the token endpoint, the service and the scope a registry
+// asked for, falling back to the repository being pulled.
+func challengeScope(challenge, repo string) (realm, service, scope string) {
 	params := map[string]string{}
 	for _, part := range strings.Split(strings.TrimPrefix(challenge, "Bearer "), ",") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
@@ -256,17 +315,17 @@ func (c *Client) token(ctx context.Context, challenge, repo string) (string, err
 			params[key] = strings.Trim(value, `"`)
 		}
 	}
-	realm := params["realm"]
-	if realm == "" {
-		return "", fmt.Errorf("registry wants credentials")
-	}
-	q := url.Values{}
-	if s := params["service"]; s != "" {
-		q.Set("service", s)
-	}
-	scope := params["scope"]
+	scope = params["scope"]
 	if scope == "" {
 		scope = "repository:" + repo + ":pull"
+	}
+	return params["realm"], params["service"], scope
+}
+
+func (c *Client) askToken(ctx context.Context, realm, service, scope string) (string, error) {
+	q := url.Values{}
+	if service != "" {
+		q.Set("service", service)
 	}
 	q.Set("scope", scope)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, realm+"?"+q.Encode(), nil)
