@@ -86,6 +86,10 @@ usage:
   kho install <source>/<name>@<version> [--yes] [--json]
                                        upgrade or downgrade; without --yes it only
                                        says what it would run
+  kho remove <source>/<name> [--yes] [--force] [--json]
+                                       uninstall it; without --yes it only says
+                                       what it would run; --force overrides
+                                       Homebrew's dependency refusal
   kho history [--json] [--changes] [-n N]
                                        commands kho ran, newest first
   kho list                             every package as JSON
@@ -111,6 +115,8 @@ func Main(env Env, args []string) int {
 		return env.show(args)
 	case "install":
 		return env.install(args)
+	case "remove":
+		return env.remove(args)
 	case "history":
 		return env.history(args)
 	case "list":
@@ -126,7 +132,7 @@ func Main(env Env, args []string) int {
 // IsCommand says whether name is one of Main's commands, so a folder with
 // the same name never shadows it.
 func IsCommand(name string) bool {
-	return slices.Contains([]string{"version", "check", "show", "install", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
+	return slices.Contains([]string{"version", "check", "show", "install", "remove", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
 }
 
 func (env Env) flags(name string) *flag.FlagSet {
@@ -978,6 +984,109 @@ func (env Env) install(args []string) int {
 		return ExitError
 	}
 	return ExitOK
+}
+
+type RemoveResult struct {
+	Package string   `json:"package"`
+	Version string   `json:"version"`
+	Command []string `json:"command"`
+	Ran     bool     `json:"ran"`
+	Error   string   `json:"error,omitempty"`
+}
+
+// remove uninstalls one package through its own package manager. Like install,
+// it changes nothing without --yes, and a package it cannot see is an error
+// rather than a silent success.
+func (env Env) remove(args []string) int {
+	fs := env.flags("remove")
+	yes := fs.Bool("yes", false, "run it; without this kho only prints what it would run")
+	force := fs.Bool("force", false, "override Homebrew's refusal when another installed formula needs it")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
+	rest, err := parse(fs, args)
+	if err != nil || len(rest) != 1 {
+		fmt.Fprintln(env.Err, "usage: kho remove <source>/<name> [--yes] [--force] [--json]")
+		return ExitUsage
+	}
+	ref := rest[0]
+	ctx := context.Background()
+	packages, errs := env.inventory(ctx)
+	p, err := find(packages, ref)
+	if err != nil {
+		reason, code := env.removeMiss(ref, packages, errs)
+		fmt.Fprintln(env.Err, reason)
+		return code
+	}
+	if *force && p.Source != "brew" {
+		fmt.Fprintf(env.Err, "--force only overrides Homebrew's dependency check; %s has none to override\n", p.Source)
+		return ExitUsage
+	}
+	cmd, err := provider.RemoveCmd(p, *force)
+	if err != nil {
+		fmt.Fprintln(env.Err, err)
+		return ExitError
+	}
+	if p.Source == "mise" {
+		// mise keeps what mise.toml asks for, so an uninstall alone can be
+		// undone by the next `mise install`.
+		fmt.Fprintln(env.Err, "note: kho can't remove it from mise.toml, so mise may install it again")
+		var others []string
+		for _, v := range p.Versions {
+			if v != p.Version {
+				others = append(others, v)
+			}
+		}
+		if len(others) > 0 {
+			fmt.Fprintf(env.Err, "note: %s also has %s installed; kho removed %s only\n", p.Name, strings.Join(others, ", "), p.Version)
+		}
+	}
+	res := RemoveResult{Package: ref, Version: p.Version, Command: cmd.Args}
+	if *yes {
+		start := env.Now()
+		out, err := env.Run(cmd)
+		res.Ran = true
+		e := history.Entry{At: start, Kind: history.Change, Command: cmd.Args, Took: env.Now().Sub(start), Output: out}
+		if err != nil {
+			res.Error, e.Err = err.Error(), err.Error()
+		}
+		env.Log.Add(e)
+	}
+	switch {
+	case *asJSON:
+		env.printJSON(res)
+	case !res.Ran:
+		fmt.Fprintf(env.Out, "would run: %s\nadd --yes to run it\n", strings.Join(cmd.Args, " "))
+	case res.Error == "":
+		fmt.Fprintf(env.Out, "removed %s %s\n", ref, p.Version)
+	}
+	if res.Error != "" {
+		fmt.Fprintf(env.Err, "removal failed: %s\n", res.Error)
+		return ExitError
+	}
+	return ExitOK
+}
+
+// removeMiss says why a ref did not resolve. A manager that failed or is not
+// on this machine is not the same as a package that isn't installed, and a
+// version in the ref is a usage error rather than a missing package.
+func (env Env) removeMiss(ref string, packages []provider.Package, errs map[string]string) (string, int) {
+	source, _, ok := strings.Cut(ref, "/")
+	if !ok {
+		return fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitError
+	}
+	manager := provider.ProviderOf(provider.Package{Source: source})
+	if why := errs[manager]; why != "" {
+		return source + " could not be read: " + why, ExitError
+	}
+	if why := env.Skipped[manager]; why != "" {
+		return source + " is not on this machine (" + why + ")", ExitError
+	}
+	// A scoped npm name carries an @ of its own, so the version is the last one.
+	if at := strings.LastIndex(ref, "@"); at > 0 {
+		if _, err := find(packages, ref[:at]); err == nil {
+			return "remove takes the installed version, so leave @version off: kho remove " + ref[:at], ExitUsage
+		}
+	}
+	return ref + " is not installed", ExitError
 }
 
 func (env Env) published(ctx context.Context, p provider.Package, version string) error {

@@ -81,6 +81,47 @@ Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any 
 | `t` | next theme |
 | `w` `c` | open the homepage, copy the text you're reading (on a project package's Security tab, its fix command) |
 
+## Commands
+
+`kho` with no arguments opens the terminal app. These commands are the other half: `--json` where it is offered, progress and errors on stderr, and nothing changes the machine without `--yes`.
+
+| Command | Does |
+|---|---|
+| `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and known advisories |
+| `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
+| `kho show <source>/<name> [--json]` | one package, with every advisory |
+| `kho install <source>/<name>@<version> [--yes] [--json]` | upgrade or downgrade one package |
+| `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
+| `kho history [--json] [--changes] [-n N]` | the commands kho ran, newest first |
+| `kho list` | every package as JSON |
+| `kho version`, `kho help` | the version, and every command |
+
+`<source>` is the manager kho read the package from: `brew`, `cask`, `npm`, `composer`, `pipx`, `uv`, `go`, `mise` or `skills`.
+
+### Uninstalling
+
+`kho remove` runs the package manager's own uninstaller: `brew uninstall` (with `--cask` for a cask), `npm uninstall -g`, `pipx uninstall`, `uv tool uninstall`, `composer global remove`, or `mise uninstall`. It changes no manifest and no lockfile, so a project's dependency is not something it removes.
+
+It takes exactly one `<source>/<name>` and no version, since the installed version is what gets removed. Without `--yes` it prints the exact command and changes nothing:
+
+```bash
+kho remove pipx/bramble               # would run: pipx uninstall bramble
+kho remove pipx/bramble --yes         # removed pipx/bramble 26.10.1
+kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
+```
+
+| Flag | Does |
+|---|---|
+| `--yes` | run it; without this kho only prints what it would run |
+| `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
+| `--json` | print `{"package","version","command","ran","error"}` instead of text |
+
+`ran` is false in a dry run, and `error` is set only when the manager itself failed, which also exits 1. A package that is not installed exits 1 with `<ref> is not installed`, so a typo never reads as success; a source that is not on this machine, or could not be read, says that instead. Exit 2 is a usage error: no ref, more than one ref, `--force` on a source with no dependency check, or a version in the ref, which kho names back to you without it. That last check needs the package installed to tell a version apart from a scoped npm name, so an uninstalled one is reported as not installed first.
+
+Homebrew refuses to uninstall a formula another installed formula needs. kho passes that refusal through as a failure (exit 1); `--force` adds `--ignore-dependencies` so it goes ahead, leaving whatever needed the formula broken until that package is reinstalled. kho never uses `brew -f`, which would delete every installed version.
+
+`go install` binaries and skills are not removed by kho: it names the binary to delete, or points at `npx skills remove`. `mise` uninstalls the version kho listed and warns on stderr that `mise.toml` is untouched, so `mise install` may bring it back.
+
 ## For agents
 
 Give your agents the `use-kho` skill. `-g` installs it for your user, so it works in every project:
