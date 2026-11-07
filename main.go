@@ -77,6 +77,7 @@ func main() {
 		InspectImages: func(ctx context.Context, refs []image.Ref, local []image.LocalImage, asked bool) []image.Ref {
 			return image.Inspect(ctx, refs, local, asked, registries, time.Now())
 		},
+		RefreshImages: func() { registries.NoCache = true },
 		// An install's own output goes to stderr, so stdout stays JSON.
 		Run: cli.RunCommand(os.Stderr),
 	}, os.Args[1:])

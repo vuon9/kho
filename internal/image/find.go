@@ -143,7 +143,7 @@ func isCompose(name string) bool {
 		return false
 	}
 	base := strings.TrimSuffix(strings.TrimSuffix(lower, ".yml"), ".yaml")
-	return base == "compose" || strings.HasPrefix(base, "docker-compose")
+	return base == "compose" || strings.HasPrefix(base, "compose.") || strings.HasPrefix(base, "docker-compose")
 }
 
 func join(dir, name string) string {

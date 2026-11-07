@@ -15,6 +15,7 @@ func TestFind(t *testing.T) {
 		"api/Dockerfile":              "ARG BASE=node:22-alpine\nFROM ${BASE} AS build\n",
 		"api/docker-compose.yml":      "services:\n  db:\n    image: postgres:13\n",
 		"web/compose.yaml":            "services:\n  app:\n    image: nginx:1.29-alpine\n",
+		"web/compose.override.yaml":   "services:\n  app:\n    image: nginx:1.29-alpine-alpine\n",
 		"node_modules/pkg/Dockerfile": "FROM ignored:1\n",
 		".hidden/Dockerfile":          "FROM hidden:1\n",
 		"deploy/Dockerfile.prod":      "FROM scratch\n",
@@ -44,6 +45,8 @@ func TestFind(t *testing.T) {
 		"api/docker-compose.yml|postgres:13",
 		"web/compose.yaml|nginx:1.29-alpine",
 		"deploy/Dockerfile.prod|scratch",
+		"web/compose.override.yaml|nginx:1.29-alpine-alpine",
+		"web/compose.override.yaml|nginx:1.29-alpine-alpine",
 	}
 	for _, w := range want {
 		if _, ok := got[w]; !ok {
@@ -55,8 +58,8 @@ func TestFind(t *testing.T) {
 			t.Errorf("found %q, which the walk should skip", unwanted)
 		}
 	}
-	if len(s.Files) != 5 {
-		t.Errorf("read %d files, want 5: %v", len(s.Files), s.Files)
+	if len(s.Files) != 6 {
+		t.Errorf("read %d files, want 6: %v", len(s.Files), s.Files)
 	}
 }
 

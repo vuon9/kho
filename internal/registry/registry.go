@@ -29,6 +29,8 @@ type Client struct {
 	Base func(host string) string
 	// LifeBase is where endoflife.date lives, for tests.
 	LifeBase string
+	// NoCache asks the registries again, for --refresh.
+	NoCache bool
 }
 
 func (c *Client) base(host string) string {
@@ -57,7 +59,7 @@ func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) 
 		return image.Remote{}, nil
 	}
 	key := r.Canonical()
-	if c.Cache != nil {
+	if c.Cache != nil && !c.NoCache {
 		if remote, life, ok := c.Cache.Get(key); ok {
 			_ = life
 			return remote, nil

@@ -29,7 +29,7 @@ func (c *Client) Life(ctx context.Context, r image.Ref) (image.Life, error) {
 		return image.Life{}, nil
 	}
 	key := "life:" + product + "/" + cycle
-	if c.Cache != nil {
+	if c.Cache != nil && !c.NoCache {
 		if _, life, ok := c.Cache.Get(key); ok {
 			return life, nil
 		}

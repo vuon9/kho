@@ -67,6 +67,8 @@ type Env struct {
 	FindImages    func(context.Context, string) (image.Scan, error)
 	LocalImages   func(context.Context) ([]image.LocalImage, error)
 	InspectImages func(context.Context, []image.Ref, []image.LocalImage, bool) []image.Ref
+	// RefreshImages drops what the registries said before, for --refresh.
+	RefreshImages func()
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -591,6 +593,9 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireCom
 	if err := env.secure(ctx, pkgs, refresh); err != nil {
 		errs["security"] = err.Error()
 	}
+	if refresh && env.RefreshImages != nil {
+		env.RefreshImages()
+	}
 	refs, imageErrs := env.images(ctx, dir)
 	for k, v := range imageErrs {
 		errs[k] = v
@@ -706,7 +711,7 @@ func (env Env) printReport(r Report) {
 			verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package")
 		}
 		if r.Summary.ImagesEOL > 0 {
-			verdict = "⚠ at risk: " + plural(r.Summary.ImagesEOL, "image past its line")
+			verdict = "⚠ at risk: " + plural(r.Summary.ImagesEOL, "image") + " past its line"
 			if r.Summary.Vulnerable > 0 {
 				verdict += ", " + plural(r.Summary.Vulnerable, "vulnerable package")
 			}
