@@ -265,7 +265,7 @@ func (m model) footer() string {
 	case m.focus == focusTable && m.inProject():
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
 	case m.focus == focusTable:
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
+		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "D", "remove", "?", "help")
 	case m.activeTab() == tabVersions && m.inProjectPkg():
 		line = keys("↑↓", "version", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help") + faint().Render("   kho doesn't change projects")
 	case m.activeTab() == tabVersions:

@@ -78,6 +78,7 @@ Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any 
 | `enter` on a version | upgrade or downgrade to it, after a confirmation |
 | `H` | history of every command kho ran |
 | `<` `>` `{` `}` | resize panels and the sidebar's halves |
+| `D` | remove the selected package, after asking |
 | `t` | next theme |
 | `w` `c` | open the homepage, copy the text you're reading (on a project package's Security tab, its fix command) |
 

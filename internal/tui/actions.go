@@ -34,6 +34,8 @@ type confirm struct {
 type installedMsg struct {
 	provider, name, version string
 	err                     error
+	// removed is an uninstall, which has no version to land on.
+	removed bool
 }
 
 type linkedMsg struct {
@@ -97,7 +99,29 @@ func (m *model) askInstall() {
 	}
 	lines = append(lines, faint().Render("runs  ")+strings.Join(cmd.Args, " "), "", accent().Render("y")+faint().Render(" run it   ")+accent().Render("n")+faint().Render(" cancel"))
 	title := arrow + " " + verb + " " + p.Name
-	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider.ProviderOf(p), p.Name, r.Version, nil})}
+	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider: provider.ProviderOf(p), name: p.Name, version: r.Version})}
+}
+
+// askRemove offers to uninstall the selected package. Like an install, it asks
+// first: kho changes the machine only after a person says yes.
+func (m *model) askRemove() {
+	p, ok := m.current()
+	if !ok {
+		return
+	}
+	cmd, err := provider.RemoveCmd(p, false)
+	if err != nil {
+		m.confirm = &confirm{title: "Can't remove " + p.Name, lines: []string{err.Error()}}
+		return
+	}
+	lines := []string{bold().Render(p.Name) + "  " + p.Version, ""}
+	if p.Dependency {
+		lines = append(lines, yellow().Render("⚠ another installed package needs it, so Homebrew may refuse"), "")
+	}
+	lines = append(lines, faint().Render("runs  ")+strings.Join(cmd.Args, " "), "", accent().Render("y")+faint().Render(" remove it   ")+accent().Render("n")+faint().Render(" cancel"))
+	title := "🗑 Remove " + p.Name
+	m.confirm = &confirm{title: title + "?", lines: lines,
+		run: startInstall(title, cmd, m.log, installedMsg{provider: provider.ProviderOf(p), name: p.Name, removed: true})}
 }
 
 // installing is a package manager running in a popup. cmd is the command as

@@ -602,7 +602,7 @@ func (m *model) askPull() {
 		accent().Render("y") + faint().Render(" run it   ") + accent().Render("n") + faint().Render(" cancel"),
 	}
 	m.confirm = &confirm{title: title + "?", lines: lines,
-		run: startInstall(title, pullCmd(target), m.log, installedMsg{"docker", r.Image, t.Name, nil})}
+		run: startInstall(title, pullCmd(target), m.log, installedMsg{provider: "docker", name: r.Image, version: t.Name})}
 }
 
 // sortedTags is the tags of an image in the order the panel shows them, with

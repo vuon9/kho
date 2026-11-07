@@ -521,9 +521,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inst != nil {
 			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
 		}
-		m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
-		if msg.err != nil {
+		switch {
+		case msg.err != nil && msg.removed:
+			m.notice = fmt.Sprintf("%s was not removed: %v", msg.name, msg.err)
+		case msg.err != nil:
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
+		case msg.removed:
+			m.notice = msg.name + " is removed"
+		default:
+			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 		if msg.provider == "docker" {
@@ -842,6 +848,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "d":
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
+	case "D":
+		m.askRemove()
 	case "p":
 		m.prodOnly = !m.prodOnly
 		m.cursor, m.offset = 0, 0
