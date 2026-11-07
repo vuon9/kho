@@ -114,7 +114,7 @@ kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
 |---|---|
 | `--yes` | run it; without this kho only prints what it would run |
 | `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
-| `--json` | print `{"package","version","command","ran","error"}` instead of text |
+| `--json` | print `{"package","version","command","ran","error","notes"}` instead of text |
 
 `ran` is false in a dry run, and `error` is set only when the manager itself failed, which also exits 1. A package that is not installed exits 1 with `<ref> is not installed`, so a typo never reads as success. A name that is installed under a different manager is named back to you: `kho remove brew/focusbar` says `focusbar is installed as cask/focusbar`. A source that is not on this machine, or could not be read, says that instead.
 

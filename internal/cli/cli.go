@@ -1136,7 +1136,9 @@ func hasFlag(args []string, name string) bool {
 		if a == "--" {
 			return false
 		}
-		if strings.TrimLeft(a, "-") == strings.TrimLeft(name, "-") {
+		// Go's flag package takes --json and -json, but a bare "json" is a
+		// positional argument and must not switch the output on.
+		if a == name || a == "-"+strings.TrimLeft(name, "-") {
 			return true
 		}
 	}
