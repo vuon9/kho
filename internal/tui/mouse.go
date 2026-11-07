@@ -188,7 +188,9 @@ func (m *model) click(x, y int) tea.Cmd {
 				m.setStatus(c)
 			}
 		case r > 0 && r <= l.rows:
-			if i := m.offset + r - 1; i < len(m.rows()) {
+			// The images table keeps its rows elsewhere, so the count comes
+			// from the row that is open, not from the packages.
+			if i := m.offset + r - 1; i < m.rowLen() {
 				m.cursor = i
 			}
 		}

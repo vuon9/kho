@@ -32,6 +32,25 @@ func withImages(t *testing.T, refs ...image.Ref) model {
 	return m
 }
 
+// A row in the images table answers a click the way a package row does.
+func TestImageRowsAreClickable(t *testing.T) {
+	m := onImages(t, withImages(t,
+		image.Ref{Image: "node:22-alpine", File: "Dockerfile", Line: 1},
+		image.Ref{Image: "postgres:16-alpine", File: "compose.yaml", Line: 7},
+		image.Ref{Image: "redis:7.4-alpine", File: "compose.yaml", Line: 11},
+	))
+	l := m.layout()
+	at := func(row int) int { return l.top + 1 + row }
+	for _, want := range []struct{ panelRow, cursor int }{{2, 1}, {3, 2}, {1, 0}} {
+		m2 := m
+		m2.click(l.tableX+6, at(want.panelRow))
+		if m2.focus != focusTable || m2.cursor != want.cursor {
+			t.Errorf("clicking panel row %d gave focus %d and cursor %d, want %d and %d",
+				want.panelRow, m2.focus, m2.cursor, focusTable, want.cursor)
+		}
+	}
+}
+
 // onImages moves the rail to the images row.
 func onImages(t *testing.T, m model) model {
 	t.Helper()
