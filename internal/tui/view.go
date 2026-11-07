@@ -34,7 +34,7 @@ func (m model) View() tea.View {
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
 			box(icon("Machine")+" Machine", m.railBody(l.bodyH-2), l.railW, l.bodyH, m.focus == focusRail),
 			box(m.tableTitle(), m.tableLines(), l.tableW, l.bodyH, m.focus == focusTable),
-			m.sideBox(l.sideW, l.bodyH, m.focus == focusSide),
+			m.sideBoxFor(l.sideW, l.bodyH, m.focus == focusSide),
 		)
 	}
 	rule := edge(false).Render(strings.Repeat("─", m.width))
@@ -151,6 +151,9 @@ func (m model) titleBar() string {
 
 // statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
+	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
+		return m.imageStatusBar()
+	}
 	pkgs, label := m.allPkgs(), "packages"
 	if m.inProject() {
 		pkgs, label = m.projPkgs(), "in "+m.projName()
@@ -255,6 +258,10 @@ func (m model) footer() string {
 		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
+	case m.focus == focusSide && isImageRow(m.curRow().kind):
+		line = keys("↑↓", "select", "[ ]", "tabs", "x", "scan with trivy", "esc", "back", "? ", "help")
+	case m.focus == focusTable && (m.curRow().kind == rowImages || m.curRow().kind == rowMachineImages):
+		line = keys("↑↓", "move", "enter", "details", "f", "state", "/", "filter", "w", "copy name", "x", "scan", "? ", "help")
 	case m.focus == focusTable && m.inProject():
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
 	case m.focus == focusTable:
@@ -286,6 +293,9 @@ func (m model) footer() string {
 
 func (m model) tableTitle() string {
 	r := m.curRow()
+	if r.kind == rowImages || r.kind == rowMachineImages {
+		return m.imageTitle()
+	}
 	title := icon(r.icon) + " " + r.name
 	if r.kind == rowPart {
 		title = icon("project") + " " + m.projName() + " · " + r.name
@@ -334,6 +344,9 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
+	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
+		return m.imageTableLines()
+	}
 	if r := m.curRow(); r.kind == rowPart && len(m.rowPkgs(r)) == 0 {
 		lines := []string{""}
 		for _, lf := range m.partLockfiles(r) {

@@ -19,16 +19,22 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/vuon9/kho/internal/history"
+	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/trivy"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
 // Run opens the TUI on dir, whose project kho reads alongside the machine.
-func Run(log *history.Log, version, dir string) error {
+// ask answers the registries about the project's images.
+func Run(log *history.Log, version, dir string, ask image.Asker) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
-	m.log, m.version, m.dir = log, version, dir
+	m.log, m.version, m.dir, m.imgAsk = log, version, dir, ask
+	// The docker row is part of the sidebar from the first frame, the way a
+	// provider's row is, and spins until its images are read.
+	m.imgBusy = true
 	if dir != "" {
 		m.projBusy = projReading
 	}
@@ -219,25 +225,40 @@ type model struct {
 	sideOffset int
 	bodyOffset int
 
-	sortCol   int
-	sortDesc  bool
-	filters   map[string]string
-	statuses  map[string]int
-	filtering bool
-	showDeps  bool
-	help      bool
-	helpTop   int
-	confirm   *confirm
-	inst      *installing
-	depCursor int
-	depPop    *depPopup
-	allAgents bool
-	sel       *textSel
-	railW     int
-	sideW     int
-	split     int
-	resizing  int
-	grab      int
+	sortCol  int
+	sortDesc bool
+	filters  map[string]string
+	statuses map[string]int
+
+	// images are the container images the project names, and imgBusy says a
+	// scan is still running. imgAsk is what answers the registries.
+	images      []image.Ref
+	machineImgs []image.Ref
+	imgTags     map[string][]image.Tag
+	imgVulns    map[string][]trivy.Vuln
+	imgScanning map[string]bool
+	imgTagBusy  map[string]bool
+	imgScanErr  map[string]string
+	imgErr      error
+	imgBusy     bool
+	imgGen      int
+	imgAsk      image.Asker
+	imgStatuses map[string]int
+	filtering   bool
+	showDeps    bool
+	help        bool
+	helpTop     int
+	confirm     *confirm
+	inst        *installing
+	depCursor   int
+	depPop      *depPopup
+	allAgents   bool
+	sel         *textSel
+	railW       int
+	sideW       int
+	split       int
+	resizing    int
+	grab        int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -286,7 +307,9 @@ var (
 
 func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
-		filters: map[string]string{}, statuses: map[string]int{}}
+		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
+		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
+		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{}}
 	m.reset()
 	return m
 }
@@ -294,7 +317,7 @@ func newModel(ps []provider.Provider, dbPath string) model {
 // Init lists every provider and starts the spinner, which newModel already
 // counts as ticking.
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.scan(), tick(), tea.RequestBackgroundColor}
+	cmds := []tea.Cmd{m.scan(), tick(), tea.RequestBackgroundColor, m.imagesCmd()}
 	if m.projBusy == projReading {
 		cmds = append(cmds, m.findCmd())
 	}
@@ -437,6 +460,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(m.busy, msg.name)
 		m.reindex()
+	case imageTagsMsg:
+		delete(m.imgTagBusy, msg.key)
+		if msg.tags != nil {
+			m.imgTags[msg.key] = msg.tags
+		}
+		return m, nil
+	case imageScanMsg:
+		m.imgScanning[msg.key] = false
+		if msg.err != nil {
+			m.imgScanErr[msg.key] = msg.err.Error()
+		} else {
+			delete(m.imgScanErr, msg.key)
+			m.imgVulns[msg.key] = msg.vulns
+		}
+		return m, nil
+	case imagesMsg:
+		m.gotImages(msg)
+		return m, nil
 	case projectMsg:
 		cmds = append(cmds, m.gotProject(msg))
 	case projectLatestMsg:
@@ -485,6 +526,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
+		if msg.provider == "docker" {
+			m.imgGen++
+			m.imgBusy = true
+			cmds = append(cmds, m.imagesCmd())
+		}
 	case linkedMsg:
 		m.notice, m.linksOf = msg.done, ""
 		if msg.err != nil {
@@ -542,6 +588,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, m.load())
 	if m.working() {
 		cmds = append(cmds, m.startTicking())
+	}
+	if cmd := m.autoScan(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -783,6 +832,10 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "!":
 		m.toggleStatus(statusVulnerable)
 	case "f":
+		if m.curRow().kind == rowImages {
+			m.cycleImgStatus()
+			return nil, false
+		}
 		m.setStatus(m.status() + 1)
 	case "F":
 		m.setStatus(m.status() - 1)
@@ -819,6 +872,9 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.setTab(tabInfo)
 	case "v":
 		m.setTab(tabVersions)
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imgTags[r.Canonical()] == nil && !m.imgTagBusy[r.Canonical()] {
+			return m.tagsCmd(), false
+		}
 	case "a":
 		m.setTab(tabSecurity)
 	case "]":
@@ -829,13 +885,41 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.scrollDetail(map[string]int{"J": 1, "ctrl+d": m.layout().bottomRows / 2}[key])
 	case "K", "ctrl+u":
 		m.scrollDetail(-map[string]int{"K": 1, "ctrl+u": m.layout().bottomRows / 2}[key])
+	case "x":
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
+			key := r.Canonical()
+			if m.imgScanning[key] {
+				return nil, false
+			}
+			m.imgScanning[key] = true
+			m.setTab(tabSecurity)
+			m.focus = focusSide
+			ref := r.Image
+			return func() tea.Msg {
+				vulns, err := scanImage(context.Background(), ref)
+				return imageScanMsg{key: key, vulns: vulns, err: err}
+			}, false
+		}
 	case "w":
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
+			return m.copy(r.Image), false
+		}
 		return m.openHome(), false
 	case "y":
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imageTab() == tabVersions {
+			if t, ok := at(m.sortedTags(r), m.sideCursor); ok {
+				if u := tagURL(r, t.Name); u != "" {
+					return open(u), false
+				}
+			}
+			return nil, false
+		}
 		return m.openReleasePage(), false
 	case "r":
 		m.reset()
-		return tea.Batch(m.scan(), m.scanProject()), false
+		m.imgGen++
+		m.imgBusy = m.dir != ""
+		return tea.Batch(m.scan(), m.scanProject(), m.imagesCmd()), false
 	case "R":
 		var all []provider.Package
 		for _, pkgs := range m.pkgs {
@@ -919,7 +1003,7 @@ func (m *model) move(key string) {
 		case "home", "g":
 			m.cursor = 0
 		case "end", "G":
-			m.cursor = len(m.rows()) - 1
+			m.cursor = m.rowLen() - 1
 		default:
 			m.cursor += step
 		}
@@ -932,6 +1016,10 @@ func (m *model) move(key string) {
 // list and enter acts on the selection: install a version, toggle a link, or
 // step down into an advisory.
 func (m *model) moveSide(key string, step int) {
+	if isImageRow(m.curRow().kind) {
+		m.moveImageSide(key, step)
+		return
+	}
 	list := m.sideListLen() >= 0
 	switch {
 	case key == "enter" && list && m.sidePart == 0:
@@ -1054,7 +1142,7 @@ func (m *model) openReleasePage() tea.Cmd {
 func (m *model) clamp() {
 	m.clampHistory()
 	m.keepRail()
-	m.cursor = max(min(m.cursor, len(m.rows())-1), 0)
+	m.cursor = max(min(m.cursor, m.rowLen()-1), 0)
 	l := m.layout()
 	m.railTop = m.railTopFor(l.bodyH - 2)
 	m.offset = scroll(m.offset, m.cursor, l.rows)

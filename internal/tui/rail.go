@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/provider"
 )
 
@@ -15,6 +16,8 @@ const (
 	rowProvider
 	rowProject
 	rowPart
+	rowImages
+	rowMachineImages
 )
 
 // railRow is one selectable line of the rail. key names it in filters and
@@ -35,10 +38,16 @@ func (m model) railRows() []railRow {
 	for _, p := range m.providers {
 		rows = append(rows, railRow{kind: rowProvider, name: p.Name(), icon: p.Name(), key: "machine:" + p.Name()})
 	}
+	if len(m.machineImgs) > 0 || m.imgBusy {
+		rows = append(rows, railRow{kind: rowMachineImages, name: "docker", icon: "docker", key: "machine:docker"})
+	}
 	if m.projReady() {
 		rows = append(rows, railRow{kind: rowProject, name: m.projName(), icon: "project", key: "project"})
 		if m.projOpen {
 			rows = append(rows, m.projParts()...)
+		}
+		if len(m.images) > 0 || m.imgBusy {
+			rows = append(rows, railRow{kind: rowImages, name: "images", icon: "docker", key: "project:images"})
 		}
 	}
 	return rows
@@ -61,6 +70,8 @@ func (m model) rowPkgs(r railRow) []provider.Package {
 		return m.projPkgs()
 	case rowPart:
 		return m.partPkgs(r)
+	case rowImages, rowMachineImages:
+		return nil
 	}
 	return m.allPkgs()
 }
@@ -208,6 +219,10 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 		case m.busy[r.name] != "":
 			mark = accent().Render(spinner[m.frame%len(spinner)])
 		}
+	case rowImages, rowMachineImages:
+		if m.imgBusy {
+			mark = accent().Render(spinner[m.frame%len(spinner)])
+		}
 	case rowPart:
 		for _, lf := range m.partLockfiles(r) {
 			switch {
@@ -231,6 +246,29 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 
 // badges is a row's count, then its filter mark, vulnerable and outdated.
 func (m model) badges(r railRow) string {
+	if r.kind == rowImages || r.kind == rowMachineImages {
+		list := m.images
+		if r.kind == rowMachineImages {
+			list = m.machineImgs
+		}
+		var past, stale int
+		for _, img := range list {
+			switch img.State {
+			case image.EOL, image.Gone:
+				past++
+			case image.Stale:
+				stale++
+			}
+		}
+		var badges []string
+		if past > 0 {
+			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", past)))
+		}
+		if stale > 0 {
+			badges = append(badges, yellow().Render(fmt.Sprintf("⟳%d", stale)))
+		}
+		return fmt.Sprintf("%4d", len(list)) + " " + strings.Join(badges, " ")
+	}
 	t := m.count(m.rowPkgs(r))
 	var badges []string
 	if m.filters[r.key] != "" || m.statuses[r.key] != statusAll {
