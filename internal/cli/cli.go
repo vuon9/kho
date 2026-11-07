@@ -161,6 +161,17 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 // list is filed under the provider's name, and a failed latest lookup under
 // "<name> latest", since its packages were still read and can be checked.
 func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]string) {
+	return env.gather(ctx, true)
+}
+
+// inventoryList is inventory without the network: removing a package needs
+// what is installed, and asking every registry for the newest version first
+// would make an uninstall wait on the internet.
+func (env Env) inventoryList(ctx context.Context) ([]provider.Package, map[string]string) {
+	return env.gather(ctx, false)
+}
+
+func (env Env) gather(ctx context.Context, latest bool) ([]provider.Package, map[string]string) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var all []provider.Package
@@ -169,7 +180,7 @@ func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]st
 		wg.Go(func() {
 			pkgs, err := p.List(ctx)
 			var latestErr error
-			if err == nil {
+			if err == nil && latest {
 				pkgs, latestErr = p.Latest(ctx, pkgs)
 			}
 			mu.Lock()
@@ -1008,31 +1019,32 @@ func (env Env) remove(args []string) int {
 		return ExitUsage
 	}
 	ref := rest[0]
-	if *force {
-		// A flag that cannot apply is a usage mistake whether or not the
-		// package is installed, so it is answered before the inventory.
-		if source, _, ok := strings.Cut(ref, "/"); ok && source != "brew" && source != "cask" {
-			fmt.Fprintf(env.Err, "--force only overrides Homebrew's dependency check; %s has none to override\n", source)
-			return ExitUsage
-		}
+	source, _, hasSource := strings.Cut(ref, "/")
+	switch {
+	case !hasSource:
+		return env.removeFail(*asJSON, ref, fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitUsage)
+	case !provider.IsSource(source):
+		return env.removeFail(*asJSON, ref, fmt.Sprintf("%q is not a source kho knows; try %s", source, provider.SourceList()), ExitUsage)
+	case *force && source != "brew":
+		return env.removeFail(*asJSON, ref, fmt.Sprintf("--force is for Homebrew formulae; %s has no dependency check to override", source), ExitUsage)
 	}
-	ctx := context.Background()
-	packages, errs := env.inventory(ctx)
+	// Only what is installed matters here, so the registries are not asked.
+	packages, errs := env.inventoryList(context.Background())
 	p, err := find(packages, ref)
 	if err != nil {
 		reason, code := env.removeMiss(ref, packages, errs)
-		fmt.Fprintln(env.Err, reason)
-		return code
+		return env.removeFail(*asJSON, ref, reason, code)
 	}
 	cmd, err := provider.RemoveCmd(p, *force)
 	if err != nil {
-		fmt.Fprintln(env.Err, err)
-		return ExitError
+		return env.removeFail(*asJSON, ref, err.Error(), ExitError)
 	}
 	if p.Dependency {
-		// Homebrew keeps a formula another formula needs, and --force is the
-		// only way past that, so say what it costs before it happens.
-		fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; removing it leaves that package broken until it is installed again\n", p.Name)
+		if *force {
+			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; removing it leaves that package broken until it is installed again\n", p.Name)
+		} else {
+			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway\n", p.Name)
+		}
 	}
 	if p.Source == "mise" {
 		// mise keeps what mise.toml asks for, so an uninstall alone can be
@@ -1045,7 +1057,7 @@ func (env Env) remove(args []string) int {
 			}
 		}
 		if len(others) > 0 {
-			fmt.Fprintf(env.Err, "note: %s also has %s installed; kho removed %s only\n", p.Name, strings.Join(others, ", "), p.Version)
+			fmt.Fprintf(env.Err, "note: %s also has %s installed; kho removes only %s\n", p.Name, strings.Join(others, ", "), p.Version)
 		}
 	}
 	res := RemoveResult{Package: ref, Version: p.Version, Command: cmd.Args}
@@ -1063,27 +1075,56 @@ func (env Env) remove(args []string) int {
 	case *asJSON:
 		env.printJSON(res)
 	case !res.Ran:
-		fmt.Fprintf(env.Out, "would run: %s\nadd --yes to run it\n", strings.Join(cmd.Args, " "))
-	case res.Error == "":
+		fmt.Fprintf(env.Out, "would run: %s\nadd --yes to run it\n", joinArgs(cmd.Args))
+	case res.Error != "":
+		// the manager's failure is the whole story, and it goes to stderr
+	case p.Version == "":
+		fmt.Fprintf(env.Out, "removed %s\n", ref)
+	default:
 		fmt.Fprintf(env.Out, "removed %s %s\n", ref, p.Version)
 	}
 	if res.Error != "" {
 		if !*asJSON {
-			fmt.Fprintf(env.Err, "removal failed: %s\n", res.Error)
+			fmt.Fprintln(env.Err, res.Error)
 		}
 		return ExitError
 	}
 	return ExitOK
 }
 
-// removeMiss says why a ref did not resolve. A manager that failed or is not
-// on this machine is not the same as a package that isn't installed, and a
-// version in the ref is a usage error rather than a missing package.
-func (env Env) removeMiss(ref string, packages []provider.Package, errs map[string]string) (string, int) {
-	source, _, ok := strings.Cut(ref, "/")
-	if !ok {
-		return fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitUsage
+// removeFail says why nothing was removed, as JSON when that was asked for, so
+// a caller reading stdout never has to parse prose.
+func (env Env) removeFail(asJSON bool, ref, reason string, code int) int {
+	if asJSON {
+		env.printJSON(RemoveResult{Package: ref, Error: reason})
+		return code
 	}
+	fmt.Fprintln(env.Err, reason)
+	return code
+}
+
+// joinArgs prints argv quoted the way a shell would need it, so the dry run
+// line can be copied and still be the one command kho would run.
+func joinArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if a != "" && strings.IndexFunc(a, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("@%_+=:,./-", r))
+		}) < 0 {
+			out[i] = a
+			continue
+		}
+		out[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(out, " ")
+}
+
+// removeMiss says why a ref did not resolve. A manager that failed or is not
+// on this machine is not the same as a package that isn't installed, a version
+// in the ref is a usage error rather than a missing package, and a name that is
+// installed under another manager is worth naming.
+func (env Env) removeMiss(ref string, packages []provider.Package, errs map[string]string) (string, int) {
+	source, name, _ := strings.Cut(ref, "/")
 	manager := provider.ProviderOf(provider.Package{Source: source})
 	if why := errs[manager]; why != "" {
 		return source + " could not be read: " + why, ExitError
@@ -1095,6 +1136,11 @@ func (env Env) removeMiss(ref string, packages []provider.Package, errs map[stri
 	if at := strings.LastIndex(ref, "@"); at > 0 {
 		if _, err := find(packages, ref[:at]); err == nil {
 			return "remove takes the installed version, so leave @version off: kho remove " + ref[:at], ExitUsage
+		}
+	}
+	for _, other := range packages {
+		if other.Name == name && other.Source != source {
+			return fmt.Sprintf("%s is installed as %s/%s, not %s/%s", name, other.Source, other.Name, source, name), ExitUsage
 		}
 	}
 	return ref + " is not installed", ExitError

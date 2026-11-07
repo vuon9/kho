@@ -74,7 +74,7 @@ func runRemove(t *testing.T, providers []provider.Provider, skipped map[string]s
 
 func TestRemove(t *testing.T) {
 	npmDown := []provider.Provider{fake{name: "npm", listErr: errors.New("gateway timeout")}}
-	miseNotes := "note: kho can't remove it from mise.toml, so mise may install it again\nnote: node also has 24.2.0 installed; kho removed 22.1.0 only"
+	miseNotes := "note: kho can't remove it from mise.toml, so mise may install it again\nnote: node also has 24.2.0 installed; kho removes only 22.1.0"
 	tests := []struct {
 		id        string
 		args      []string
@@ -99,16 +99,19 @@ func TestRemove(t *testing.T) {
 		{id: "a Go binary with no known path still refuses", args: []string{"remove", "go/nopath", "--yes"}, code: ExitError, err: "go has no uninstall; remove the nopath binary yourself and it stops being listed"},
 		{id: "a skill points at the skills CLI", args: []string{"remove", "skills/pathmaker", "--yes"}, code: ExitError, err: "kho doesn't remove skills; run npx skills remove pathmaker, or unlink it from each agent in the TUI"},
 		{id: "--force on brew ignores the dependency check", args: []string{"remove", "brew/anvil", "--force", "--yes"}, code: ExitOK, out: "removed brew/anvil 0.11.2", ran: []string{"brew uninstall --ignore-dependencies anvil"}, log: 1},
-		{id: "--force is not --cask's", args: []string{"remove", "cask/focusbar", "--force"}, code: ExitOK, out: "would run: brew uninstall --cask --ignore-dependencies focusbar\nadd --yes to run it"},
-		{id: "--force only exists for Homebrew formulae", args: []string{"remove", "npm/@scope/tool", "--force"}, code: ExitUsage, err: "--force only overrides Homebrew's dependency check; npm has none to override"},
-		{id: "--force on a package that is not installed is still a usage error", args: []string{"remove", "npm/nope", "--force"}, code: ExitUsage, err: "--force only overrides Homebrew's dependency check; npm has none to override"},
+		{id: "--force is not --cask's", args: []string{"remove", "cask/focusbar", "--force"}, code: ExitUsage, err: "--force is for Homebrew formulae; cask has no dependency check to override"},
+		{id: "--force only exists for Homebrew formulae", args: []string{"remove", "npm/@scope/tool", "--force"}, code: ExitUsage, err: "--force is for Homebrew formulae; npm has no dependency check to override"},
+		{id: "--force on a package that is not installed is still a usage error", args: []string{"remove", "npm/nope", "--force"}, code: ExitUsage, err: "--force is for Homebrew formulae; npm has no dependency check to override"},
 		{id: "a cask uninstalls through brew --cask", args: []string{"remove", "cask/focusbar", "--yes"}, code: ExitOK, out: "removed cask/focusbar 4.2.0", ran: []string{"brew uninstall --cask focusbar"}, log: 1},
-		{id: "a manager that refuses is an error", args: []string{"remove", "brew/anvil", "--yes"}, runErr: errors.New("exit status 1: anvil is needed by mist"), code: ExitError, err: "removal failed: exit status 1: anvil is needed by mist", ran: []string{"brew uninstall anvil"}, log: 1},
+		{id: "a manager that refuses is an error", args: []string{"remove", "brew/anvil", "--yes"}, runErr: errors.New("exit status 1: anvil is needed by mist"), code: ExitError, err: "exit status 1: anvil is needed by mist", ran: []string{"brew uninstall anvil"}, log: 1},
 		{id: "an unreadable source is not an uninstalled package", args: []string{"remove", "npm/@scope/tool"}, providers: npmDown, code: ExitError, err: "npm could not be read: gateway timeout"},
 		{id: "a source this machine lacks says so", args: []string{"remove", "npm/@scope/tool"}, providers: []provider.Provider{fake{name: "pipx"}}, skipped: map[string]string{"npm": "npm was not found"}, code: ExitError, err: "npm is not on this machine (npm was not found)"},
 		{id: "mise names the version and the ones left", args: []string{"remove", "mise/node", "--yes"}, code: ExitOK, out: "removed mise/node 22.1.0", err: miseNotes, ran: []string{"mise uninstall node@22.1.0"}, log: 1},
 		{id: "mise notes both ways in a dry run too", args: []string{"remove", "mise/node"}, code: ExitOK, out: "would run: mise uninstall node@22.1.0\nadd --yes to run it", err: miseNotes},
-		{id: "a dependency says what removing it costs", args: []string{"remove", "brew/mist"}, code: ExitOK, out: "would run: brew uninstall mist\nadd --yes to run it", err: "note: mist is installed as another package's dependency; removing it leaves that package broken until it is installed again"},
+		{id: "a dependency warns that the manager may refuse", args: []string{"remove", "brew/mist"}, code: ExitOK, out: "would run: brew uninstall mist\nadd --yes to run it", err: "note: mist is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway"},
+		{id: "a dependency with --force says what breaks", args: []string{"remove", "brew/mist", "--force"}, code: ExitOK, out: "would run: brew uninstall --ignore-dependencies mist\nadd --yes to run it", err: "note: mist is installed as another package's dependency; removing it leaves that package broken until it is installed again"},
+		{id: "a source kho does not know is a usage error", args: []string{"remove", "frob/widget"}, code: ExitUsage, err: `"frob" is not a source kho knows; try brew, cask, npm, composer, pipx, uv, mise, go or skills`},
+		{id: "a name installed under another manager is named", args: []string{"remove", "brew/focusbar"}, code: ExitUsage, err: "focusbar is installed as cask/focusbar, not brew/focusbar"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -160,6 +163,10 @@ func TestRemoveJSON(t *testing.T) {
 			RemoveResult{Package: "pipx/bramble", Version: "22.12.0", Command: []string{"pipx", "uninstall", "bramble"}, Ran: true}},
 		{"a failed run carries the error", []string{"remove", "pipx/bramble", "--yes", "--json"}, errors.New("boom"), ExitError,
 			RemoveResult{Package: "pipx/bramble", Version: "22.12.0", Command: []string{"pipx", "uninstall", "bramble"}, Ran: true, Error: "boom"}},
+		{"a miss answers in JSON too", []string{"remove", "pipx/nope", "--json"}, nil, ExitError,
+			RemoveResult{Package: "pipx/nope", Error: "pipx/nope is not installed"}},
+		{"a usage mistake answers in JSON too", []string{"remove", "frob/widget", "--json"}, nil, ExitUsage,
+			RemoveResult{Package: "frob/widget", Error: `"frob" is not a source kho knows; try brew, cask, npm, composer, pipx, uv, mise, go or skills`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

@@ -3,7 +3,24 @@ package provider
 import (
 	"fmt"
 	"os/exec"
+	"slices"
+	"strings"
 )
+
+// sources are the managers kho can uninstall from, in the order a person is
+// likely to look for them.
+var sources = []string{"brew", "cask", "npm", "composer", "pipx", "uv", "mise", "go", "skills"}
+
+// IsSource says whether a ref names a manager kho knows, so a typo is answered
+// as a usage mistake instead of as a package that is not installed.
+func IsSource(name string) bool {
+	return slices.Contains(sources, name)
+}
+
+// SourceList names every source, for a ref that named something else.
+func SourceList() string {
+	return strings.Join(sources[:len(sources)-1], ", ") + " or " + sources[len(sources)-1]
+}
 
 // RemoveCmd builds the command that uninstalls an installed package through
 // its own package manager, or says why kho won't. It never installs, so a pin
@@ -22,9 +39,6 @@ func RemoveCmd(p Package, force bool) (*exec.Cmd, error) {
 		}
 		return exec.Command("brew", "uninstall", p.Name), nil
 	case "cask":
-		if force {
-			return exec.Command("brew", "uninstall", "--cask", "--ignore-dependencies", p.Name), nil
-		}
 		return exec.Command("brew", "uninstall", "--cask", p.Name), nil
 	case "npm":
 		return exec.Command("npm", "uninstall", "-g", p.Name), nil

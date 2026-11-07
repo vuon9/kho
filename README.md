@@ -113,12 +113,16 @@ kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
 | Flag | Does |
 |---|---|
 | `--yes` | run it; without this kho only prints what it would run |
-| `--force` | Homebrew formulae and casks: add `--ignore-dependencies` when another installed package needs this one. A usage error on any other source. |
+| `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
 | `--json` | print `{"package","version","command","ran","error"}` instead of text |
 
-`ran` is false in a dry run, and `error` is set only when the manager itself failed, which also exits 1. A package that is not installed exits 1 with `<ref> is not installed`, so a typo never reads as success; a source that is not on this machine, or could not be read, says that instead. Exit 2 is a usage error: a ref with no source, no ref, more than one ref, `--force` on a source with no dependency check, or a version in the ref, which kho names back to you without it. That last check needs the package installed to tell a version apart from a scoped npm name, so an uninstalled one is reported as not installed first.
+`ran` is false in a dry run, and `error` is set only when the manager itself failed, which also exits 1. A package that is not installed exits 1 with `<ref> is not installed`, so a typo never reads as success. A name that is installed under a different manager is named back to you: `kho remove brew/focusbar` says `focusbar is installed as cask/focusbar`. A source that is not on this machine, or could not be read, says that instead.
 
-A package that is only there because another package needs it gets a note on stderr before anything runs, since removing it is what breaks that other package.
+Exit 2 is a usage error: a ref with no source, a source kho does not know, no ref, more than one ref, `--force` on anything but a Homebrew formula, or a version in the ref, which kho names back to you without it. That last check needs the package installed to tell a version apart from a scoped npm name, so an uninstalled one is reported as not installed first.
+
+`--json` answers every outcome, a miss or a refusal included, with the same object on stdout and nothing on stderr, so a caller never has to parse prose.
+
+A package that is only there because another package needs it gets a note on stderr first: without `--force` it says the manager may refuse, and with `--force` it says what breaks.
 
 Homebrew refuses to uninstall a formula another installed formula needs. kho passes that refusal through as a failure (exit 1); `--force` adds `--ignore-dependencies` so it goes ahead, leaving whatever needed the formula broken until that package is reinstalled. kho never uses `brew -f`, which would delete every installed version.
 

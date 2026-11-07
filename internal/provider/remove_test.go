@@ -18,7 +18,6 @@ func TestRemoveCmd(t *testing.T) {
 		{"brew uninstalls the formula", Package{Source: "brew", Name: "anvil"}, false, []string{"brew", "uninstall", "anvil"}, ""},
 		{"brew force ignores the dependency check", Package{Source: "brew", Name: "anvil"}, true, []string{"brew", "uninstall", "--ignore-dependencies", "anvil"}, ""},
 		{"a cask goes through brew --cask", Package{Source: "cask", Name: "focusbar"}, false, []string{"brew", "uninstall", "--cask", "focusbar"}, ""},
-		{"a cask force ignores the dependency check too", Package{Source: "cask", Name: "focusbar"}, true, []string{"brew", "uninstall", "--cask", "--ignore-dependencies", "focusbar"}, ""},
 		{"npm uninstalls globally", Package{Source: "npm", Name: "diffkit"}, false, []string{"npm", "uninstall", "-g", "diffkit"}, ""},
 		{"a scoped npm name stays whole", Package{Source: "npm", Name: "@scope/tool"}, false, []string{"npm", "uninstall", "-g", "@scope/tool"}, ""},
 		{"pipx uninstalls the app", Package{Source: "pipx", Name: "bramble"}, false, []string{"pipx", "uninstall", "bramble"}, ""},
