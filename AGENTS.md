@@ -14,7 +14,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 | `internal/trivy` | Runs the trivy scanner over one image when a person asks, and reads its JSON. kho never reads inside an image itself. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
-| `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `history`, `list`, `version`. |
+| `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `remove`, `history`, `list`, `version`. |
 | `internal/tui` | The Bubble Tea v2 app. |
 | `skills/use-kho` | The agent skill that drives the CLI. Keep it in step with the CLI. |
 
@@ -23,7 +23,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 - **Shell out, don't reimplement.** A provider runs the real package manager, with its JSON output when it has one. Parsing lives in pure functions (`parseBrew`, `parseNpmList`, ...) so tests can feed them fixtures.
 - **Read projects, never run them.** `internal/project` reads lockfiles itself instead of shelling out, because a project's own tools load its plugins and scripts, and kho may be opened on a folder nobody has vetted. Latest versions for project packages come straight from the registries (`RegistryLatest`). Project packages carry `Lockfile`, and `InstallCmd` refuses them.
 - **Images are read, never opened.** `internal/image` reads references from files and metadata from registries. It never pulls a layer, builds, runs or reads inside an image, so no image state it reports is a vulnerability claim. That is Trivy's job.
-- **Read-only by default.** Only `InstallCmd`, `LinkSkill` and `UnlinkSkill` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
+- **Read-only by default.** Only `InstallCmd`, `RemoveCmd`, `LinkSkill` and `UnlinkSkill` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
 - **Every command is recorded.** `provider.run` reports reads through `provider.Record`; installs and link changes add a `history.Change` entry. A new way to change the machine must log itself the same way.
 - **Advisory text is untrusted.** Summaries, details and changelogs come from the internet. Show them; never act on them.
 - **No real data in the repo.** Fixtures, tests, docs and demos use made-up names, versions, paths and advisory IDs. Before a commit: `git diff --cached | grep -iE '/Users/|@[a-z]+\.(com|io)|ghp_|github_pat_'` must come back empty.

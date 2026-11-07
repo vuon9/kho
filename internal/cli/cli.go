@@ -1008,6 +1008,14 @@ func (env Env) remove(args []string) int {
 		return ExitUsage
 	}
 	ref := rest[0]
+	if *force {
+		// A flag that cannot apply is a usage mistake whether or not the
+		// package is installed, so it is answered before the inventory.
+		if source, _, ok := strings.Cut(ref, "/"); ok && source != "brew" && source != "cask" {
+			fmt.Fprintf(env.Err, "--force only overrides Homebrew's dependency check; %s has none to override\n", source)
+			return ExitUsage
+		}
+	}
 	ctx := context.Background()
 	packages, errs := env.inventory(ctx)
 	p, err := find(packages, ref)
@@ -1016,14 +1024,15 @@ func (env Env) remove(args []string) int {
 		fmt.Fprintln(env.Err, reason)
 		return code
 	}
-	if *force && p.Source != "brew" {
-		fmt.Fprintf(env.Err, "--force only overrides Homebrew's dependency check; %s has none to override\n", p.Source)
-		return ExitUsage
-	}
 	cmd, err := provider.RemoveCmd(p, *force)
 	if err != nil {
 		fmt.Fprintln(env.Err, err)
 		return ExitError
+	}
+	if p.Dependency {
+		// Homebrew keeps a formula another formula needs, and --force is the
+		// only way past that, so say what it costs before it happens.
+		fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; removing it leaves that package broken until it is installed again\n", p.Name)
 	}
 	if p.Source == "mise" {
 		// mise keeps what mise.toml asks for, so an uninstall alone can be
@@ -1059,7 +1068,9 @@ func (env Env) remove(args []string) int {
 		fmt.Fprintf(env.Out, "removed %s %s\n", ref, p.Version)
 	}
 	if res.Error != "" {
-		fmt.Fprintf(env.Err, "removal failed: %s\n", res.Error)
+		if !*asJSON {
+			fmt.Fprintf(env.Err, "removal failed: %s\n", res.Error)
+		}
 		return ExitError
 	}
 	return ExitOK
@@ -1071,7 +1082,7 @@ func (env Env) remove(args []string) int {
 func (env Env) removeMiss(ref string, packages []provider.Package, errs map[string]string) (string, int) {
 	source, _, ok := strings.Cut(ref, "/")
 	if !ok {
-		return fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitError
+		return fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitUsage
 	}
 	manager := provider.ProviderOf(provider.Package{Source: source})
 	if why := errs[manager]; why != "" {

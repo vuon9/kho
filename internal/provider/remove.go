@@ -22,6 +22,9 @@ func RemoveCmd(p Package, force bool) (*exec.Cmd, error) {
 		}
 		return exec.Command("brew", "uninstall", p.Name), nil
 	case "cask":
+		if force {
+			return exec.Command("brew", "uninstall", "--cask", "--ignore-dependencies", p.Name), nil
+		}
 		return exec.Command("brew", "uninstall", "--cask", p.Name), nil
 	case "npm":
 		return exec.Command("npm", "uninstall", "-g", p.Name), nil
@@ -34,6 +37,9 @@ func RemoveCmd(p Package, force bool) (*exec.Cmd, error) {
 		// about the machine, not a project lockfile.
 		return exec.Command("composer", "global", "remove", p.Name), nil
 	case "mise":
+		if p.Version == "" {
+			return nil, fmt.Errorf("mise needs the installed version to uninstall %s, and kho was not given one", p.Name)
+		}
 		return exec.Command("mise", "uninstall", p.Name+"@"+p.Version), nil
 	case "go":
 		if p.Path == "" {
