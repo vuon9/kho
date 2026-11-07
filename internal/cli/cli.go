@@ -1003,6 +1003,7 @@ type RemoveResult struct {
 	Command []string `json:"command"`
 	Ran     bool     `json:"ran"`
 	Error   string   `json:"error,omitempty"`
+	Notes   []string `json:"notes,omitempty"`
 }
 
 // remove uninstalls one package through its own package manager. Like install,
@@ -1049,22 +1050,21 @@ func (env Env) remove(args []string) int {
 	if err != nil {
 		return env.removeFail(*asJSON, ref, p.Version, err.Error(), ExitError)
 	}
-	// Notes are for a person reading a terminal; a caller that asked for JSON
-	// gets the object alone.
-	if p.Dependency && !*asJSON {
+	var notes []string
+	if p.Dependency {
 		switch {
 		case *force:
-			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; removing it leaves that package broken until it is installed again\n", p.Name)
+			notes = append(notes, fmt.Sprintf("%s is installed as another package's dependency; removing it leaves that package broken until it is installed again", p.Name))
 		case p.Source == "brew":
-			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway\n", p.Name)
+			notes = append(notes, fmt.Sprintf("%s is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway", p.Name))
 		default:
-			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency\n", p.Name)
+			notes = append(notes, fmt.Sprintf("%s is installed as another package's dependency", p.Name))
 		}
 	}
-	if p.Source == "mise" && !*asJSON {
+	if p.Source == "mise" {
 		// mise keeps what mise.toml asks for, so an uninstall alone can be
 		// undone by the next `mise install`.
-		fmt.Fprintln(env.Err, "note: kho can't remove it from mise.toml, so mise may install it again")
+		notes = append(notes, "kho can't remove it from mise.toml, so mise may install it again")
 		var others []string
 		for _, v := range p.Versions {
 			if v != p.Version {
@@ -1072,10 +1072,17 @@ func (env Env) remove(args []string) int {
 			}
 		}
 		if len(others) > 0 {
-			fmt.Fprintf(env.Err, "note: %s also has %s installed; kho removes only %s\n", p.Name, strings.Join(others, ", "), p.Version)
+			notes = append(notes, fmt.Sprintf("%s also has %s installed; kho removes only %s", p.Name, strings.Join(others, ", "), p.Version))
 		}
 	}
-	res := RemoveResult{Package: ref, Version: p.Version, Command: cmd.Args}
+	// Notes are for a person reading a terminal; a caller that asked for JSON
+	// gets the object, notes included.
+	if !*asJSON {
+		for _, n := range notes {
+			fmt.Fprintf(env.Err, "note: %s\n", n)
+		}
+	}
+	res := RemoveResult{Package: ref, Version: p.Version, Command: cmd.Args, Notes: notes}
 	if *yes {
 		start := env.Now()
 		out, err := env.Run(cmd)
@@ -1107,6 +1114,21 @@ func (env Env) remove(args []string) int {
 	return ExitOK
 }
 
+// sameVersion says whether a version typed in a ref names what is installed.
+// A bare prefix is not enough: "2" is not the installed 26.13.0, and telling a
+// person to remove node would remove a package they did not name.
+func sameVersion(installed, typed string) bool {
+	if installed == typed {
+		return true
+	}
+	for _, sep := range []string{".", "-", "_", "+"} {
+		if strings.HasPrefix(installed, typed+sep) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasFlag reports whether args name flag before any "--", since a flag after it
 // is a positional argument.
 func hasFlag(args []string, name string) bool {
@@ -1114,7 +1136,7 @@ func hasFlag(args []string, name string) bool {
 		if a == "--" {
 			return false
 		}
-		if a == name {
+		if strings.TrimLeft(a, "-") == strings.TrimLeft(name, "-") {
 			return true
 		}
 	}
@@ -1168,7 +1190,7 @@ func (env Env) removeMiss(ref string, packages []provider.Package, errs map[stri
 			// Homebrew names carry an @ of their own (node@24, python@3.12), so
 			// a suffix that is not the installed version is part of the name,
 			// and naming the base would point at a different package.
-			if (p.Version != "" && strings.HasPrefix(p.Version, suffix)) || (source != "brew" && source != "cask") {
+			if (p.Version != "" && sameVersion(p.Version, suffix)) || (source != "brew" && source != "cask") {
 				return "remove takes the installed version, so leave @version off: kho remove " + base, ExitUsage
 			}
 		}
