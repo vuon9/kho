@@ -43,8 +43,9 @@ func main() {
 		}
 		log.Add(e)
 	}
+	registries := registry.New(registry.Path())
 	if dir, ok := tuiFolder(os.Args[1:]); ok {
-		if err := tui.Run(log, appVersion(), dir); err != nil {
+		if err := tui.Run(log, appVersion(), dir, registries); err != nil {
 			// 128 plus SIGHUP's number, as a shell reports a hung-up program.
 			if errors.Is(err, tui.ErrHangup) {
 				os.Exit(129)
@@ -55,7 +56,6 @@ func main() {
 		return
 	}
 	ready, skipped := provider.Detect()
-	registries := registry.New(registry.Path())
 	code := cli.Main(cli.Env{
 		Version:     appVersion(),
 		Providers:   ready,

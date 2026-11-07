@@ -138,7 +138,10 @@ func Machine(ctx context.Context, local []LocalImage, ask Asker, now time.Time) 
 	}
 	refs = Inspect(ctx, refs, local, true, ask, now)
 	for i := range refs {
-		if refs[i].State == Gone && refs[i].Digest == "" {
+		// No repository digest means docker never pulled it: it was built or
+		// loaded here, so a registry that does not know the name says nothing
+		// about it.
+		if refs[i].Digest == "" && (refs[i].State == Gone || refs[i].State == Unknown) {
 			refs[i].State = Local
 			refs[i].Note = ""
 		}

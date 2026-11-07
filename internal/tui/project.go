@@ -177,9 +177,10 @@ func (m model) projName() string {
 }
 
 // projReady says the project section has something to select. While a
-// rescan reads the lockfiles again, the last scan stays selectable.
+// rescan reads the lockfiles again, the last scan stays selectable. A folder
+// with images but no lockfiles still has something to show.
 func (m model) projReady() bool {
-	return m.proj != nil && len(m.proj.Projects) > 0
+	return m.proj != nil && (len(m.proj.Projects) > 0 || len(m.images) > 0)
 }
 
 func (m model) projPkgs() []provider.Package { return m.pkgs[projKey] }

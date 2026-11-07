@@ -36,8 +36,8 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
-- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`.
-- The rail is a list of `railRow`s from `railRows()`: All, each provider, then the project's header and, when open, its parts. Filters and statuses are keyed by `railRow.key`, never by position. Project packages live in `m.pkgs[projKey]`, and `pkgKey` includes the lockfile and version for them.
+- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`, `findImages`, `listImages`, `inspectImages`, `machineImages`.
+- The rail is a list of `railRow`s from `railRows()`: All, each provider, the machine's docker row, then the project's header and, when open, its parts, then the project's images. Filters and statuses are keyed by `railRow.key`, never by position. Project packages live in `m.pkgs[projKey]`, and `pkgKey` includes the lockfile and version for them.
 - Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it before kho exits, so kho never quits with one cut off and unlogged.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.
 - Index a cursor through `at(slice, i)`, which is safe for any `i`. `clamp()` runs after every message and pulls the package cursor in first, because the layout depends on it.
