@@ -142,6 +142,17 @@ func (m *model) gotImages(msg imagesMsg) {
 }
 
 // imageStatusNames are the filters the images table steps through with f.
+// untracked is the only one that shows what kho could not identify.
+const (
+	imgStatusAll = iota
+	imgStatusPast
+	imgStatusStale
+	imgStatusTracked
+	imgStatusUntracked
+	imgStatusOnDisk
+	imgStatusNotPulled
+)
+
 var imageStatusNames = []string{"All", "⚠ past line", "⟳ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
 
 func (m model) imgStatus() int { return m.imgStatuses[m.curRow().key] }
@@ -175,10 +186,33 @@ func (m model) imgList() []image.Ref {
 	return m.images
 }
 
+// unverified says kho could not identify what an image is built from: it was
+// chosen at build time, or no registry answers for the name. They are kept
+// out of the table unless the untracked filter asks for them, and counted
+// under it so the list never looks like everything there is.
+func unverified(r image.Ref) bool {
+	return r.Unresolved || r.State == image.Unknown
+}
+
+// hiddenUnverified is how many the table is leaving out.
+func (m model) hiddenUnverified() int {
+	n := 0
+	for _, r := range m.imgList() {
+		if unverified(r) {
+			n++
+		}
+	}
+	return n
+}
+
 // imgRows is the images table after the keyword and status filters.
 func (m model) imgRows() []image.Ref {
 	var out []image.Ref
+	only := m.imgStatus() == imgStatusUntracked
 	for _, r := range m.imgList() {
+		if unverified(r) && !only {
+			continue
+		}
 		if f := m.filter(); f != "" && !strings.Contains(strings.ToLower(r.Image), strings.ToLower(f)) {
 			continue
 		}
@@ -192,17 +226,17 @@ func (m model) imgRows() []image.Ref {
 
 func (m model) matchImgStatus(r image.Ref) bool {
 	switch m.imgStatus() {
-	case 1:
+	case imgStatusPast:
 		return r.State == image.EOL || r.State == image.Gone
-	case 2:
+	case imgStatusStale:
 		return r.State == image.Stale
-	case 3:
+	case imgStatusTracked:
 		return hasUpstream(r)
-	case 4:
-		return !hasUpstream(r)
-	case 5:
+	case imgStatusUntracked:
+		return unverified(r)
+	case imgStatusOnDisk:
 		return r.Presence == image.OnDisk
-	case 6:
+	case imgStatusNotPulled:
 		return r.Presence == image.NotPulled
 	}
 	return true
@@ -233,7 +267,11 @@ func (m model) imageTitle() string {
 	if m.imgBusy {
 		title += " · reading"
 	}
-	return fmt.Sprintf("%s · %d", title, len(m.imgRows()))
+	title = fmt.Sprintf("%s · %d", title, len(m.imgRows()))
+	if n := m.hiddenUnverified(); n > 0 && m.imgStatus() != imgStatusUntracked {
+		title += fmt.Sprintf(" · %d unverified hidden", n)
+	}
+	return title
 }
 
 // presenceMark says whether docker holds the image, in one character.
@@ -697,14 +735,22 @@ func (m model) imageLines(r image.Ref) []line {
 		add("remote", r.RemotePushed.Format("2006-01-02")+" · "+shortDigest(r.RemoteDigest), "")
 	}
 	if !r.EOL.IsZero() {
-		add("support", "ended "+r.EOL.Format("2006-01-02"), "")
+		if now().After(r.EOL) {
+			add("support", "ended "+r.EOL.Format("2006-01-02"), "")
+		} else {
+			add("support", "supported until "+r.EOL.Format("2006-01-02"), "")
+		}
 	}
 	add("state", stateWord(r), "")
 	if r.Note != "" {
 		add("note", r.Note, "")
 	}
 	if r.Via != "" {
-		add("chosen by", r.Via+" at build time, so kho cannot say which image this is", "")
+		if r.Unresolved {
+			add("chosen by", r.Via+" at build time, so kho cannot say which image this is", "")
+		} else {
+			add("from", "ARG "+r.Via, "")
+		}
 	}
 	lines = append(lines, plain("", faint().Render(" kho reads references and registry metadata, never what is inside an image."))...)
 	return lines

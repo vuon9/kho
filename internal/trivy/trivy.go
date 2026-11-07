@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vuon9/kho/internal/provider"
@@ -33,9 +34,31 @@ func Available() bool {
 	return err == nil
 }
 
+// scanMu runs one scan at a time. trivy keeps a cache behind a lock, so two
+// scans started together make each other fail with "cache may be in use".
+var scanMu sync.Mutex
+
 // Scan reads the image trivy names, which may be a tag or a digest. It is
-// slow the first time, when trivy downloads its database.
+// slow the first time, when trivy downloads its database, and scans run one
+// after another because they share that database.
 func Scan(ctx context.Context, ref string) ([]Vuln, error) {
+	scanMu.Lock()
+	defer scanMu.Unlock()
+	vulns, err := scanOnce(ctx, ref)
+	// Another kho, or a trivy someone started, can hold the cache lock. Wait
+	// for it rather than reporting a failure the person can do nothing about.
+	for try := 0; err != nil && strings.Contains(err.Error(), "cache may be in use") && try < 4; try++ {
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(3 * time.Second):
+		}
+		vulns, err = scanOnce(ctx, ref)
+	}
+	return vulns, err
+}
+
+func scanOnce(ctx context.Context, ref string) ([]Vuln, error) {
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "trivy", "image", "--quiet", "--format", "json",
 		"--scanners", "vuln", "--timeout", "5m", ref)
@@ -45,7 +68,7 @@ func Scan(ctx context.Context, ref string) ([]Vuln, error) {
 	provider.Record(append([]string{"trivy"}, cmd.Args[1:]...), time.Since(start), err)
 	if err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("%s", lastLine(msg))
+			return nil, fmt.Errorf("%s", clean(msg))
 		}
 		return nil, err
 	}
@@ -106,9 +129,29 @@ func rank(sev string) int {
 	return 4
 }
 
-// lastLine keeps the last line of a scanner error, which is the one that says
-// what went wrong.
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return lines[len(lines)-1]
+// clean turns the scanner's error report into one readable sentence: the
+// log prefix goes, the noise about its own cache becomes something a person
+// can act on, and the rest is cut at a word.
+func clean(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if strings.Contains(s, "cache may be in use") {
+		return "trivy is busy with another scan, press x to try again"
+	}
+	if strings.Contains(s, "manifest unknown") || strings.Contains(s, "MANIFEST_UNKNOWN") || strings.Contains(s, "not found") {
+		return "the registry does not have this image, so there is nothing to scan"
+	}
+	for _, prefix := range []string{"run error: ", "FATAL ", "Fatal error: "} {
+		if i := strings.LastIndex(s, prefix); i >= 0 {
+			s = s[i+len(prefix):]
+			break
+		}
+	}
+	if len(s) > 140 {
+		s = s[:140]
+		if i := strings.LastIndex(s, " "); i > 0 {
+			s = s[:i]
+		}
+		s += "..."
+	}
+	return s
 }

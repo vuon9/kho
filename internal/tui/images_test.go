@@ -80,8 +80,8 @@ func TestImagesRailRow(t *testing.T) {
 func TestImagesTable(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	got := screen(m)
-	for _, want := range []string{"· images · 4", "python:3.9-slim", "postgres:13", "node:22-alpine",
-		"Dockerfile:3", "compose.yaml:3", "22.23.4", "EOL", "stale", "build"} {
+	for _, want := range []string{"· images · 3", "1 unverified hidden", "python:3.9-slim", "postgres:13",
+		"node:22-alpine", "Dockerfile:3", "compose.yaml:3", "22.23.4", "EOL", "stale"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("screen does not show %q:\n%s", want, got)
 		}
@@ -133,6 +133,8 @@ func TestImagesSidebar(t *testing.T) {
 
 func TestImagesUnresolvedIsHonest(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
+	// Unverified images are out of the way unless the untracked filter asks.
+	m = press(t, m, "f", "f", "f", "f")
 	for i, r := range m.imgRows() {
 		if r.Unresolved {
 			m.cursor = i
@@ -379,5 +381,21 @@ func TestTagOrder(t *testing.T) {
 		if tags[i].Name != w {
 			t.Fatalf("order %v, want %v", tags, want)
 		}
+	}
+}
+
+// Unverified images stay out of the list, but never disappear silently.
+func TestImagesHideUnverified(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	got := screen(m)
+	if strings.Contains(got, "BASE_IMAGE") {
+		t.Errorf("an unresolved image should be out of the way:\n%s", got)
+	}
+	if !strings.Contains(got, "1 unverified hidden") {
+		t.Errorf("the title should say one is hidden:\n%s", got)
+	}
+	m = press(t, m, "f", "f", "f", "f")
+	if !strings.Contains(screen(m), "BASE_IMAGE") {
+		t.Errorf("the untracked filter should show it again:\n%s", screen(m))
 	}
 }
