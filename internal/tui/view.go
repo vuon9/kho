@@ -227,7 +227,94 @@ func keys(pairs ...string) string {
 	return strings.Join(out, faint().Render("  "))
 }
 
+// rowKeys lists what a person can do with the selected row, most useful first.
+// The footer shows what fits of it, so a row offers the same actions whether
+// the cursor is on it or one of the sidebar's tabs is open.
+func (m model) rowKeys() []string {
+	var pairs []string
+	if m.focus == focusSide {
+		pairs = append(pairs, "↑↓", "select")
+	} else {
+		pairs = append(pairs, "↑↓", "move")
+	}
+	pairs = append(pairs, "tab", "panel", "[ ]", "tabs", "enter", m.enterLabel())
+	switch {
+	case isImageRow(m.curRow().kind):
+		pairs = append(pairs, "i v a", "tabs", "f", "state", "/", "filter", "w", "copy name", "x", "scan")
+	case m.inProjectPkg():
+		pairs = append(pairs, "s", "sort", "f", "status", "/", "filter", "w", "home")
+	case m.inProject():
+		pairs = append(pairs, "s", "sort", "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home")
+	default:
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home")
+	}
+	switch m.activeTab() {
+	case tabVersions:
+		pairs = append(pairs, "y", "open page", "J K", "scroll changelog")
+	case tabSecurity:
+		if m.currentFix() != "" && m.sidePart == 0 {
+			pairs = append(pairs, "c", "copy the fix")
+		}
+		pairs = append(pairs, "J K", "scroll detail")
+	case tabLinks:
+		if m.allAgents {
+			pairs = append(pairs, "A", "installed only")
+		} else {
+			pairs = append(pairs, "A", "all agents")
+		}
+	}
+	return append(pairs, "?", "help")
+}
+
+// enterLabel is what enter does where the cursor is: the panel decides, and the
+// footer says so instead of promising one thing for both.
+func (m model) enterLabel() string {
+	switch {
+	case m.focus == focusTable:
+		return "details"
+	case m.activeTab() == tabVersions && !m.inProjectPkg():
+		return "install it"
+	case m.activeTab() == tabLinks:
+		return "link or unlink"
+	case m.depList() != nil:
+		return "its advisories"
+	}
+	return "read"
+}
+
+// fitKeys renders the pairs that fit in width and always the last one, so the
+// help key is there on a narrow screen even when the row's actions are many.
+func fitKeys(width int, pairs []string) string {
+	if len(pairs) < 2 {
+		return ""
+	}
+	sep := faint().Render("  ")
+	last := keys(pairs[len(pairs)-2:]...)
+	limit := width - lipgloss.Width(last) - lipgloss.Width(sep)
+	out := ""
+	for i := 0; i+3 < len(pairs); i += 2 {
+		p := keys(pairs[i], pairs[i+1])
+		cand := p
+		if out != "" {
+			cand = out + sep + p
+		}
+		if lipgloss.Width(cand) > limit {
+			break
+		}
+		out = cand
+	}
+	if out == "" {
+		return last
+	}
+	return out + sep + last
+}
+
 func (m model) footer() string {
+	// A notice sits at the right of this line, so the keys have to leave it room.
+	reserve := 0
+	if m.notice != "" {
+		reserve = lipgloss.Width(faint().Render(m.notice+" ")) + 1
+	}
 	var line string
 	switch pop := m.popup(); {
 	case pop == popHelp && m.helpHidden() > 0:
@@ -258,30 +345,11 @@ func (m model) footer() string {
 		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
-	case m.focus == focusSide && isImageRow(m.curRow().kind):
-		line = keys("↑↓", "select", "[ ]", "tabs", "x", "scan with trivy", "esc", "back", "? ", "help")
-	case m.focus == focusTable && (m.curRow().kind == rowImages || m.curRow().kind == rowMachineImages):
-		line = keys("↑↓", "move", "enter", "details", "f", "state", "/", "filter", "w", "copy name", "x", "scan", "? ", "help")
-	case m.focus == focusTable && m.inProject():
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
-	case m.focus == focusTable:
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "D", "remove", "?", "help")
-	case m.activeTab() == tabVersions && m.inProjectPkg():
-		line = keys("↑↓", "version", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help") + faint().Render("   kho doesn't change projects")
-	case m.activeTab() == tabVersions:
-		line = keys("↑↓", "version", "enter", "install it", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabSecurity && m.sidePart == 0 && m.currentFix() != "":
-		line = keys("↑↓", "select", "enter", "read", "c", "copy the fix", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabLinks && m.allAgents:
-		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "installed only", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabLinks:
-		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "all agents", "[ ]", "tabs", "?", "help")
-	case m.sideListLen() >= 0 && m.sidePart == 0:
-		line = keys("↑↓", "select", "enter", "read", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
-	case m.depList() != nil:
-		line = keys("↑↓ J K", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
 	default:
-		line = keys("↑↓", "scroll", "J K", "scroll detail", "esc", "back", "[ ]", "tabs", "w", "home", "?", "help")
+		line = fitKeys(max(m.width-2-reserve, 24), m.rowKeys())
+		if m.inProjectPkg() && m.activeTab() == tabVersions {
+			line += faint().Render("   kho doesn't change projects")
+		}
 	}
 	line = " " + line
 	if m.notice != "" {
