@@ -1010,13 +1010,23 @@ type RemoveResult struct {
 // rather than a silent success.
 func (env Env) remove(args []string) int {
 	fs := env.flags("remove")
+	// The flag package would print its own error and a flag dump to stderr;
+	// kho prints one line instead, and none of it when JSON was asked for.
+	fs.SetOutput(io.Discard)
 	yes := fs.Bool("yes", false, "run it; without this kho only prints what it would run")
 	force := fs.Bool("force", false, "override Homebrew's refusal when another installed formula needs it")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
 	rest, err := parse(fs, args)
 	if err != nil || len(rest) != 1 {
-		fmt.Fprintln(env.Err, "usage: kho remove <source>/<name> [--yes] [--force] [--json]")
-		return ExitUsage
+		// A caller that asked for JSON gets JSON even when the arguments are
+		// wrong, so nothing has to parse the usage text.
+		reason := "usage: kho remove <source>/<name> [--yes] [--force] [--json]"
+		if err != nil {
+			reason = err.Error()
+		}
+		// A flag parse stops at the first unknown flag, so --json may not have
+		// been read yet when the arguments are already wrong.
+		return env.removeFail(*asJSON || slices.Contains(args, "--json"), "", reason, ExitUsage)
 	}
 	ref := rest[0]
 	source, _, hasSource := strings.Cut(ref, "/")

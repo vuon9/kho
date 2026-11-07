@@ -168,6 +168,10 @@ func TestRemoveJSON(t *testing.T) {
 			RemoveResult{Package: "pipx/nope", Error: "pipx/nope is not installed"}},
 		{"a usage mistake answers in JSON too", []string{"remove", "frob/widget", "--json"}, nil, ExitUsage,
 			RemoveResult{Package: "frob/widget", Error: `"frob" is not a source kho knows; try brew, cask, npm, composer, pipx, uv, mise, go or skills`}},
+		{"bad arguments answer in JSON too", []string{"remove", "--json"}, nil, ExitUsage,
+			RemoveResult{Error: "usage: kho remove <source>/<name> [--yes] [--force] [--json]"}},
+		{"an unknown flag answers in JSON too", []string{"remove", "pipx/bramble", "--dry-run", "--json"}, nil, ExitUsage,
+			RemoveResult{Error: "flag provided but not defined: -dry-run"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
