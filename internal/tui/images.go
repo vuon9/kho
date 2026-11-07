@@ -9,11 +9,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-
 	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/trivy"
 	"github.com/vuon9/kho/internal/vuln"
@@ -84,48 +82,60 @@ type imagesMsg struct {
 	refs    []image.Ref
 	machine []image.Ref
 	tags    map[string][]image.Tag
+	local   []image.LocalImage
 	err     error
+}
+
+// imageFactsMsg is what the registries said, arriving after the table is
+// already on screen: the rows say asking until it lands.
+type imageFactsMsg struct {
+	gen     int
+	refs    []image.Ref
+	machine []image.Ref
 }
 
 // imagesCmd reads the project's images and asks about each one, off the UI
 // goroutine. It never pulls, builds or runs anything.
 func (m model) imagesCmd() tea.Cmd {
-	gen, dir, ask := m.imgGen, m.dir, m.imgAsk
+	gen, dir := m.imgGen, m.dir
 	return func() tea.Msg {
 		ctx := context.Background()
-		local, lerr := listImages(ctx)
-		asked := lerr == nil
-		msg := imagesMsg{gen: gen, tags: map[string][]image.Tag{}}
+		msg := imagesMsg{gen: gen}
+		local, err := listImages(ctx)
+		asked := err == nil
+		msg.local = local
+		if asked {
+			// The machine's own images without the registries, so the table
+			// has something to show before anything is asked about them.
+			msg.machine = machineImages(ctx, local, nil)
+		}
+		if dir != "" {
+			scan, ferr := findImages(ctx, dir)
+			if ferr != nil {
+				msg.err = ferr
+			} else {
+				msg.refs = inspectImages(ctx, scan.Refs, local, asked, nil)
+			}
+		}
+		return msg
+	}
+}
+
+// factsCmd asks the registries what the rows are, once they are on screen.
+// Tags are not fetched here: they belong to the Versions tab, which asks for
+// them when it is opened.
+func (m model) factsCmd() tea.Cmd {
+	gen, ask, refs, local := m.imgGen, m.imgAsk, m.images, m.localImgs
+	return func() tea.Msg {
+		ctx := context.Background()
+		msg := imageFactsMsg{gen: gen}
+		asked := local != nil
 		if asked {
 			msg.machine = machineImages(ctx, local, ask)
 		}
-		if dir != "" {
-			scan, err := findImages(ctx, dir)
-			if err != nil {
-				msg.err = err
-			} else {
-				msg.refs = inspectImages(ctx, scan.Refs, local, asked, ask)
-			}
+		if len(refs) > 0 {
+			msg.refs = inspectImages(ctx, refs, local, asked, ask)
 		}
-		// Every image gets its tags now, so Versions is filled before it is
-		// opened; a repository that does not answer is asked again by v.
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		for _, r := range slices.Concat(msg.refs, msg.machine) {
-			if r.Unresolved || r.Registry == "" || r.Repo == "scratch" {
-				continue
-			}
-			wg.Go(func() {
-				tags := tagsFor(ctx, r, ask)
-				if tags == nil {
-					return
-				}
-				mu.Lock()
-				msg.tags[r.Canonical()] = tags
-				mu.Unlock()
-			})
-		}
-		wg.Wait()
 		return msg
 	}
 }
@@ -135,9 +145,27 @@ func (m *model) gotImages(msg imagesMsg) {
 		return
 	}
 	m.images, m.machineImgs, m.imgErr, m.imgBusy = msg.refs, msg.machine, msg.err, false
+	if msg.local != nil {
+		m.localImgs, m.imgBusy = msg.local, true
+	}
 	if msg.tags != nil {
 		m.imgTags = msg.tags
 	}
+	m.reindex()
+}
+
+// gotFacts replaces the rows with what the registries answered.
+func (m *model) gotFacts(msg imageFactsMsg) {
+	if msg.gen != m.imgGen {
+		return
+	}
+	if len(msg.refs) > 0 {
+		m.images = msg.refs
+	}
+	if len(msg.machine) > 0 {
+		m.machineImgs = msg.machine
+	}
+	m.imgBusy = false
 	m.reindex()
 }
 
@@ -196,6 +224,9 @@ func unverified(r image.Ref) bool {
 
 // hiddenUnverified is how many the table is leaving out.
 func (m model) hiddenUnverified() int {
+	if m.imgBusy {
+		return 0
+	}
 	n := 0
 	for _, r := range m.imgList() {
 		if unverified(r) {
@@ -210,7 +241,7 @@ func (m model) imgRows() []image.Ref {
 	var out []image.Ref
 	only := m.imgStatus() == imgStatusUntracked
 	for _, r := range m.imgList() {
-		if unverified(r) && !only {
+		if unverified(r) && !only && !m.imgBusy {
 			continue
 		}
 		if f := m.filter(); f != "" && !strings.Contains(strings.ToLower(r.Image), strings.ToLower(f)) {
@@ -286,7 +317,18 @@ func presenceMark(r image.Ref) string {
 }
 
 // imageState paints the state the way the package table paints a status. The
+// asking is the state of a row whose registry has not answered yet: it is not
+// unverified, it is unanswered.
+func (m model) asking(r image.Ref) bool { return m.imgBusy && r.State == image.Unknown }
+
 // table gets a short word; the sidebar spells it out.
+func (m model) imageState(r image.Ref) string {
+	if m.asking(r) {
+		return faint().Render("· asking")
+	}
+	return imageState(r)
+}
+
 func imageState(r image.Ref) string {
 	switch r.State {
 	case image.EOL, image.Gone:
@@ -319,6 +361,13 @@ func shortState(r image.Ref) string {
 		return "· unverified"
 	}
 	return "· build"
+}
+
+func (m model) stateWord(r image.Ref) string {
+	if m.asking(r) {
+		return "· asking"
+	}
+	return stateWord(r)
 }
 
 func stateWord(r image.Ref) string {
@@ -382,8 +431,13 @@ func (m model) imageTableLines() []string {
 	}
 	if len(rows) == 0 {
 		why := "no images in this project"
-		if m.imgBusy {
+		switch {
+		case m.imgBusy:
 			why = "reading Dockerfiles and compose files"
+		case m.hiddenUnverified() > 0:
+			// Every row kho could not identify is hidden, and saying the
+			// project has none would be a lie.
+			why = fmt.Sprintf("%d images kho could not identify; f shows them", m.hiddenUnverified())
 		}
 		lines = append(lines, faint().Render(" "+why))
 		return lines
@@ -400,7 +454,7 @@ func (m model) imageTableLines() []string {
 		if upstreamW > 0 {
 			line += " " + pad(ansi.Truncate(r.Upstream, upstreamW, "…"), upstreamW)
 		}
-		line += " " + imageState(r)
+		line += " " + m.imageState(r)
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
 		}
@@ -741,7 +795,7 @@ func (m model) imageLines(r image.Ref) []line {
 			add("support", "supported until "+r.EOL.Format("2006-01-02"), "")
 		}
 	}
-	add("state", stateWord(r), "")
+	add("state", m.stateWord(r), "")
 	if r.Note != "" {
 		add("note", r.Note, "")
 	}

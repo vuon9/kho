@@ -234,6 +234,7 @@ type model struct {
 	// scan is still running. imgAsk is what answers the registries.
 	images      []image.Ref
 	machineImgs []image.Ref
+	localImgs   []image.LocalImage
 	imgTags     map[string][]image.Tag
 	imgVulns    map[string][]trivy.Vuln
 	imgScanning map[string]bool
@@ -477,6 +478,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case imagesMsg:
 		m.gotImages(msg)
+		if msg.local != nil && msg.err == nil {
+			return m, m.factsCmd()
+		}
+		return m, nil
+	case imageFactsMsg:
+		m.gotFacts(msg)
 		return m, nil
 	case projectMsg:
 		cmds = append(cmds, m.gotProject(msg))
