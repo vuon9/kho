@@ -22,6 +22,7 @@ import (
 	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/trivy"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
@@ -230,6 +231,10 @@ type model struct {
 	// scan is still running. imgAsk is what answers the registries.
 	images      []image.Ref
 	machineImgs []image.Ref
+	imgTags     map[string][]image.Tag
+	imgVulns    map[string][]trivy.Vuln
+	imgScanning map[string]bool
+	imgScanErr  map[string]string
 	imgErr      error
 	imgBusy     bool
 	imgGen      int
@@ -298,7 +303,9 @@ var (
 
 func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
-		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{}}
+		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
+		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
+		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}}
 	m.reset()
 	return m
 }
@@ -449,6 +456,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(m.busy, msg.name)
 		m.reindex()
+	case imageScanMsg:
+		m.imgScanning[msg.key] = false
+		if msg.err != nil {
+			m.imgScanErr[msg.key] = msg.err.Error()
+		} else {
+			delete(m.imgScanErr, msg.key)
+			m.imgVulns[msg.key] = msg.vulns
+		}
+		return m, nil
 	case imagesMsg:
 		m.gotImages(msg)
 		return m, nil
@@ -848,8 +864,23 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.scrollDetail(map[string]int{"J": 1, "ctrl+d": m.layout().bottomRows / 2}[key])
 	case "K", "ctrl+u":
 		m.scrollDetail(-map[string]int{"K": 1, "ctrl+u": m.layout().bottomRows / 2}[key])
+	case "x":
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
+			key := r.Canonical()
+			if m.imgScanning[key] {
+				return nil, false
+			}
+			m.imgScanning[key] = true
+			m.setTab(tabSecurity)
+			m.focus = focusSide
+			ref := r.Image
+			return func() tea.Msg {
+				vulns, err := scanImage(context.Background(), ref)
+				return imageScanMsg{key: key, vulns: vulns, err: err}
+			}, false
+		}
 	case "w":
-		if r, ok := m.currentImg(); ok && m.curRow().kind == rowImages {
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
 			return m.copy(r.Image), false
 		}
 		return m.openHome(), false
@@ -956,6 +987,10 @@ func (m *model) move(key string) {
 // list and enter acts on the selection: install a version, toggle a link, or
 // step down into an advisory.
 func (m *model) moveSide(key string, step int) {
+	if isImageRow(m.curRow().kind) {
+		m.moveImageSide(key, step)
+		return
+	}
 	list := m.sideListLen() >= 0
 	switch {
 	case key == "enter" && list && m.sidePart == 0:

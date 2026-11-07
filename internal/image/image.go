@@ -215,3 +215,10 @@ func (r Ref) Product() string {
 	repo := strings.TrimPrefix(r.CanonicalRepo(), r.Registry+"/")
 	return products[repo]
 }
+
+// Tag is one tag a registry publishes for a repository.
+type Tag struct {
+	Name   string    `json:"name"`
+	Pushed time.Time `json:"pushed,omitzero"`
+	Digest string    `json:"digest,omitempty"`
+}

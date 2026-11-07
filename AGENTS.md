@@ -10,7 +10,8 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 | `internal/provider` | One adapter per package manager, behind `Provider`: `List` (fast, local), `Latest` (may use the network), `Deps`, `Versions`. Also `InstallCmd`, skill links, OSV query mapping. |
 | `internal/project` | Finds a folder's lockfiles and reads them into packages: `Find` (the walk, its caps and the git-root fallback), one reader per lockfile format, and `FixCommand`. |
 | `internal/image` | The images a project names: `FROM` and `image:` parsers, the docker CLI list, and the state each reference gets. Never pulls, builds or runs one. |
-| `internal/registry` | Registry manifests and config blobs, endoflife.date lines, and their cache. |
+| `internal/registry` | Registry manifests and config blobs, published tags, endoflife.date lines, and their cache. |
+| `internal/trivy` | Runs the trivy scanner over one image when a person asks, and reads its JSON. kho never reads inside an image itself. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
 | `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `history`, `list`, `version`. |
@@ -36,7 +37,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
-- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`, `findImages`, `listImages`, `inspectImages`, `machineImages`.
+- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`, `findImages`, `listImages`, `inspectImages`, `machineImages`, `tagsFor`, `scanImage`, `trivyAvailable`.
 - The rail is a list of `railRow`s from `railRows()`: All, each provider, the machine's docker row, then the project's header and, when open, its parts, then the project's images. Filters and statuses are keyed by `railRow.key`, never by position. Project packages live in `m.pkgs[projKey]`, and `pkgKey` includes the lockfile and version for them.
 - Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it before kho exits, so kho never quits with one cut off and unlogged.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.

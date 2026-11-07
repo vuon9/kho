@@ -9,6 +9,7 @@ import (
 
 	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
+	"github.com/vuon9/kho/internal/trivy"
 )
 
 // withImages loads a project and the images its files name, with the states
@@ -93,9 +94,14 @@ func TestImagesFilter(t *testing.T) {
 	if !strings.Contains(got, "⚠ past line") {
 		t.Errorf("the title should name the filter:\n%s", got)
 	}
+	// past line, stale, tracked, untracked, on disk, not pulled.
 	m = press(t, m, "f", "f", "f")
-	if !strings.Contains(screen(m), "python:3.9-slim") || strings.Contains(screen(m), "node:22-alpine") {
-		t.Errorf("the not pulled filter should show only what docker does not hold:\n%s", screen(m))
+	if got := screen(m); !strings.Contains(got, "◌ untracked") || !strings.Contains(got, "${BASE_IMAGE}") || strings.Contains(got, "python:3.9-slim") {
+		t.Errorf("the untracked filter should show only what kho cannot follow:\n%s", got)
+	}
+	m = press(t, m, "f", "f")
+	if got := screen(m); !strings.Contains(got, "○ not pulled") || !strings.Contains(got, "python:3.9-slim") || strings.Contains(got, "node:22-alpine") {
+		t.Errorf("the not pulled filter should show only what docker does not hold:\n%s", got)
 	}
 }
 
@@ -111,7 +117,7 @@ func TestImagesKeywordFilter(t *testing.T) {
 func TestImagesSidebar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	got := screen(m)
-	for _, want := range []string{"Image", "upstream", "3.9.25", "not pulled", "ended 2025-10-31", "never what is inside"} {
+	for _, want := range []string{"Info", "Versions", "Security", "upstream", "3.9.25", "not pulled", "ended 2025-10-31", "never what is inside"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("sidebar does not show %q:\n%s", want, got)
 		}
@@ -183,5 +189,76 @@ func TestMachineImagesRow(t *testing.T) {
 	}
 	if strings.Contains(got, "python:3.9-slim") {
 		t.Errorf("the project's images must not appear in the machine list:\n%s", got)
+	}
+}
+
+// The Versions tab lists what the repository publishes, with the tag in use
+// marked.
+func TestImageVersionsTab(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
+		"docker.io/library/python:3.9-slim": {
+			{Name: "3.13-slim", Pushed: time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)},
+			{Name: "3.9-slim", Pushed: time.Date(2025, 10, 20, 0, 0, 0, 0, time.UTC)},
+		},
+	}})
+	m = press(t, m, "v")
+	got := screen(m)
+	for _, want := range []string{"tags published by docker.io", "3.13-slim", "3.9-slim", "2026-11-05"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("versions tab should show %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "→ 3.9-slim") {
+		t.Errorf("the tag in use should be marked:\n%s", got)
+	}
+}
+
+// The Security tab says what kho cannot know, and lists what a scan found.
+func TestImageSecurityTab(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	trivyAvailable = func() bool { return true }
+	defer func() { trivyAvailable = trivy.Available }()
+	m = press(t, m, "a")
+	got := screen(m)
+	for _, want := range []string{"does not read inside an image", "scan this image with trivy"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the security tab should say %q:\n%s", want, got)
+		}
+	}
+	key := m.imgRows()[0].Canonical()
+	m = update(t, m, imageScanMsg{key: key, vulns: []trivy.Vuln{
+		{ID: "CVE-2025-1234", Severity: "CRITICAL", Package: "openssl", Installed: "3.0.1", Fixed: "3.0.2"},
+		{ID: "CVE-2025-9999", Severity: "LOW", Package: "zlib", Installed: "1.2.11"},
+	}})
+	got = screen(m)
+	for _, want := range []string{"2 findings from trivy", "CVE-2025-1234", "openssl", "CVE-2025-9999"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a scan result should show %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "CVE-2025-1234") > strings.Index(got, "CVE-2025-9999") {
+		t.Errorf("critical should sort above low:\n%s", got)
+	}
+}
+
+// A scan result splits the sidebar like a package's: the list above, the
+// finding below.
+func TestImageSecuritySplit(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	key := m.imgRows()[0].Canonical()
+	m = update(t, m, imageScanMsg{key: key, vulns: []trivy.Vuln{
+		{ID: "CVE-2025-1234", Severity: "CRITICAL", Package: "openssl", Installed: "3.0.1",
+			Fixed: "3.0.2", Title: "openssl: a bug", URL: "https://example.test/CVE-2025-1234"},
+	}})
+	m = press(t, m, "a")
+	got := screen(m)
+	for _, want := range []string{"🛡 CVE-2025-1234", "openssl", "3.0.2", "openssl: a bug", "from trivy"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the split sidebar should show %q:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "├─") {
+		t.Errorf("the finding should sit under a divider:\n%s", got)
 	}
 }

@@ -27,8 +27,10 @@ type Client struct {
 	// Base turns a registry host into the URL to ask. Tests point it at a
 	// local server.
 	Base func(host string) string
-	// LifeBase is where endoflife.date lives, for tests.
+	// LifeBase is where endoflife.date lives, and HubBase where its web API
+	// lives, for tests.
 	LifeBase string
+	HubBase  string
 	// NoCache asks the registries again, for --refresh.
 	NoCache bool
 }

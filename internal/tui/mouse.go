@@ -54,7 +54,7 @@ func (m model) layout() layout {
 	l.bodyH = max(m.height-4, 0)
 	l.rows = max(l.bodyH-5, 0)
 	l.topRows = max(l.bodyH-2, 0)
-	if m.hasBottom() {
+	if m.hasBottom() || m.imageHasBottom() {
 		l.topRows = max((l.bodyH-3)/2, 1)
 		switch {
 		case m.split > 0:

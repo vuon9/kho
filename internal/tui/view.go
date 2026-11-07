@@ -258,8 +258,10 @@ func (m model) footer() string {
 		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
+	case m.focus == focusSide && isImageRow(m.curRow().kind):
+		line = keys("↑↓", "select", "[ ]", "tabs", "x", "scan with trivy", "esc", "back", "? ", "help")
 	case m.focus == focusTable && (m.curRow().kind == rowImages || m.curRow().kind == rowMachineImages):
-		line = keys("↑↓", "move", "enter", "details", "f", "state", "/", "filter", "w", "copy name", "r", "rescan", "? ", "help")
+		line = keys("↑↓", "move", "enter", "details", "f", "state", "/", "filter", "w", "copy name", "x", "scan", "? ", "help")
 	case m.focus == focusTable && m.inProject():
 		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
 	case m.focus == focusTable:
