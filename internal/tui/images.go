@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"os/exec"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -92,28 +95,31 @@ func (m model) imagesCmd() tea.Cmd {
 		ctx := context.Background()
 		local, lerr := listImages(ctx)
 		asked := lerr == nil
-		msg := imagesMsg{gen: gen}
+		msg := imagesMsg{gen: gen, tags: map[string][]image.Tag{}}
 		if asked {
 			msg.machine = machineImages(ctx, local, ask)
 		}
-		if dir == "" {
-			return msg
+		if dir != "" {
+			scan, err := findImages(ctx, dir)
+			if err != nil {
+				msg.err = err
+			} else {
+				msg.refs = inspectImages(ctx, scan.Refs, local, asked, ask)
+			}
 		}
-		scan, err := findImages(ctx, dir)
-		if err != nil {
-			msg.err = err
-			return msg
-		}
-		msg.refs = inspectImages(ctx, scan.Refs, local, asked, ask)
-		msg.tags = map[string][]image.Tag{}
+		// Every image gets its tags now, so Versions is filled before it is
+		// opened; a repository that does not answer is asked again by v.
 		var mu sync.Mutex
 		var wg sync.WaitGroup
-		for _, r := range msg.refs {
+		for _, r := range slices.Concat(msg.refs, msg.machine) {
 			if r.Unresolved || r.Registry == "" || r.Repo == "scratch" {
 				continue
 			}
 			wg.Go(func() {
 				tags := tagsFor(ctx, r, ask)
+				if tags == nil {
+					return
+				}
 				mu.Lock()
 				msg.tags[r.Canonical()] = tags
 				mu.Unlock()
@@ -512,12 +518,85 @@ func (m model) imageTab() int {
 
 func (m model) imageTabs() string { return m.tabBar() }
 
+// autoScan starts the scan the first time an image's Security tab opens, so
+// the tab answers by itself instead of asking for a key press. A failed or
+// finished scan is not repeated; x runs it again.
+func (m *model) autoScan() tea.Cmd {
+	r, ok := m.currentImg()
+	if !ok || m.imageTab() != tabSecurity {
+		return nil
+	}
+	key := r.Canonical()
+	if m.imgScanning[key] || m.imgVulns[key] != nil || m.imgScanErr[key] != "" || !trivyAvailable() {
+		return nil
+	}
+	m.imgScanning[key] = true
+	ref := r.Image
+	return func() tea.Msg {
+		vulns, err := scanImage(context.Background(), ref)
+		return imageScanMsg{key: key, vulns: vulns, err: err}
+	}
+}
+
+// pullCmd is the command that fetches one tag. Tests swap it.
+var pullCmd = func(ref string) *exec.Cmd { return exec.Command("docker", "pull", ref) }
+
+// askPull is enter on a version: the confirmation a package install gets,
+// for the one change kho makes to an image, which is fetching it.
+func (m *model) askPull() {
+	r, ok := m.currentImg()
+	if !ok || m.imageTab() != tabVersions {
+		return
+	}
+	t, ok := at(m.sortedTags(r), m.sideCursor)
+	if !ok {
+		return
+	}
+	target := r.CanonicalRepo() + ":" + t.Name
+	title := "⬇ Pull " + r.Name() + " as " + t.Name
+	lines := []string{
+		bold().Render(r.Image) + faint().Render(" → ") + green().Render(t.Name),
+		"",
+		faint().Render("runs  ") + "docker pull " + target,
+		"",
+		faint().Render("the image on disk stays until you remove it"),
+		"",
+		accent().Render("y") + faint().Render(" run it   ") + accent().Render("n") + faint().Render(" cancel"),
+	}
+	m.confirm = &confirm{title: title + "?", lines: lines,
+		run: startInstall(title, pullCmd(target), m.log, installedMsg{"docker", r.Image, t.Name, nil})}
+}
+
+// sortedTags is the tags of an image in the order the panel shows them, with
+// the tag in use kept in front when the repository did not list it.
+func (m model) sortedTags(r image.Ref) []image.Tag {
+	tags := slices.Clone(m.imgTags[r.Canonical()])
+	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
+		// The tag in use always shows, in its own place in the order, even
+		// when the repository lists more than kho asked for.
+		tags = append(tags, image.Tag{Name: r.Tag})
+	}
+	tagOrder(tags)
+	return tags
+}
+
+// tagURL is where a person reads one tag, for the registries that publish a
+// page for it.
+func tagURL(r image.Ref, tag string) string {
+	if r.Registry == "docker.io" {
+		return "https://hub.docker.com/r/" + r.RemoteRepo() + "/tags?name=" + url.QueryEscape(tag)
+	}
+	return ""
+}
+
 // moveImageSide scrolls the image sidebar. The tabs that list things move
 // through them; there is nothing to install or open, so enter only moves
 // focus back to the list.
 func (m *model) moveImageSide(key string, step int) {
 	n := m.imageListLen()
 	switch {
+	case key == "enter" && m.imageTab() == tabVersions && n > 0:
+		m.askPull()
 	case key == "home" || key == "g":
 		m.sideCursor, m.sideOffset = 0, 0
 	case n > 0 && (key == "up" || key == "k" || key == "down" || key == "j" || key == "pgup" || key == "pgdown"):
@@ -631,10 +710,42 @@ func (m model) imageLines(r image.Ref) []line {
 	return lines
 }
 
+// tagOrder sorts tags the way a person reads them: the highest version first,
+// then the most recently published within one version, then by name. Tags
+// with no version, like latest or trixie, come after the numbered ones.
+func tagOrder(tags []image.Tag) {
+	sort.SliceStable(tags, func(i, j int) bool {
+		vi, vj := versionOf(tags[i].Name), versionOf(tags[j].Name)
+		if (vi == "") != (vj == "") {
+			return vi != ""
+		}
+		if vi != vj {
+			if c := vuln.Compare(vi, vj); c != 0 {
+				return c > 0
+			}
+		}
+		if !tags[i].Pushed.Equal(tags[j].Pushed) {
+			return tags[i].Pushed.After(tags[j].Pushed)
+		}
+		return tags[i].Name < tags[j].Name
+	})
+}
+
+var versionPrefix = regexp.MustCompile(`^v?(\d+(?:\.\d+)*)`)
+
+// versionOf is the numbers a tag starts with, as in 3.12.16 from
+// 3.12.16-alpine, or "" when the tag is a word.
+func versionOf(name string) string {
+	if m := versionPrefix.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // imageVersionLines lists the tags the repository publishes, newest first,
 // with the one in use marked.
 func (m model) imageVersionLines(r image.Ref) []line {
-	tags := slices.Clone(m.imgTags[r.Canonical()])
+	tags := m.sortedTags(r)
 	if len(tags) == 0 {
 		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
 			return plain(faint().Render(" this image has no repository to ask"))
@@ -646,14 +757,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 	}
 	// Newest line first, and the tag in use always shows, even when the
 	// repository lists more than kho asked for.
-	// Numbered tags first, newest line at the top, then the named variants.
-	numbered := func(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '9' }
-	sort.SliceStable(tags, func(i, j int) bool {
-		if numbered(tags[i].Name) != numbered(tags[j].Name) {
-			return numbered(tags[i].Name)
-		}
-		return vuln.Compare(tags[i].Name, tags[j].Name) > 0
-	})
+	tagOrder(tags)
 	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
 		tags = append([]image.Tag{{Name: r.Tag}}, tags...)
 	}

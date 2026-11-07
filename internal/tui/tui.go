@@ -526,6 +526,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
+		if msg.provider == "docker" {
+			m.imgGen++
+			m.imgBusy = true
+			cmds = append(cmds, m.imagesCmd())
+		}
 	case linkedMsg:
 		m.notice, m.linksOf = msg.done, ""
 		if msg.err != nil {
@@ -583,6 +588,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, m.load())
 	if m.working() {
 		cmds = append(cmds, m.startTicking())
+	}
+	if cmd := m.autoScan(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -898,6 +906,14 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		return m.openHome(), false
 	case "y":
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imageTab() == tabVersions {
+			if t, ok := at(m.sortedTags(r), m.sideCursor); ok {
+				if u := tagURL(r, t.Name); u != "" {
+					return open(u), false
+				}
+			}
+			return nil, false
+		}
 		return m.openReleasePage(), false
 	case "r":
 		m.reset()

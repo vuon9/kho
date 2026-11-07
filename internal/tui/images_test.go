@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -18,6 +20,9 @@ import (
 // the registries would have given them.
 func withImages(t *testing.T, refs ...image.Ref) model {
 	t.Helper()
+	// A test must never reach the real scanner or the network.
+	scanImage = func(context.Context, string) ([]trivy.Vuln, error) { return nil, nil }
+	trivyAvailable = func() bool { return true }
 	scan := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
 		{Path: "Dockerfile", Manager: "docker"},
 	}}}}
@@ -219,8 +224,6 @@ func TestImageVersionsTab(t *testing.T) {
 // The Security tab says what kho cannot know, and lists what a scan found.
 func TestImageSecurityTab(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
-	trivyAvailable = func() bool { return true }
-	defer func() { trivyAvailable = trivy.Available }()
 	m = press(t, m, "a")
 	got := screen(m)
 	for _, want := range []string{"does not read inside an image", "scan this image with trivy"} {
@@ -299,5 +302,79 @@ func TestImageTabStatus(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(box, "\n"), "→ 3.9-slim") {
 		t.Errorf("the tag in use should still be listed:\n%s", strings.Join(box, "\n"))
+	}
+}
+
+// Opening Security scans without being asked.
+func TestImageAutoScan(t *testing.T) {
+	scans := 0
+	m := onImages(t, withImages(t, sampleImages()...))
+	scanImage = func(context.Context, string) ([]trivy.Vuln, error) {
+		scans++
+		return []trivy.Vuln{{ID: "CVE-2025-1", Severity: "HIGH", Package: "musl"}}, nil
+	}
+	m = press(t, m, "a")
+	if scans != 1 {
+		t.Fatalf("opening Security should scan once, scanned %d", scans)
+	}
+	if got := screen(m); !strings.Contains(got, "CVE-2025-1") {
+		t.Errorf("the scan result should show without pressing anything else:\n%s", got)
+	}
+}
+
+// Enter on a version asks before pulling it, the way a package install does.
+func TestImageVersionPull(t *testing.T) {
+	var asked string
+	pullCmd = func(ref string) *exec.Cmd { asked = ref; return exec.Command("true") }
+	defer func() { pullCmd = func(ref string) *exec.Cmd { return exec.Command("docker", "pull", ref) } }()
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
+		"docker.io/library/python:3.9-slim": {{Name: "3.13-slim"}},
+	}})
+	m = press(t, m, "v")
+	m.focus = focusSide
+	m = press(t, m, "enter")
+	if m.confirm == nil {
+		t.Fatal("enter on a version should ask first")
+	}
+	if asked != "docker.io/library/python:3.13-slim" {
+		t.Errorf("pulled %q, want docker.io/library/python:3.13-slim", asked)
+	}
+	dialog := strings.Join(m.confirm.lines, "\n")
+	if !strings.Contains(dialog, "docker pull docker.io/library/python:3.13-slim") {
+		t.Errorf("the dialog should name the command:\n%s", dialog)
+	}
+}
+
+// y opens the page for the selected tag.
+func TestImageVersionOpensOnTheWeb(t *testing.T) {
+	opened = nil
+	defer func() { openURL = func(string) error { return nil } }()
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
+		"docker.io/library/python:3.9-slim": {{Name: "3.13-slim"}},
+	}})
+	m = press(t, m, "v")
+	m = press(t, m, "y")
+	if len(opened) != 1 || !strings.Contains(opened[0], "hub.docker.com/r/library/python/tags?name=3.13-slim") {
+		t.Errorf("y should open the tag page, opened %v", opened)
+	}
+}
+
+func TestTagOrder(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
+	tags := []image.Tag{
+		{Name: "3.12.16-alpine", Pushed: day(1)},
+		{Name: "3.13.2", Pushed: day(1)},
+		{Name: "latest", Pushed: day(5)},
+		{Name: "3.12.16-bookworm", Pushed: day(9)},
+		{Name: "3.13.2-alpine", Pushed: day(3)},
+	}
+	tagOrder(tags)
+	want := []string{"3.13.2-alpine", "3.13.2", "3.12.16-bookworm", "3.12.16-alpine", "latest"}
+	for i, w := range want {
+		if tags[i].Name != w {
+			t.Fatalf("order %v, want %v", tags, want)
+		}
 	}
 }
