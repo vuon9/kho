@@ -256,6 +256,10 @@ func (c *Client) remembered(host string) string {
 func (c *Client) remember(host, challenge string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// A Client built as a literal, which tests do, has no maps yet.
+	if c.demands == nil {
+		c.demands = map[string]string{}
+	}
 	c.demands[host] = challenge
 }
 
@@ -300,6 +304,9 @@ func (c *Client) token(ctx context.Context, challenge, repo string) (string, err
 		return "", err
 	}
 	c.mu.Lock()
+	if c.tokens == nil {
+		c.tokens = map[string]string{}
+	}
 	c.tokens[key] = tok
 	c.mu.Unlock()
 	return tok, nil
