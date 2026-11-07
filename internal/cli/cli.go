@@ -1021,42 +1021,47 @@ func (env Env) remove(args []string) int {
 		// A caller that asked for JSON gets JSON even when the arguments are
 		// wrong, so nothing has to parse the usage text.
 		reason := "usage: kho remove <source>/<name> [--yes] [--force] [--json]"
-		if err != nil {
+		if err != nil && !errors.Is(err, flag.ErrHelp) {
 			reason = err.Error()
 		}
 		// A flag parse stops at the first unknown flag, so --json may not have
 		// been read yet when the arguments are already wrong.
-		return env.removeFail(*asJSON || slices.Contains(args, "--json"), "", reason, ExitUsage)
+		return env.removeFail(*asJSON || hasFlag(args, "--json"), "", "", reason, ExitUsage)
 	}
 	ref := rest[0]
 	source, _, hasSource := strings.Cut(ref, "/")
 	switch {
 	case !hasSource:
-		return env.removeFail(*asJSON, ref, fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitUsage)
+		return env.removeFail(*asJSON, ref, "", fmt.Sprintf("%q is not source/name, like pipx/ruff", ref), ExitUsage)
 	case !provider.IsSource(source):
-		return env.removeFail(*asJSON, ref, fmt.Sprintf("%q is not a source kho knows; try %s", source, provider.SourceList()), ExitUsage)
+		return env.removeFail(*asJSON, ref, "", fmt.Sprintf("%q is not a source kho knows; try %s", source, provider.SourceList()), ExitUsage)
 	case *force && source != "brew":
-		return env.removeFail(*asJSON, ref, fmt.Sprintf("--force is for Homebrew formulae; %s has no dependency check to override", source), ExitUsage)
+		return env.removeFail(*asJSON, ref, "", fmt.Sprintf("--force is for Homebrew formulae; %s has no dependency check to override", source), ExitUsage)
 	}
 	// Only what is installed matters here, so the registries are not asked.
 	packages, errs := env.inventoryList(context.Background())
 	p, err := find(packages, ref)
 	if err != nil {
 		reason, code := env.removeMiss(ref, packages, errs)
-		return env.removeFail(*asJSON, ref, reason, code)
+		return env.removeFail(*asJSON, ref, "", reason, code)
 	}
 	cmd, err := provider.RemoveCmd(p, *force)
 	if err != nil {
-		return env.removeFail(*asJSON, ref, err.Error(), ExitError)
+		return env.removeFail(*asJSON, ref, p.Version, err.Error(), ExitError)
 	}
-	if p.Dependency {
-		if *force {
+	// Notes are for a person reading a terminal; a caller that asked for JSON
+	// gets the object alone.
+	if p.Dependency && !*asJSON {
+		switch {
+		case *force:
 			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; removing it leaves that package broken until it is installed again\n", p.Name)
-		} else {
+		case p.Source == "brew":
 			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway\n", p.Name)
+		default:
+			fmt.Fprintf(env.Err, "note: %s is installed as another package's dependency\n", p.Name)
 		}
 	}
-	if p.Source == "mise" {
+	if p.Source == "mise" && !*asJSON {
 		// mise keeps what mise.toml asks for, so an uninstall alone can be
 		// undone by the next `mise install`.
 		fmt.Fprintln(env.Err, "note: kho can't remove it from mise.toml, so mise may install it again")
@@ -1102,11 +1107,25 @@ func (env Env) remove(args []string) int {
 	return ExitOK
 }
 
+// hasFlag reports whether args name flag before any "--", since a flag after it
+// is a positional argument.
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
 // removeFail says why nothing was removed, as JSON when that was asked for, so
 // a caller reading stdout never has to parse prose.
-func (env Env) removeFail(asJSON bool, ref, reason string, code int) int {
+func (env Env) removeFail(asJSON bool, ref, version, reason string, code int) int {
 	if asJSON {
-		env.printJSON(RemoveResult{Package: ref, Error: reason})
+		env.printJSON(RemoveResult{Package: ref, Version: version, Error: reason})
 		return code
 	}
 	fmt.Fprintln(env.Err, reason)
@@ -1144,8 +1163,14 @@ func (env Env) removeMiss(ref string, packages []provider.Package, errs map[stri
 	}
 	// A scoped npm name carries an @ of its own, so the version is the last one.
 	if at := strings.LastIndex(ref, "@"); at > 0 {
-		if _, err := find(packages, ref[:at]); err == nil {
-			return "remove takes the installed version, so leave @version off: kho remove " + ref[:at], ExitUsage
+		base, suffix := ref[:at], ref[at+1:]
+		if p, err := find(packages, base); err == nil {
+			// Homebrew names carry an @ of their own (node@24, python@3.12), so
+			// a suffix that is not the installed version is part of the name,
+			// and naming the base would point at a different package.
+			if (p.Version != "" && strings.HasPrefix(p.Version, suffix)) || (source != "brew" && source != "cask") {
+				return "remove takes the installed version, so leave @version off: kho remove " + base, ExitUsage
+			}
 		}
 	}
 	for _, other := range packages {

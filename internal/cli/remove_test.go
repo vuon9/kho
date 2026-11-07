@@ -26,12 +26,16 @@ func removeFakes() []provider.Provider {
 		fake{name: "brew", pkgs: []provider.Package{
 			{Source: "brew", Name: "anvil", Version: "0.11.2", Deps: []provider.Dep{{Name: "mist", Version: "3.1.0", Direct: true}}},
 			{Source: "brew", Name: "mist", Version: "3.1.0", Dependency: true},
+			{Source: "brew", Name: "node", Version: "26.13.0"},
 			{Source: "cask", Name: "focusbar", Version: "4.2.0"},
 		}},
 		fake{name: "npm", pkgs: []provider.Package{
 			{Source: "npm", Name: "@scope/tool", Version: "1.5.0"},
 			{Source: "npm", Name: "evil name; rm -rf /", Version: "1.0.0"},
 			{Source: "npm", Name: "left-trim", Version: "1.3.0", Lockfile: "package-lock.json"},
+		}},
+		fake{name: "composer", pkgs: []provider.Package{
+			{Source: "composer", Name: "acme/legacy", Version: "1.2.0", Dependency: true},
 		}},
 		fake{name: "go", pkgs: []provider.Package{
 			{Source: "go", Name: "nopath", Version: "v1.0.0"},
@@ -109,6 +113,10 @@ func TestRemove(t *testing.T) {
 		{id: "mise names the version and the ones left", args: []string{"remove", "mise/node", "--yes"}, code: ExitOK, out: "removed mise/node 22.1.0", err: miseNotes, ran: []string{"mise uninstall node@22.1.0"}, log: 1},
 		{id: "mise notes both ways in a dry run too", args: []string{"remove", "mise/node"}, code: ExitOK, out: "would run: mise uninstall node@22.1.0\nadd --yes to run it", err: miseNotes},
 		{id: "a name with a space is quoted in the dry run", args: []string{"remove", "npm/evil name; rm -rf /"}, code: ExitOK, out: "would run: npm uninstall -g 'evil name; rm -rf /'\nadd --yes to run it"},
+		{id: "a versioned Homebrew name is not a version in the ref", args: []string{"remove", "brew/node@22"}, code: ExitError, err: "brew/node@22 is not installed"},
+		{id: "a composer dependency gets a note without promising --force", args: []string{"remove", "composer/acme/legacy"}, code: ExitOK, out: "would run: composer global remove acme/legacy\nadd --yes to run it", err: "note: acme/legacy is installed as another package's dependency"},
+		{id: "-h prints the usage line", args: []string{"remove", "-h"}, code: ExitUsage, err: "usage: kho remove <source>/<name> [--yes] [--force] [--json]"},
+		{id: "a --json after -- is a positional argument", args: []string{"remove", "--", "--json"}, code: ExitUsage, err: `"--json" is not source/name, like pipx/ruff`},
 		{id: "a dependency warns that the manager may refuse", args: []string{"remove", "brew/mist"}, code: ExitOK, out: "would run: brew uninstall mist\nadd --yes to run it", err: "note: mist is installed as another package's dependency; the manager may refuse, and --force goes ahead anyway"},
 		{id: "a dependency with --force says what breaks", args: []string{"remove", "brew/mist", "--force"}, code: ExitOK, out: "would run: brew uninstall --ignore-dependencies mist\nadd --yes to run it", err: "note: mist is installed as another package's dependency; removing it leaves that package broken until it is installed again"},
 		{id: "a source kho does not know is a usage error", args: []string{"remove", "frob/widget"}, code: ExitUsage, err: `"frob" is not a source kho knows; try brew, cask, npm, composer, pipx, uv, mise, go or skills`},
@@ -164,6 +172,10 @@ func TestRemoveJSON(t *testing.T) {
 			RemoveResult{Package: "pipx/bramble", Version: "22.12.0", Command: []string{"pipx", "uninstall", "bramble"}, Ran: true}},
 		{"a failed run carries the error", []string{"remove", "pipx/bramble", "--yes", "--json"}, errors.New("boom"), ExitError,
 			RemoveResult{Package: "pipx/bramble", Version: "22.12.0", Command: []string{"pipx", "uninstall", "bramble"}, Ran: true, Error: "boom"}},
+		{"a dependency note stays off stderr under JSON", []string{"remove", "brew/mist", "--json"}, nil, ExitOK,
+			RemoveResult{Package: "brew/mist", Version: "3.1.0", Command: []string{"brew", "uninstall", "mist"}}},
+		{"a refusal carries the version it knows", []string{"remove", "go/tidyup", "--json"}, nil, ExitError,
+			RemoveResult{Package: "go/tidyup", Version: "v1.0.0", Error: "go has no uninstall; tidyup is /home/dev/go/bin/tidyup, so remove that file yourself and it stops being listed"}},
 		{"a miss answers in JSON too", []string{"remove", "pipx/nope", "--json"}, nil, ExitError,
 			RemoveResult{Package: "pipx/nope", Error: "pipx/nope is not installed"}},
 		{"a usage mistake answers in JSON too", []string{"remove", "frob/widget", "--json"}, nil, ExitUsage,

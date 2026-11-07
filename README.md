@@ -100,7 +100,7 @@ Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any 
 
 ### Uninstalling
 
-`kho remove` runs the package manager's own uninstaller: `brew uninstall` (with `--cask` for a cask), `npm uninstall -g`, `pipx uninstall`, `uv tool uninstall`, `composer global remove`, or `mise uninstall`. It changes no manifest and no lockfile, so a project's dependency is not something it removes.
+`kho remove` runs the package manager's own uninstaller: `brew uninstall` (with `--cask` for a cask), `npm uninstall -g`, `pipx uninstall`, `uv tool uninstall`, `composer global remove`, or `mise uninstall`. It changes no project manifest and no lockfile, so a project's dependency is not something it removes. (`composer global remove` does edit Composer's own global `composer.json`, which is a fact about the machine.)
 
 It takes exactly one `<source>/<name>` and no version, since the installed version is what gets removed. Without `--yes` it prints the exact command and changes nothing:
 
