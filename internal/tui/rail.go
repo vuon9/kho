@@ -219,6 +219,10 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 		case m.busy[r.name] != "":
 			mark = accent().Render(spinner[m.frame%len(spinner)])
 		}
+	case rowImages, rowMachineImages:
+		if m.imgBusy {
+			mark = accent().Render(spinner[m.frame%len(spinner)])
+		}
 	case rowPart:
 		for _, lf := range m.partLockfiles(r) {
 			switch {

@@ -294,14 +294,17 @@ func (m model) imageTableLines() []string {
 	rows := m.imgRows()
 	// Columns drop as the table narrows: the state always stays, then the
 	// upstream version, then where the reference was read.
-	stateW, upstreamW, whereW := 10, 10, 18
-	if inner < 62 {
-		whereW = 0
-	}
-	if inner < 46 {
+	// The name never takes more than it needs: a long reference would push
+	// the state off the table, and the sidebar spells the whole name anyway.
+	const nameMax = 26
+	stateW, upstreamW, whereW := 10, 10, 16
+	if inner < 58 {
 		upstreamW = 0
 	}
-	nameW := max(inner-(stateW+upstreamW+whereW+4), 10)
+	if inner < 40 {
+		whereW = 0
+	}
+	nameW := min(max(inner-(stateW+upstreamW+whereW+4), 10), nameMax)
 	head := pad("IMAGE", nameW)
 	if whereW > 0 {
 		head += " " + pad("FROM", whereW)
@@ -324,7 +327,11 @@ func (m model) imageTableLines() []string {
 		return lines
 	}
 	for i, r := range rows {
-		line := presenceMark(r) + " " + pad(ansi.Truncate(r.Image, nameW, "…"), nameW)
+		name := pad(ansi.Truncate(r.Image, nameW, "…"), nameW)
+		if r.State == image.Unknown || r.Unresolved {
+			name = faint().Render(name)
+		}
+		line := presenceMark(r) + " " + name
 		if whereW > 0 {
 			line += " " + faint().Render(pad(ansi.Truncate(imageWhere(r), whereW, "…"), whereW))
 		}
@@ -395,7 +402,7 @@ func (m model) imageSideBox(w, h int, focused bool) string {
 		if idx < len(body) {
 			text = body[idx].text
 		}
-		if list && idx == m.sideCursor && idx < len(body) {
+		if list && idx == m.sideCursor+m.imageListStart() && idx < len(body) {
 			text = selected(text, inner, focused)
 		}
 		out = append(out, row(text))
@@ -442,9 +449,9 @@ func (m model) imageBottomLines(inner int) []line {
 	}
 	v, ok := at(m.imgVulns[r.Canonical()], m.sideCursor)
 	if !ok {
-		return plain("", faint().Render(" pick a finding to read it here"))
+		return plain(faint().Render(" pick a finding to read it here"))
 	}
-	lines := plain("", severityPill(v.Severity)+" "+bold().Render(v.ID))
+	lines := plain(severityPill(v.Severity) + " " + bold().Render(v.ID))
 	add := func(label, value, url string) {
 		if value != "" {
 			lines = append(lines, field(label, value, url))
@@ -511,6 +518,16 @@ func (m *model) moveImageSide(key string, step int) {
 	}
 }
 
+// imageListStart is the row the list begins on: each list tab opens with a
+// header line that is not a row.
+func (m model) imageListStart() int {
+	switch m.imageTab() {
+	case tabVersions, tabSecurity:
+		return 1
+	}
+	return 0
+}
+
 // imageListLen is the length of the tab's list, or -1 for the tabs that show
 // fields.
 func (m model) imageListLen() int {
@@ -530,7 +547,7 @@ func (m model) imageListLen() int {
 func (m model) imageTabLines(inner int) []line {
 	r, ok := m.currentImg()
 	if !ok {
-		return plain("", faint().Render(" pick an image to see it here"))
+		return plain(faint().Render(" pick an image to see it here"))
 	}
 	switch m.imageTab() {
 	case tabVersions:
@@ -586,9 +603,9 @@ func (m model) imageVersionLines(r image.Ref) []line {
 	tags := slices.Clone(m.imgTags[r.Canonical()])
 	if len(tags) == 0 {
 		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
-			return plain("", faint().Render(" this image has no repository to ask"))
+			return plain(faint().Render(" this image has no repository to ask"))
 		}
-		return plain("", faint().Render(" the repository did not list its tags"))
+		return plain(faint().Render(" the repository did not list its tags"))
 	}
 	// Newest line first, and the tag in use always shows, even when the
 	// repository lists more than kho asked for.
@@ -603,7 +620,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
 		tags = append([]image.Tag{{Name: r.Tag}}, tags...)
 	}
-	lines := plain("", faint().Render(" tags published by "+r.Registry))
+	lines := plain(faint().Render("── tags · " + r.Registry + " " + strings.Repeat("─", 12)))
 	for _, t := range tags {
 		mark := "  "
 		if t.Name == r.Tag {
@@ -625,28 +642,26 @@ func (m model) imageVersionLines(r image.Ref) []line {
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 	key := r.Canonical()
 	if m.imgScanning[key] {
-		return plain("", faint().Render(" scanning with trivy, this takes a moment"))
+		return plain(faint().Render(" scanning with trivy, this takes a moment"))
 	}
 	if err := m.imgScanErr[key]; err != "" {
-		return append(plain("", red().Render(" "+err)), plain("", faint().Render(" the rest of kho still works without a scan"))...)
+		return append(plain(red().Render(" "+err)), plain(faint().Render(" the rest of kho still works without a scan"))...)
 	}
 	vulns := m.imgVulns[key]
 	if len(vulns) == 0 {
-		lines := plain("", faint().Render(" kho does not read inside an image, so it cannot"))
-		lines = append(lines, plain("", faint().Render(" list the packages a CVE would be filed against."))...)
-		lines = append(lines, plain("", "")...)
+		lines := plain(faint().Render(" kho does not read inside an image, so it cannot"),
+			faint().Render(" list the packages a CVE would be filed against."), "")
 		if trivyAvailable() {
-			lines = append(lines, plain("", accent().Render(" x  scan this image with trivy"))...)
+			lines = append(lines, plain(accent().Render(" x  scan this image with trivy"), "")...)
 		} else {
-			lines = append(lines, plain("", faint().Render(" install trivy and press x to scan it"))...)
+			lines = append(lines, plain(faint().Render(" install trivy and press x to scan it"), "")...)
 		}
 		if !r.EOL.IsZero() {
-			lines = append(lines, plain("", "")...)
-			lines = append(lines, plain("", faint().Render(" the line itself ended "+r.EOL.Format("2006-01-02"))+", which a rebuild cannot fix")...)
+			lines = append(lines, plain(faint().Render(" the line itself ended "+r.EOL.Format("2006-01-02"))+", which a rebuild cannot fix")...)
 		}
 		return lines
 	}
-	lines := plain("", faint().Render(fmt.Sprintf(" %d findings from trivy", len(vulns))))
+	lines := plain(faint().Render(fmt.Sprintf(" %d findings from trivy", len(vulns))))
 	for _, v := range vulns {
 		text := " " + severityPill(v.Severity) + " " + pad(ansi.Truncate(v.ID, 18, "…"), 18) + " " + ansi.Truncate(v.Package, 16, "…")
 		lines = append(lines, row(text))

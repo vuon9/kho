@@ -204,7 +204,7 @@ func TestImageVersionsTab(t *testing.T) {
 	}})
 	m = press(t, m, "v")
 	got := screen(m)
-	for _, want := range []string{"tags published by docker.io", "3.13-slim", "3.9-slim", "2026-11-05"} {
+	for _, want := range []string{"tags · docker.io", "3.13-slim", "3.9-slim", "2026-11-05"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("versions tab should show %q:\n%s", want, got)
 		}

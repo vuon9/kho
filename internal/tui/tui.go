@@ -32,6 +32,9 @@ func Run(log *history.Log, version, dir string, ask image.Asker) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
 	m.log, m.version, m.dir, m.imgAsk = log, version, dir, ask
+	// The docker row is part of the sidebar from the first frame, the way a
+	// provider's row is, and spins until its images are read.
+	m.imgBusy = true
 	if dir != "" {
 		m.projBusy = projReading
 	}
