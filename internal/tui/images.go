@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/image"
@@ -22,6 +21,25 @@ var scanImage = trivy.Scan
 
 // trivyAvailable says whether a scan can run at all.
 var trivyAvailable = trivy.Available
+
+type imageTagsMsg struct {
+	key  string
+	tags []image.Tag
+}
+
+// tagsCmd asks a repository what it publishes, when a person opens Versions
+// on an image kho has not asked about yet.
+func (m model) tagsCmd() tea.Cmd {
+	r, ok := m.currentImg()
+	if !ok {
+		return nil
+	}
+	key, ask := r.Canonical(), m.imgAsk
+	m.imgTagBusy[key] = true
+	return func() tea.Msg {
+		return imageTagsMsg{key: key, tags: tagsFor(context.Background(), r, ask)}
+	}
+}
 
 type imageScanMsg struct {
 	key   string
@@ -392,24 +410,23 @@ func (m model) imageSideBox(w, h int, focused bool) string {
 	e := edge(focused)
 	top := e.Render("╭─") + " " + m.imageTabs() + " "
 	top += e.Render(strings.Repeat("─", max(w-1-ansi.StringWidth(top), 0)) + "╮")
-	out := []string{top}
-	row := func(s string) string { return e.Render("│") + pad(s, inner) + e.Render("│") }
 	body := wrapLines(m.imageTabLines(inner), inner)
 	list := m.imageListLen() >= 0
+	var rows []string
 	for i := 0; i < m.layout().topRows; i++ {
 		idx := m.sideOffset + i
 		text := ""
 		if idx < len(body) {
 			text = body[idx].text
 		}
-		if list && idx == m.sideCursor+m.imageListStart() && idx < len(body) {
+		if list && idx == m.sideCursor && idx < len(body) {
 			text = selected(text, inner, focused)
 		}
-		out = append(out, row(text))
+		rows = append(rows, text)
 	}
 	if m.imageHasBottom() {
 		div := e.Render("├─ ") + boxTitle(m.imageBottomTitle(), focused) + " "
-		out = append(out, div+e.Render(strings.Repeat("─", max(w-1-ansi.StringWidth(div), 0))+"┤"))
+		rows = append(rows, div+e.Render(strings.Repeat("─", max(w-1-ansi.StringWidth(div), 0))+"┤"))
 		bottom := wrapLines(m.imageBottomLines(inner), inner)
 		for i := 0; i < m.layout().bottomRows; i++ {
 			idx := m.bodyOffset + i
@@ -417,8 +434,16 @@ func (m model) imageSideBox(w, h int, focused bool) string {
 			if idx < len(bottom) {
 				text = bottom[idx].text
 			}
-			out = append(out, row(text))
+			rows = append(rows, text)
 		}
+	}
+	if status := m.imageTabStatus(); status != "" && len(rows) > 0 {
+		rule := "── " + status + " "
+		rows[len(rows)-1] = faint().Render(rule + strings.Repeat("─", max(inner-ansi.StringWidth(rule), 0)))
+	}
+	out := []string{top}
+	for _, r := range rows {
+		out = append(out, e.Render("│")+pad(r, inner)+e.Render("│"))
 	}
 	out = append(out, e.Render("╰"+strings.Repeat("─", inner)+"╯"))
 	return strings.Join(out, "\n")
@@ -453,9 +478,13 @@ func (m model) imageBottomLines(inner int) []line {
 	}
 	lines := plain(severityPill(v.Severity) + " " + bold().Render(v.ID))
 	add := func(label, value, url string) {
-		if value != "" {
-			lines = append(lines, field(label, value, url))
+		if value == "" {
+			return
 		}
+		if url != "" {
+			value = link(url).Render(value)
+		}
+		lines = append(lines, field(label, value, url))
 	}
 	add("package", v.Package, "")
 	add("installed", v.Installed, "")
@@ -481,28 +510,7 @@ func (m model) imageTab() int {
 	return tabInfo
 }
 
-func (m model) imageTabs() string {
-	names := []struct {
-		id   int
-		name string
-	}{{tabInfo, "Info"}, {tabVersions, "Versions"}, {tabSecurity, "Security"}}
-	labels := func(long bool) []string {
-		var out []string
-		for _, t := range names {
-			name := t.name
-			if !long {
-				name = t.name[:3]
-			}
-			out = append(out, tabLabel(name, t.id == m.imageTab()))
-		}
-		return out
-	}
-	wide := labels(true)
-	if lipgloss.Width(strings.Join(wide, " ")) > m.layout().sideW-6 {
-		wide = labels(false)
-	}
-	return strings.Join(wide, " ")
-}
+func (m model) imageTabs() string { return m.tabBar() }
 
 // moveImageSide scrolls the image sidebar. The tabs that list things move
 // through them; there is nothing to install or open, so enter only moves
@@ -518,14 +526,32 @@ func (m *model) moveImageSide(key string, step int) {
 	}
 }
 
-// imageListStart is the row the list begins on: each list tab opens with a
-// header line that is not a row.
-func (m model) imageListStart() int {
-	switch m.imageTab() {
-	case tabVersions, tabSecurity:
-		return 1
+// imageTabStatus is the fixed line at the foot of the panel, which says what
+// the tab is looking at without taking a row from the list.
+func (m model) imageTabStatus() string {
+	r, ok := m.currentImg()
+	if !ok {
+		return ""
 	}
-	return 0
+	switch m.imageTab() {
+	case tabVersions:
+		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
+			return "no repository to ask"
+		}
+		if m.imgTagBusy[r.Canonical()] {
+			return "asking " + r.Registry + " for its tags"
+		}
+		return "tags · " + r.Registry
+	case tabSecurity:
+		if n := len(m.imgVulns[r.Canonical()]); n > 0 {
+			return fmt.Sprintf("%d findings · trivy", n)
+		}
+		if m.imgScanning[r.Canonical()] {
+			return "scanning · trivy"
+		}
+		return "no scan yet · trivy"
+	}
+	return ""
 }
 
 // imageListLen is the length of the tab's list, or -1 for the tabs that show
@@ -561,16 +587,24 @@ func (m model) imageTabLines(inner int) []line {
 func (m model) imageLines(r image.Ref) []line {
 	lines := plain(" "+icon("docker")+" "+accent().Render(r.Image), "")
 	add := func(label, value, url string) {
-		if value != "" {
-			lines = append(lines, field(label, value, url))
+		if value == "" {
+			return
 		}
+		if url != "" {
+			value = link(url).Render(value)
+		}
+		lines = append(lines, field(label, value, url))
 	}
 	add("where", imageWhere(r), "")
 	add("presence", presenceWord(r), "")
 	add("upstream", r.Upstream, "")
 	add("base", r.Base, "")
 	if p := r.Product(); p != "" {
-		add("line", p+" "+r.Cycle(), "https://endoflife.date/"+p)
+		text := "endoflife.date/" + p
+		if c := r.Cycle(); c != "" {
+			text += " · " + c
+		}
+		add("line", text, "https://endoflife.date/"+p)
 	}
 	if r.Registry == "docker.io" {
 		add("registry", "hub.docker.com/r/"+r.RemoteRepo(), "https://hub.docker.com/r/"+r.RemoteRepo())
@@ -605,7 +639,10 @@ func (m model) imageVersionLines(r image.Ref) []line {
 		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
 			return plain(faint().Render(" this image has no repository to ask"))
 		}
-		return plain(faint().Render(" the repository did not list its tags"))
+		if m.imgTagBusy[r.Canonical()] {
+			return plain(faint().Render(" asking " + r.Registry + " for its tags"))
+		}
+		return plain(faint().Render(" press v again to ask " + r.Registry))
 	}
 	// Newest line first, and the tag in use always shows, even when the
 	// repository lists more than kho asked for.
@@ -661,7 +698,7 @@ func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 		}
 		return lines
 	}
-	lines := plain(faint().Render(fmt.Sprintf(" %d findings from trivy", len(vulns))))
+	var lines []line
 	for _, v := range vulns {
 		text := " " + severityPill(v.Severity) + " " + pad(ansi.Truncate(v.ID, 18, "…"), 18) + " " + ansi.Truncate(v.Package, 16, "…")
 		lines = append(lines, row(text))

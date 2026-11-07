@@ -152,6 +152,9 @@ func (m model) hasBottom() bool {
 // sideListLen is the length of the active tab's list, or -1 for tabs that
 // show text rather than a list.
 func (m model) sideListLen() int {
+	if isImageRow(m.curRow().kind) {
+		return m.imageListLen()
+	}
 	p, ok := m.current()
 	if !ok {
 		return -1
@@ -173,10 +176,16 @@ func (m model) sideListLen() int {
 // topView and bottomView are the sidebar halves as drawn: wrapped to width,
 // except list rows.
 func (m model) topView(inner int) []line {
+	if isImageRow(m.curRow().kind) {
+		return wrapLines(m.imageTabLines(inner), inner)
+	}
 	return wrapLines(m.topLines(inner), inner)
 }
 
 func (m model) bottomView(inner int) []line {
+	if isImageRow(m.curRow().kind) {
+		return wrapLines(m.imageBottomLines(inner), inner)
+	}
 	return wrapLines(m.bottomLines(inner), inner)
 }
 

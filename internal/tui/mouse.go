@@ -204,6 +204,9 @@ func (m *model) click(x, y int) tea.Cmd {
 // edge and a row counted from its first content line: the tab bar, a link,
 // a list row, or the bottom half.
 func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
+	if isImageRow(m.curRow().kind) {
+		return m.clickImageSide(x, row, focused)
+	}
 	l := m.layout()
 	switch {
 	case row == -1:
@@ -245,6 +248,46 @@ func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 		}
 		lines := m.bottomView(l.sideW - 2)
 		if i < len(lines) && lines[i].url != "" {
+			return open(lines[i].url)
+		}
+	}
+	return nil
+}
+
+// clickImageSide is clickSide for an image: the tab bar, a link in the
+// fields, a list row, or a link in the finding under the split.
+func (m *model) clickImageSide(x, row int, focused bool) tea.Cmd {
+	l := m.layout()
+	if row == -1 {
+		edge := 2
+		for i, label := range m.tabLabels() {
+			edge += lipgloss.Width(label) + 1
+			if x < edge {
+				m.setTab(m.tabs()[i])
+				return nil
+			}
+		}
+		return nil
+	}
+	if row < l.topRows {
+		m.sidePart = 0
+		lines := m.topView(l.sideW - 2)
+		i := m.sideOffset + row
+		if i >= len(lines) {
+			return nil
+		}
+		if lines[i].url != "" {
+			return open(lines[i].url)
+		}
+		if n := m.imageListLen(); n > 0 && i < n {
+			m.sideCursor = i
+		}
+		return nil
+	}
+	if m.imageHasBottom() {
+		m.sidePart = 1
+		lines := m.bottomView(l.sideW - 2)
+		if i := m.bodyOffset + row - l.topRows - 1; i >= 0 && i < len(lines) && lines[i].url != "" {
 			return open(lines[i].url)
 		}
 	}

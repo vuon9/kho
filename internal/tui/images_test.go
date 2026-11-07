@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 	"testing"
 	"time"
 
@@ -232,7 +234,7 @@ func TestImageSecurityTab(t *testing.T) {
 		{ID: "CVE-2025-9999", Severity: "LOW", Package: "zlib", Installed: "1.2.11"},
 	}})
 	got = screen(m)
-	for _, want := range []string{"2 findings from trivy", "CVE-2025-1234", "openssl", "CVE-2025-9999"} {
+	for _, want := range []string{"2 findings · trivy", "CVE-2025-1234", "openssl", "CVE-2025-9999"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("a scan result should show %q:\n%s", want, got)
 		}
@@ -260,5 +262,42 @@ func TestImageSecuritySplit(t *testing.T) {
 	}
 	if !strings.Contains(got, "├─") {
 		t.Errorf("the finding should sit under a divider:\n%s", got)
+	}
+}
+
+// The upstream line in the Info tab is a link: clicking it opens the
+// lifecycle page, the way a package's homepage opens.
+func TestImageUpstreamLinkIsClickable(t *testing.T) {
+	opened = nil
+	defer func() { openURL = func(string) error { return nil } }()
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	for row := 0; row < m.layout().topRows; row++ {
+		if cmd := m.clickSide(4, row, true); cmd != nil {
+			cmd()
+		}
+		if len(opened) > 0 {
+			break
+		}
+	}
+	if len(opened) != 1 || opened[0] != "https://endoflife.date/python" {
+		t.Errorf("clicking the upstream line should open its page, opened %v", opened)
+	}
+}
+
+// The fixed line at the foot of the panel names what the tab is looking at.
+func TestImageTabStatus(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
+		"docker.io/library/python:3.9-slim": {{Name: "3.9-slim"}},
+	}})
+	m = press(t, m, "v")
+	box := strings.Split(ansi.Strip(m.imageSideBox(46, 20, false)), "\n")
+	last := box[len(box)-2]
+	if !strings.Contains(last, "── tags · docker.io") {
+		t.Errorf("the versions tab should name the registry on its last row, got %q\n%s", last, strings.Join(box, "\n"))
+	}
+	if !strings.Contains(strings.Join(box, "\n"), "→ 3.9-slim") {
+		t.Errorf("the tag in use should still be listed:\n%s", strings.Join(box, "\n"))
 	}
 }

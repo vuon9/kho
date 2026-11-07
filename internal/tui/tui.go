@@ -237,6 +237,7 @@ type model struct {
 	imgTags     map[string][]image.Tag
 	imgVulns    map[string][]trivy.Vuln
 	imgScanning map[string]bool
+	imgTagBusy  map[string]bool
 	imgScanErr  map[string]string
 	imgErr      error
 	imgBusy     bool
@@ -308,7 +309,7 @@ func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
 		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
 		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
-		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}}
+		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{}}
 	m.reset()
 	return m
 }
@@ -459,6 +460,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		delete(m.busy, msg.name)
 		m.reindex()
+	case imageTagsMsg:
+		delete(m.imgTagBusy, msg.key)
+		if msg.tags != nil {
+			m.imgTags[msg.key] = msg.tags
+		}
+		return m, nil
 	case imageScanMsg:
 		m.imgScanning[msg.key] = false
 		if msg.err != nil {
@@ -857,6 +864,9 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.setTab(tabInfo)
 	case "v":
 		m.setTab(tabVersions)
+		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imgTags[r.Canonical()] == nil && !m.imgTagBusy[r.Canonical()] {
+			return m.tagsCmd(), false
+		}
 	case "a":
 		m.setTab(tabSecurity)
 	case "]":
