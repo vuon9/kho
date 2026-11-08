@@ -232,38 +232,41 @@ type model struct {
 
 	// images are the container images the project names, and imgBusy says a
 	// scan is still running. imgAsk is what answers the registries.
-	images      []image.Ref
-	machineImgs []image.Ref
-	localImgs   []image.LocalImage
-	factCh      <-chan imageFactMsg
-	imgTags     map[string][]image.Tag
-	imgVulns    map[string][]trivy.Vuln
-	imgScanning map[string]bool
-	imgTagBusy  map[string]bool
-	imgTagErr   map[string]string
-	imgTagTried map[string]bool
-	imgSort     int
-	imgScanErr  map[string]string
-	imgErr      error
-	imgBusy     bool
-	imgGen      int
-	imgAsk      image.Asker
-	imgStatuses map[string]int
-	filtering   bool
-	showDeps    bool
-	help        bool
-	helpTop     int
-	confirm     *confirm
-	inst        *installing
-	depCursor   int
-	depPop      *depPopup
-	allAgents   bool
-	sel         *textSel
-	railW       int
-	sideW       int
-	split       int
-	resizing    int
-	grab        int
+	images       []image.Ref
+	machineImgs  []image.Ref
+	localImgs    []image.LocalImage
+	factCh       <-chan imageFactMsg
+	imgTags      map[string][]image.Tag
+	imgVulns     map[string][]trivy.Vuln
+	imgScanning  map[string]bool
+	imgTagBusy   map[string]bool
+	imgTagErr    map[string]string
+	imgTagTried  map[string]bool
+	imgUsers     map[string][]image.Container
+	imgUsersBusy map[string]bool
+	imgUsersErr  map[string]string
+	imgSort      int
+	imgScanErr   map[string]string
+	imgErr       error
+	imgBusy      bool
+	imgGen       int
+	imgAsk       image.Asker
+	imgStatuses  map[string]int
+	filtering    bool
+	showDeps     bool
+	help         bool
+	helpTop      int
+	confirm      *confirm
+	inst         *installing
+	depCursor    int
+	depPop       *depPopup
+	allAgents    bool
+	sel          *textSel
+	railW        int
+	sideW        int
+	split        int
+	resizing     int
+	grab         int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -315,8 +318,11 @@ func newModel(ps []provider.Provider, dbPath string) model {
 		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
 		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
 		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{},
-		imgTagErr:   map[string]string{},
-		imgTagTried: map[string]bool{}}
+		imgTagErr:    map[string]string{},
+		imgTagTried:  map[string]bool{},
+		imgUsers:     map[string][]image.Container{},
+		imgUsersBusy: map[string]bool{},
+		imgUsersErr:  map[string]string{}}
 	m.reset()
 	return m
 }
@@ -443,6 +449,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ask := mm.wantTags(); ask != nil {
 			cmd = tea.Batch(cmd, ask)
 		}
+		if ask := mm.wantUsers(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
 	}
 	return next, cmd
 }
@@ -508,6 +517,17 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.tags) > 0 {
 			m.imgTags[msg.key] = msg.tags
 		}
+		return m, nil
+	case imageUsersMsg:
+		delete(m.imgUsersBusy, msg.key)
+		if msg.err != nil {
+			m.imgUsersErr[msg.key] = msg.err.Error()
+			return m, nil
+		}
+		if msg.users == nil {
+			msg.users = []image.Container{}
+		}
+		m.imgUsers[msg.key] = msg.users
 		return m, nil
 	case imageRemoveMsg:
 		m.askImageRemove(msg)

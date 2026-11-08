@@ -31,6 +31,15 @@ type imageTagsMsg struct {
 	err  error
 }
 
+// imageUsersMsg is the containers docker says are made from an image, for the
+// Info tab, so the question "what would removing this break" has an answer
+// before anyone presses D.
+type imageUsersMsg struct {
+	key   string
+	users []image.Container
+	err   error
+}
+
 // imageRemoveMsg is what docker said about the containers using an image, on
 // the way to asking whether to remove it.
 type imageRemoveMsg struct {
@@ -54,6 +63,10 @@ func (m *model) removeImage() tea.Cmd {
 	}
 	if r.Presence != image.OnDisk {
 		m.notice = r.Image + " is not on disk, so there is nothing to remove"
+		return nil
+	}
+	if users, known := m.imgUsers[r.Canonical()]; known {
+		m.askImageRemove(imageRemoveMsg{ref: r, users: users})
 		return nil
 	}
 	ref := r
@@ -96,6 +109,36 @@ func (m *model) askImageRemove(msg imageRemoveMsg) {
 	m.confirm = &confirm{title: title + "?", lines: lines,
 		run: startInstall(title, imageRemove(msg.ref), m.log,
 			installedMsg{provider: "docker", name: msg.ref.Image, removed: true})}
+}
+
+// usersCmd asks docker which containers are made from the selected image.
+func (m *model) usersCmd() tea.Cmd {
+	r, ok := m.currentImg()
+	if !ok {
+		return nil
+	}
+	key := r.Canonical()
+	m.imgUsersBusy[key] = true
+	return func() tea.Msg {
+		users, err := imageUsers(context.Background(), r)
+		return imageUsersMsg{key: key, users: users, err: err}
+	}
+}
+
+// wantUsers asks once per image, when the Info tab is the one showing.
+func (m *model) wantUsers() tea.Cmd {
+	if m.imageTab() != tabInfo || !isImageRow(m.curRow().kind) {
+		return nil
+	}
+	r, ok := m.currentImg()
+	if !ok {
+		return nil
+	}
+	key := r.Canonical()
+	if m.imgUsers[key] != nil || m.imgUsersBusy[key] || m.imgUsersErr[key] != "" {
+		return nil
+	}
+	return m.usersCmd()
 }
 
 // wantTags asks for the selected image's tags when the Versions tab is the one
@@ -1077,8 +1120,36 @@ func (m model) imageLines(r image.Ref) []line {
 			add("from", "ARG "+r.Via, "")
 		}
 	}
+	lines = append(lines, m.containerLines(r)...)
 	lines = append(lines, plain("", faint().Render(" kho reads references and registry metadata, never what is inside an image."))...)
 	return lines
+}
+
+// containerLines says which containers are made from this image, since that is
+// what stands between it and a removal.
+func (m model) containerLines(r image.Ref) []line {
+	key := r.Canonical()
+	switch {
+	case m.imgUsersBusy[key]:
+		return plain("", " "+m.spin()+faint().Render(" asking docker which containers use it"))
+	case m.imgUsersErr[key] != "":
+		return plain("", faint().Render(" could not ask docker which containers use it: "+m.imgUsersErr[key]))
+	case m.imgUsers[key] == nil:
+		return nil
+	}
+	users := m.imgUsers[key]
+	if len(users) == 0 {
+		return []line{line{}, field("containers", "none", "")}
+	}
+	out := []line{line{}, field("containers", fmt.Sprintf("%d in use", len(users)), "")}
+	for _, c := range users {
+		mark := faint().Render("○")
+		if c.State == "running" {
+			mark = green().Render("●")
+		}
+		out = append(out, row("  "+mark+" "+c.Name+"  "+faint().Render(c.State)))
+	}
+	return out
 }
 
 // tagOrder sorts tags the way a person reads them: the highest version first,

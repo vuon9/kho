@@ -838,3 +838,58 @@ func TestImageRemoveKeepsItsQuestionVisible(t *testing.T) {
 		t.Error("the dialog did not say how many containers it left out")
 	}
 }
+
+// The Info tab says which containers are made from the image, since that is
+// what stands between it and a removal.
+func TestImageInfoListsItsContainers(t *testing.T) {
+	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) {
+		return []image.Container{
+			{Name: "shop-api", Image: "python:3.9-slim", State: "running"},
+			{Name: "shop-db", Image: "python:3.9-slim", State: "exited"},
+		}, nil
+	}
+	t.Cleanup(func() { imageUsers = image.Users })
+
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, key("i"))
+
+	r, _ := m.currentImg()
+	screen := ansi.Strip(strings.Join(linesText(m.imageTabLines(40)), "\n"))
+	for _, want := range []string{"containers", "2 in use", "shop-api", "running", "shop-db", "exited"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("info tab %q, want %q in it", screen, want)
+		}
+	}
+	if m.imgUsers[r.Canonical()] == nil {
+		t.Error("the tab did not keep what docker answered")
+	}
+}
+
+// An image nothing was made from says so, instead of saying nothing.
+func TestImageInfoSaysNoContainer(t *testing.T) {
+	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) { return nil, nil }
+	t.Cleanup(func() { imageUsers = image.Users })
+
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, key("i"))
+
+	screen := ansi.Strip(strings.Join(linesText(m.imageTabLines(40)), "\n"))
+	if !strings.Contains(screen, "containers") || !strings.Contains(screen, "none") {
+		t.Errorf("info tab %q, want it to say no container uses it", screen)
+	}
+}
+
+// linesText is the plain text of a sidebar block.
+func linesText(lines []line) []string {
+	var out []string
+	for _, l := range lines {
+		if l.label != "" {
+			out = append(out, l.label+" "+l.text)
+			continue
+		}
+		out = append(out, l.text)
+	}
+	return out
+}
