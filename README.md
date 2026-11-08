@@ -76,6 +76,38 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
 
 Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes.
 
+<details>
+<summary>Every status, and what it means</summary>
+
+**Packages**
+
+| Status | Means | What to do |
+|---|---|---|
+| `✓` | the installed version is the latest | nothing |
+| `↑ outdated` | a newer version exists | `kho install <source>/<name>@<version>` |
+| `⚑ pinned` | a version file pins it, so kho leaves it alone | edit the pin |
+| `⚑ newer` | pinned, and a newer version exists anyway | edit the pin |
+| `⚠ 3 vulns` | known advisories affect the installed version | run the `fix:` line under it |
+| `⚠ audit` | the skill failed a skills.sh audit | read the report on its Security tab |
+| `◌ no lock` | a project package no lockfile pins | add it to the lockfile |
+| `◌ unmanaged` | installed, but no lockfile knows it | nothing, it is informational |
+| `?` | kho could not read the latest version | `--refresh` asks again |
+
+**Images**
+
+| Status | Means | What to do |
+|---|---|---|
+| `✓ fresh` | the image matches what its tag points at now | nothing |
+| `↑ stale` | the tag now points at different bytes than your copy | `docker pull <ref>` |
+| `⚠ EOL` | the release line is past its end of life | move to a supported line |
+| `✗ gone` | the registry no longer has that tag | pick a tag that exists |
+| `⚑ pinned` | the reference is a digest, so it cannot drift | nothing, that is the point |
+| `· local` | built here, no registry to compare with | nothing |
+| `· unverified` | kho could not tell what the image is | name the image instead of an `ARG` |
+| `· n/a` | a scratch image, nothing to compare | nothing |
+
+</details>
+
 ## Commands
 
 `kho` with no arguments opens the terminal app. These commands are the other half: `--json` where it is offered, results on stdout with everything else on stderr, and nothing changes the machine without `--yes`.

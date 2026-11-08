@@ -251,21 +251,26 @@ func (m model) badges(r railRow) string {
 		if r.kind == rowMachineImages {
 			list = m.machineImgs
 		}
-		var past, stale int
+		var eol, gone, stale int
 		for _, img := range list {
 			switch img.State {
-			case image.EOL, image.Gone:
-				past++
+			case image.EOL:
+				eol++
+			case image.Gone:
+				gone++
 			case image.Stale:
 				stale++
 			}
 		}
 		var badges []string
-		if past > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", past)))
+		if eol > 0 {
+			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", eol)))
+		}
+		if gone > 0 {
+			badges = append(badges, red().Render(fmt.Sprintf("✗%d", gone)))
 		}
 		if stale > 0 {
-			badges = append(badges, yellow().Render(fmt.Sprintf("⟳%d", stale)))
+			badges = append(badges, yellow().Render(fmt.Sprintf("↑%d", stale)))
 		}
 		return fmt.Sprintf("%4d", len(list)) + " " + strings.Join(badges, " ")
 	}

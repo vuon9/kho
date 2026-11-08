@@ -874,3 +874,54 @@ func TestCheckProjectRefusesRequire(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", got.code, got.err)
 	}
 }
+
+// kho list carries the same status word the table shows, so a caller does not
+// have to infer it from latest and pinned.
+func TestListCarriesStatus(t *testing.T) {
+	got := kho(t, nil, nil, nil, "list")
+	if got.code != ExitOK {
+		t.Fatalf("exit %d, want 0: %s", got.code, got.err)
+	}
+	var listed []ListedPackage
+	if err := json.Unmarshal([]byte(got.out), &listed); err != nil {
+		t.Fatalf("list is not JSON: %v\n%s", err, got.out)
+	}
+	seen := map[string]string{}
+	for _, p := range listed {
+		seen[p.Name] = p.Status
+	}
+	for name, want := range map[string]string{"bramble": "outdated", "inkwell": "pinned"} {
+		if seen[name] != want {
+			t.Errorf("%s has status %q, want %q (all: %v)", name, seen[name], want, seen)
+		}
+	}
+}
+
+// A tag the registry no longer has puts a project at risk, and the verdict
+// says so instead of reporting zero vulnerable packages.
+func TestCheckProjectGoneTag(t *testing.T) {
+	clean := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
+		{Path: "package-lock.json", Manager: "npm", Packages: []provider.Package{{Source: "npm", Name: "left-trim", Version: "1.0.2", Lockfile: "package-lock.json"}}},
+	}}}}
+	gone := image.Ref{Image: "nginx:9.9-nope", Registry: "docker.io", Repo: "nginx", Tag: "9.9-nope",
+		File: "Dockerfile", Line: 1, Source: "dockerfile", State: image.Gone, Presence: image.NotPulled}
+	got := projectImagesKho(t, clean, []image.Ref{gone}, "check", "--project", "--json")
+	if got.code != ExitAtRisk {
+		t.Fatalf("exit %d, want %d", got.code, ExitAtRisk)
+	}
+	var r Report
+	if err := json.Unmarshal([]byte(got.out), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Summary.ImagesGone != 1 || r.Summary.ImagesEOL != 0 {
+		t.Errorf("summary %+v, want one gone image and no EOL", r.Summary)
+	}
+
+	text := projectImagesKho(t, clean, []image.Ref{gone}, "check", "--project")
+	if !strings.Contains(text.out, "1 image tag gone") {
+		t.Errorf("verdict %q, want it to name the gone tag", text.out)
+	}
+	if strings.Contains(text.out, "0 vulnerable packages") {
+		t.Errorf("verdict %q reads as a clean project", text.out)
+	}
+}

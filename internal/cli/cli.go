@@ -259,6 +259,7 @@ type Finding struct {
 	Name          string `json:"name"`
 	Version       string `json:"version"`
 	Latest        string `json:"latest,omitempty"`
+	Status        string `json:"status"`
 	Pinned        bool   `json:"pinned,omitempty"`
 	Dependency    string `json:"dependency,omitempty"`
 	FixedIn       string `json:"fixedIn,omitempty"`
@@ -316,6 +317,7 @@ type Summary struct {
 	Images      int `json:"images,omitempty"`
 	ImagesStale int `json:"imagesStale,omitempty"`
 	ImagesEOL   int `json:"imagesEol,omitempty"`
+	ImagesGone  int `json:"imagesGone,omitempty"`
 }
 
 // Report is what `kho check --json` prints. Safe is false when an installed
@@ -368,8 +370,8 @@ func fixFor(advs []vuln.Advisory, version string) string {
 }
 
 func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
-	f := Finding{Source: p.Source, Name: p.Name, Version: p.Version, Latest: p.Latest, Pinned: p.Pinned,
-		Lockfile: p.Lockfile, Dev: p.Dev, Via: p.Via, Advisories: advisories(advs, p.Version)}
+	f := Finding{Source: p.Source, Name: p.Name, Version: p.Version, Latest: p.Latest, Status: "vulnerable",
+		Pinned: p.Pinned, Lockfile: p.Lockfile, Dev: p.Dev, Via: p.Via, Advisories: advisories(advs, p.Version)}
 	f.FixedIn = fixFor(advs, p.Version)
 	if p.Lockfile != "" {
 		// kho never changes a project, so the fix is the project's own command.
@@ -626,6 +628,8 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireCom
 			r.Summary.ImagesStale++
 		case image.EOL:
 			r.Summary.ImagesEOL++
+		case image.Gone:
+			r.Summary.ImagesGone++
 		}
 	}
 	atRisk, imageIncomplete := imageRisk(refs, requireImages)
@@ -727,8 +731,15 @@ func (env Env) printReport(r Report) {
 		if r.Project != nil {
 			verdict = "⚠ at risk: " + plural(r.Summary.Vulnerable, "vulnerable package")
 		}
-		if r.Summary.ImagesEOL > 0 {
-			verdict = "⚠ at risk: " + plural(r.Summary.ImagesEOL, "image") + " past its line"
+		if r.Summary.ImagesEOL > 0 || r.Summary.ImagesGone > 0 {
+			var why []string
+			if r.Summary.ImagesEOL > 0 {
+				why = append(why, plural(r.Summary.ImagesEOL, "image")+" past its line")
+			}
+			if r.Summary.ImagesGone > 0 {
+				why = append(why, plural(r.Summary.ImagesGone, "image tag")+" gone")
+			}
+			verdict = "⚠ at risk: " + strings.Join(why, ", ")
 			if r.Summary.Vulnerable > 0 {
 				verdict += ", " + plural(r.Summary.Vulnerable, "vulnerable package")
 			}
@@ -757,7 +768,7 @@ func (env Env) printReport(r Report) {
 		fmt.Fprintf(w, "\nskill %s (%s): Gen %s, Socket %s, Snyk %s\n  report: %s\n", s.Name, s.Repo, s.Gen, s.Socket, s.Snyk, s.Report)
 	}
 	if len(r.Images) > 0 {
-		fmt.Fprintf(w, "\n%d images · %d stale · %d past their line\n", len(r.Images), r.Summary.ImagesStale, r.Summary.ImagesEOL)
+		fmt.Fprintf(w, "\n%d images · %d stale · %d past their line · %d gone\n", len(r.Images), r.Summary.ImagesStale, r.Summary.ImagesEOL, r.Summary.ImagesGone)
 		for _, img := range r.Images {
 			line := fmt.Sprintf("  %s %-34s %-13s", presenceMark(img), img.Image, stateWord(img))
 			if img.Upstream != "" {
@@ -1259,12 +1270,23 @@ func (env Env) history(args []string) int {
 	return ExitOK
 }
 
+// ListedPackage is a package as `kho list` prints it: the package itself, and
+// the status word the table shows, so a caller does not have to infer it.
+type ListedPackage struct {
+	provider.Package
+	Status string `json:"status"`
+}
+
 func (env Env) list() int {
 	pkgs, errs := env.inventory(context.Background())
 	if pkgs == nil {
 		pkgs = []provider.Package{}
 	}
-	env.printJSON(pkgs)
+	listed := make([]ListedPackage, 0, len(pkgs))
+	for _, p := range pkgs {
+		listed = append(listed, ListedPackage{Package: p, Status: provider.StatusWord(p)})
+	}
+	env.printJSON(listed)
 	for src, err := range errs {
 		fmt.Fprintf(env.Err, "%s: %s\n", src, err)
 	}
