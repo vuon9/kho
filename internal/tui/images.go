@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -86,13 +87,17 @@ type imagesMsg struct {
 	err     error
 }
 
-// imageFactsMsg is what the registries said, arriving after the table is
-// already on screen: the rows say asking until it lands.
-type imageFactsMsg struct {
+// imageFactMsg is one answer from a registry, so a row appears the moment its
+// own status is known instead of waiting for the slowest one.
+type imageFactMsg struct {
 	gen     int
-	refs    []image.Ref
-	machine []image.Ref
+	index   int
+	ref     image.Ref
+	machine bool
 }
+
+// imageFactsDoneMsg says every answer has arrived.
+type imageFactsDoneMsg struct{ gen int }
 
 // imagesCmd reads the project's images and asks about each one, off the UI
 // goroutine. It never pulls, builds or runs anything.
@@ -121,20 +126,50 @@ func (m model) imagesCmd() tea.Cmd {
 	}
 }
 
-// factsCmd asks the registries what the rows are, once they are on screen.
-// Tags are not fetched here: they belong to the Versions tab, which asks for
-// them when it is opened.
-func (m model) factsCmd() tea.Cmd {
+// factsCmd asks the registries about each row and hands each answer back as it
+// lands, so the table fills in while the registries are still answering.
+func (m *model) factsCmd() tea.Cmd {
 	gen, ask, refs, local := m.imgGen, m.imgAsk, m.images, m.localImgs
-	return func() tea.Msg {
-		ctx := context.Background()
-		msg := imageFactsMsg{gen: gen}
-		asked := local != nil
-		if asked {
-			msg.machine = machineImages(ctx, local, ask)
+	if ask == nil || local == nil {
+		return nil
+	}
+	ch := make(chan imageFactMsg, len(refs)+len(local))
+	go func() {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for i := range refs {
+			wg.Go(func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				out := inspectImages(context.Background(), []image.Ref{refs[i]}, local, true, ask)
+				if len(out) == 1 {
+					ch <- imageFactMsg{gen: gen, index: i, ref: out[0]}
+				}
+			})
 		}
-		if len(refs) > 0 {
-			msg.refs = inspectImages(ctx, refs, local, asked, ask)
+		for i := range local {
+			wg.Go(func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				out := machineImages(context.Background(), local[i:i+1], ask)
+				if len(out) == 1 {
+					ch <- imageFactMsg{gen: gen, index: i, ref: out[0], machine: true}
+				}
+			})
+		}
+		wg.Wait()
+		close(ch)
+	}()
+	m.factCh = ch
+	return readFact(ch, gen)
+}
+
+// readFact waits for one answer; the model asks for the next when it has it.
+func readFact(ch <-chan imageFactMsg, gen int) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return imageFactsDoneMsg{gen: gen}
 		}
 		return msg
 	}
@@ -154,18 +189,18 @@ func (m *model) gotImages(msg imagesMsg) {
 	m.reindex()
 }
 
-// gotFacts replaces the rows with what the registries answered.
-func (m *model) gotFacts(msg imageFactsMsg) {
+// applyFact puts one answered row in place. A row whose registry has not
+// answered is unknown, and the table leaves it out until it is not.
+func (m *model) applyFact(msg imageFactMsg) {
 	if msg.gen != m.imgGen {
 		return
 	}
-	if len(msg.refs) > 0 {
-		m.images = msg.refs
+	switch {
+	case msg.machine && msg.index < len(m.machineImgs):
+		m.machineImgs[msg.index] = msg.ref
+	case !msg.machine && msg.index < len(m.images):
+		m.images[msg.index] = msg.ref
 	}
-	if len(msg.machine) > 0 {
-		m.machineImgs = msg.machine
-	}
-	m.imgBusy = false
 	m.reindex()
 }
 

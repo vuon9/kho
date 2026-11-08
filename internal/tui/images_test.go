@@ -39,40 +39,51 @@ type asker struct{}
 func (asker) Remote(context.Context, image.Ref) (image.Remote, error) { return image.Remote{}, nil }
 func (asker) Life(context.Context, image.Ref) (image.Life, error)     { return image.Life{}, nil }
 
-// A row is only listed once kho knows what it is: while the registries are
-// being read the table says so, and nothing half-known is shown.
-func TestImagesWaitForTheirStatus(t *testing.T) {
-	ref := image.Ref{Image: "node:22-alpine", Registry: "docker.io", Repo: "library/node", Tag: "22-alpine", File: "Dockerfile", Line: 1, State: image.Unknown}
+// A row is listed only once kho knows what it is, and the rows arrive one at a
+// time instead of all at the end: the table fills in as the registries answer.
+func TestImagesArriveOneAtATime(t *testing.T) {
+	mk := func(name string) image.Ref {
+		return image.Ref{Image: name, Registry: "docker.io", Repo: "library/" + name, Tag: "1", File: "compose.yaml", Line: 1, State: image.Unknown}
+	}
 	m := withProject(t, project.Scan{Root: "/work/app"}, false)
 	m.dir, m.imgAsk = "/work/app", asker{}
-	asked := 0
+	machineImages = func(context.Context, []image.LocalImage, image.Asker) []image.Ref { return nil }
+	slow := make(chan struct{})
 	inspectImages = func(_ context.Context, refs []image.Ref, _ []image.LocalImage, _ bool, ask image.Asker) []image.Ref {
-		if ask != nil {
-			asked++
-			for i := range refs {
-				refs[i].State = image.Fresh
-			}
+		if refs[0].Image == "slow:1" {
+			<-slow // the first answer is held back until the second has landed
 		}
+		refs[0].State = image.Fresh
 		return refs
 	}
-	machineImages = func(context.Context, []image.LocalImage, image.Asker) []image.Ref { return nil }
 
-	m.gotImages(imagesMsg{gen: m.imgGen, refs: []image.Ref{ref}, local: []image.LocalImage{}})
+	m.gotImages(imagesMsg{gen: m.imgGen, refs: []image.Ref{mk("slow"), mk("quick")}, local: []image.LocalImage{}})
 	if got := len(m.imgRows()); got != 0 {
-		t.Errorf("%d rows before the registry answered, want none", got)
+		t.Fatalf("%d rows before any answer, want none", got)
 	}
-	if !strings.Contains(ansi.Strip(m.imageTitle()), "reading") {
-		t.Errorf("title %q does not say it is reading", ansi.Strip(m.imageTitle()))
+	cmd := m.factsCmd()
+	// One answer lands while the other registry is still thinking.
+	first := cmd()
+	fact, ok := first.(imageFactMsg)
+	if !ok {
+		t.Fatalf("first message is %T, want an answer", first)
 	}
-	if body := ansi.Strip(strings.Join(m.imageTableLines(), "\n")); !strings.Contains(body, "reading Dockerfiles") {
-		t.Errorf("the table says %q, want that it is reading", body)
+	m.applyFact(fact)
+	if got := len(m.imgRows()); got != 1 {
+		t.Errorf("%d rows after one answer, want the one that landed", got)
 	}
-	m = update(t, m, m.factsCmd()())
-	if asked == 0 {
-		t.Fatal("the registries were never asked")
+	close(slow)
+	for {
+		msg := readFact(m.factCh, m.imgGen)()
+		if done, ok := msg.(imageFactsDoneMsg); ok {
+			m.imgBusy = false
+			_ = done
+			break
+		}
+		m.applyFact(msg.(imageFactMsg))
 	}
-	if got := m.imgRows(); len(got) != 1 || got[0].State != image.Fresh {
-		t.Errorf("after the answer the rows are %+v, want one fresh", got)
+	if got := len(m.imgRows()); got != 2 {
+		t.Errorf("%d rows after every answer, want both", got)
 	}
 }
 

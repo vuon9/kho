@@ -235,6 +235,7 @@ type model struct {
 	images      []image.Ref
 	machineImgs []image.Ref
 	localImgs   []image.LocalImage
+	factCh      <-chan imageFactMsg
 	imgTags     map[string][]image.Tag
 	imgVulns    map[string][]trivy.Vuln
 	imgScanning map[string]bool
@@ -482,8 +483,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.factsCmd()
 		}
 		return m, nil
-	case imageFactsMsg:
-		m.gotFacts(msg)
+	case imageFactMsg:
+		m.applyFact(msg)
+		if msg.gen != m.imgGen {
+			return m, nil
+		}
+		return m, readFact(m.factCh, m.imgGen)
+	case imageFactsDoneMsg:
+		if msg.gen == m.imgGen {
+			m.imgBusy = false
+			m.reindex()
+		}
 		return m, nil
 	case projectMsg:
 		cmds = append(cmds, m.gotProject(msg))

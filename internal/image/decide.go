@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -40,36 +41,55 @@ type Asker interface {
 // Inspect joins the machine's images to refs and asks about each one, in
 // parallel. A failed lookup leaves the state Unknown, never Fresh.
 func Inspect(ctx context.Context, refs []Ref, local []LocalImage, asked bool, ask Asker, now time.Time) []Ref {
+	refs = Joined(refs, local, asked)
+	InspectEach(ctx, refs, ask, now, func(i int, r Ref) { refs[i] = r })
+	return refs
+}
+
+// Joined marks each ref with what the machine already has, without asking any
+// registry: the part of Inspect that needs no network.
+func Joined(refs []Ref, local []LocalImage, asked bool) []Ref {
 	if asked {
-		refs = Join(refs, local)
-	} else {
-		for i := range refs {
-			refs[i].Presence = Unasked
-		}
+		return Join(refs, local)
 	}
+	for i := range refs {
+		refs[i].Presence = Unasked
+	}
+	return refs
+}
+
+// InspectEach is Inspect with each answer handed over as it lands, so a screen
+// can fill in one row at a time instead of waiting for the slowest registry.
+// The refs it is given must already be joined with the machine's images.
+func InspectEach(ctx context.Context, refs []Ref, ask Asker, now time.Time, emit func(i int, r Ref)) {
 	if ask == nil {
 		for i := range refs {
 			refs[i].State = Unknown
+			emit(i, refs[i])
 		}
-		return refs
+		return
 	}
 	var g errgroup.Group
 	g.SetLimit(8)
+	var mu sync.Mutex
 	for i := range refs {
 		g.Go(func() error {
-			remote, err := ask.Remote(ctx, refs[i])
-			if err != nil {
-				refs[i].State = Unknown
-				refs[i].Note = err.Error()
-				return nil
+			r := refs[i]
+			remote, err := ask.Remote(ctx, r)
+			switch {
+			case err != nil:
+				r.State, r.Note = Unknown, err.Error()
+			default:
+				life, _ := ask.Life(ctx, r)
+				r = Decide(r, remote, life, now)
 			}
-			life, _ := ask.Life(ctx, refs[i])
-			refs[i] = Decide(refs[i], remote, life, now)
+			mu.Lock()
+			emit(i, r)
+			mu.Unlock()
 			return nil
 		})
 	}
 	_ = g.Wait()
-	return refs
 }
 
 // Decide turns what kho learned into the one word the table shows. Order
