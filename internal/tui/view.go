@@ -42,10 +42,11 @@ func (m model) View() tea.View {
 	switch m.popup() {
 	case popHelp:
 		r := m.helpRect()
-		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
+		screen = overlay(screen, popupRows("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
 	case popInstall:
 		r := m.installRect()
-		screen = overlay(screen, popupBox(m.inst.title, m.installLines(popupText(r).h), r), r.x, r.y, r.w)
+		t := popupText(r)
+		screen = overlay(screen, popupRows(m.inst.title, m.installLines(t.h, t.w), r), r.x, r.y, r.w)
 	case popDep:
 		r := m.depRect()
 		t := popupText(r)
@@ -58,7 +59,7 @@ func (m model) View() tea.View {
 			}
 			lines = append(lines, text)
 		}
-		screen = overlay(screen, popupBox(m.depPopTitle(), lines, r), r.x, r.y, r.w)
+		screen = overlay(screen, popupRows(m.depPopTitle(), lines, r), r.x, r.y, r.w)
 	case popConfirm:
 		r := m.confirmRect()
 		var lines []string
@@ -73,7 +74,7 @@ func (m model) View() tea.View {
 
 // installLines fills the install popup: the command, as much of its output
 // as fits, and how it is going.
-func (m model) installLines(rows int) []string {
+func (m model) installLines(rows, width int) []string {
 	in := m.inst
 	end := in.end
 	if in.running() {
@@ -91,15 +92,24 @@ func (m model) installLines(rows int) []string {
 	default:
 		status = green().Render("✓ done") + faint().Render(" in "+took)
 	}
-	lines := []string{faint().Render(" runs  ") + strings.Join(in.cmd.Args, " "), ""}
-	room := max(rows-len(lines)-2, 0)
-	for _, l := range in.lines[max(len(in.lines)-room, 0):] {
-		lines = append(lines, " "+l)
+	// The command and the output wrap, so a long error reads in full instead
+	// of ending in an ellipsis, and the status keeps the last rows.
+	cmd := wrapStyled(faint().Render(" runs  ")+strings.Join(in.cmd.Args, " "), width)
+	statusRows := wrapStyled(" "+status, width)
+	room := max(rows-len(cmd)-1-len(statusRows), 0)
+	var out []string
+	for _, l := range in.lines {
+		out = append(out, wrapStyled(" "+l, width)...)
 	}
-	for len(lines) < rows-1 {
+	if len(out) > room {
+		out = out[max(len(out)-room, 0):]
+	}
+	lines := append(append([]string{}, cmd...), "")
+	lines = append(lines, out...)
+	for len(lines) < rows-len(statusRows) {
 		lines = append(lines, "")
 	}
-	return append(lines, " "+status)
+	return append(lines, statusRows...)
 }
 
 // actionable is a package an upgrade would move: outdated and not pinned.
@@ -613,7 +623,29 @@ func popupText(r rect) rect {
 
 // popupBox draws a dialog so it can't be taken for a panel: a heavy border and
 // a filled title bar.
+// popupBox draws a dialog and wraps what is in it, so a sentence a person has
+// to read is never cut by the border. Its rect must already be tall enough for
+// the wrapped lines.
 func popupBox(title string, lines []string, r rect) string {
+	return drawPopup(title, wrapPopup(lines, popupText(r).w), r)
+}
+
+// popupRows draws a dialog whose lines are one per row and scroll on their own,
+// so it pads and cuts rather than wrapping: the caller counts rows.
+func popupRows(title string, lines []string, r rect) string {
+	return drawPopup(title, lines, r)
+}
+
+// wrapPopup wraps every line to the popup's width.
+func wrapPopup(lines []string, w int) []string {
+	var out []string
+	for _, l := range lines {
+		out = append(out, wrapStyled(l, w)...)
+	}
+	return out
+}
+
+func drawPopup(title string, lines []string, r rect) string {
 	e := fg(th.accent)
 	t := popupText(r)
 	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, t.w))

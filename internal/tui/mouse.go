@@ -90,7 +90,14 @@ func (m model) confirmRect() rect {
 	for _, l := range m.confirm.lines {
 		w = max(w, lipgloss.Width(l)+4)
 	}
-	return m.centered(min(w, m.width-8), len(m.confirm.lines)+popupFrame)
+	w = min(w, m.width-8)
+	// count the rows after wrapping, so a long line grows the dialog instead
+	// of running out of it
+	rows := 0
+	for _, l := range m.confirm.lines {
+		rows += len(wrapStyled(" "+l, w-2))
+	}
+	return m.centered(w, min(rows+popupFrame, m.height-2))
 }
 
 func (m model) helpRect() rect {

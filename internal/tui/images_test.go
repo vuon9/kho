@@ -777,3 +777,64 @@ func TestImageProgressSpins(t *testing.T) {
 		t.Errorf("tab status %q, want the spinner in front of scanning", got)
 	}
 }
+
+// A dialog wraps what is in it: a long sentence grows the box instead of being
+// cut at the border with an ellipsis.
+func TestPopupsWrapTheirContent(t *testing.T) {
+	long := "docker refuses to remove an image a container still uses, so remove that container first or keep the image as it is"
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.confirm = &confirm{title: "🗑 Remove a-very-long-image-name:1.2.3-alpine?", lines: []string{long, "", "y remove it   n keep it"}}
+
+	screen := ansi.Strip(m.View().Content)
+	var dialog []string
+	for i, line := range strings.Split(screen, "\n") {
+		if lipgloss.Width(line) > 100 {
+			t.Errorf("line %d is %d wide: %q", i, lipgloss.Width(line), line)
+		}
+		if strings.Contains(line, "┃") {
+			dialog = append(dialog, line)
+		}
+	}
+	if len(dialog) == 0 {
+		t.Fatal("the dialog is not on screen")
+	}
+	for _, line := range dialog {
+		if strings.Contains(line, "…") {
+			t.Errorf("the dialog cut its text: %q", line)
+		}
+	}
+	if got := strings.Count(screen, "docker refuses to remove an image"); got != 1 {
+		t.Errorf("the sentence starts %d times, want it wrapped once", got)
+	}
+	for _, word := range strings.Fields(long) {
+		if !strings.Contains(screen, word) {
+			t.Errorf("word %q is missing, so the text was cut", word)
+		}
+	}
+}
+
+// However many containers use an image, the question at the bottom of the
+// dialog stays on screen.
+func TestImageRemoveKeepsItsQuestionVisible(t *testing.T) {
+	users := []image.Container{}
+	for _, n := range []string{"api", "db", "cache", "queue", "search", "worker"} {
+		users = append(users, image.Container{Name: n, Image: "python:3.9-slim", State: "exited"})
+	}
+	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) { return users, nil }
+	t.Cleanup(func() { imageUsers = image.Users })
+
+	refs := sampleImages()
+	refs[0].Presence = image.OnDisk
+	m := onImages(t, withImages(t, refs...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
+	m = update(t, m, key("D"))
+
+	screen := ansi.Strip(m.View().Content)
+	if !strings.Contains(screen, "y remove it") {
+		t.Errorf("the question is off screen:\n%s", screen)
+	}
+	if !strings.Contains(screen, "… ") {
+		t.Error("the dialog did not say how many containers it left out")
+	}
+}

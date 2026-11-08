@@ -76,8 +76,11 @@ func (m *model) askImageRemove(msg imageRemoveMsg) {
 			noun = "container still uses"
 		}
 		lines = append(lines, yellow().Render(fmt.Sprintf("⚠ %d %s it", len(msg.users), noun)), "")
+		// list as many as the screen has room for, so the question at the
+		// bottom is never the line that falls off
+		room := max(m.height-2-popupFrame-10, 1)
 		for i, c := range msg.users {
-			if i >= 6 {
+			if i >= room {
 				lines = append(lines, faint().Render(fmt.Sprintf("  … %d more", len(msg.users)-i)))
 				break
 			}
