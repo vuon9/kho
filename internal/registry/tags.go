@@ -23,7 +23,16 @@ func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 		return nil, nil
 	}
 	if r.Registry == "docker.io" {
-		return c.hubTags(ctx, r)
+		tags, err := c.hubTags(ctx, r)
+		if err == nil && len(tags) > 0 {
+			return tags, nil
+		}
+		// The hub's web API is rate limited on its own, and a registry lists
+		// the same tags without dates. A list of names beats an empty tab.
+		if alt, altErr := c.registryTags(ctx, r); altErr == nil && len(alt) > 0 {
+			return alt, nil
+		}
+		return tags, err
 	}
 	return c.registryTags(ctx, r)
 }

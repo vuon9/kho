@@ -241,6 +241,7 @@ type model struct {
 	imgScanning map[string]bool
 	imgTagBusy  map[string]bool
 	imgTagErr   map[string]string
+	imgTagTried map[string]bool
 	imgScanErr  map[string]string
 	imgErr      error
 	imgBusy     bool
@@ -313,7 +314,8 @@ func newModel(ps []provider.Provider, dbPath string) model {
 		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
 		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
 		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{},
-		imgTagErr: map[string]string{}}
+		imgTagErr:   map[string]string{},
+		imgTagTried: map[string]bool{}}
 	m.reset()
 	return m
 }
@@ -468,13 +470,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.imgTagBusy, msg.key)
 		if msg.err != nil {
 			m.imgTagErr[msg.key] = msg.err.Error()
-			return m, nil
+			if m.imgTagTried[msg.key] {
+				return m, nil
+			}
+			m.imgTagTried[msg.key] = true
+			key := msg.key
+			return m, tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg {
+				return imageTagsRetryMsg{key: key}
+			})
 		}
 		delete(m.imgTagErr, msg.key)
 		if len(msg.tags) > 0 {
 			m.imgTags[msg.key] = msg.tags
 		}
 		return m, nil
+	case imageTagsRetryMsg:
+		r, ok := m.currentImg()
+		if !ok || r.Canonical() != msg.key || m.imgTags[msg.key] != nil || m.imgTagBusy[msg.key] {
+			return m, nil
+		}
+		return m, m.tagsCmd()
 	case imageScanMsg:
 		m.imgScanning[msg.key] = false
 		if msg.err != nil {

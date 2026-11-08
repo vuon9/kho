@@ -30,6 +30,12 @@ type imageTagsMsg struct {
 	err  error
 }
 
+// imageTagsRetryMsg comes back once after a failed ask, so a hiccup heals
+// itself instead of waiting for someone to press v.
+type imageTagsRetryMsg struct {
+	key string
+}
+
 // tabTo switches the sidebar tab, and asks for an image's tags when the tab
 // that needs them opens, however it was opened: the v key, a numbered tab, or
 // a click on the tab bar.

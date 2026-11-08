@@ -383,3 +383,29 @@ func TestHubTagsAddRecentWhenLineIsThin(t *testing.T) {
 		t.Fatalf("got %d tags, want the line's two plus 13.3", len(tags))
 	}
 }
+
+// The hub's web API is rate limited on its own, and the registry lists the
+// same tags without dates, so a 429 there does not empty the tab.
+func TestTagsFallBackToTheRegistryWhenTheHubFails(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer hub.Close()
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tags":["3.19.9","3.19.8","3.20.0"]}`)
+	}))
+	defer reg.Close()
+	c := &Client{HTTP: reg.Client(), HubBase: hub.URL, Base: func(string) string { return reg.URL }}
+
+	tags, err := c.Tags(context.Background(), image.Parse("alpine:3.19"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"3.19.9", "3.19.8"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want the registry's own tags for the line: %v", names, want)
+	}
+}

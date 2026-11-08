@@ -542,3 +542,33 @@ func TestVersionsSaysWhyItIsEmpty(t *testing.T) {
 		t.Errorf("panel %q, want no version row when the registry said nothing", joined)
 	}
 }
+
+// A failed ask heals itself once, without waiting for someone to press v.
+func TestVersionsRetriesOnceByItself(t *testing.T) {
+	asked := 0
+	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
+		asked++
+		if asked == 1 {
+			return nil, errors.New("docker hub answered 429")
+		}
+		return []image.Tag{{Name: "22.23.4"}}, nil
+	}
+	t.Cleanup(func() {
+		tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) { return nil, nil }
+	})
+
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
+	r, _ := m.currentImg()
+	if asked != 1 || m.imgTags[r.Canonical()] != nil {
+		t.Fatalf("first ask: asked %d, tags %v, want one failed ask", asked, m.imgTags[r.Canonical()])
+	}
+	m = update(t, m, imageTagsRetryMsg{key: r.Canonical()})
+	if asked != 2 {
+		t.Fatalf("asked %d times, want the retry", asked)
+	}
+	if got := m.imgTags[r.Canonical()]; len(got) != 1 {
+		t.Errorf("tags %v after the retry, want the answer", got)
+	}
+}
