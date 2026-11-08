@@ -664,11 +664,11 @@ func TestImagesSortAndReverse(t *testing.T) {
 }
 
 // The keys that only mean something for a package do nothing on an image row.
-func TestPackageKeysIgnoreImageRows(t *testing.T) {
+func TestPackageStatusKeysIgnoreImageRows(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
 
-	for _, k := range []string{"o", "!", "D"} {
+	for _, k := range []string{"o", "!"} {
 		before := m.statuses[m.curRow().key]
 		m = update(t, m, key(k))
 		if m.statuses[m.curRow().key] != before {
@@ -692,5 +692,52 @@ func TestImagesSayNothingMatches(t *testing.T) {
 	screen := ansi.Strip(strings.Join(m.imageTableLines(), "\n"))
 	if !strings.Contains(screen, "nothing matches") {
 		t.Errorf("screen %q, want it to say nothing matches", screen)
+	}
+}
+
+// D on an image asks first, and says which containers still use it.
+func TestImageRemoveAsksWithItsContainers(t *testing.T) {
+	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) {
+		return []image.Container{
+			{Name: "shop-api", Image: "python:3.9-slim", State: "running"},
+			{Name: "shop-db", Image: "python:3.9-slim", State: "exited"},
+		}, nil
+	}
+	t.Cleanup(func() { imageUsers = image.Users })
+
+	refs := sampleImages()
+	refs[0].Presence = image.OnDisk
+	m := onImages(t, withImages(t, refs...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, key("D"))
+
+	if m.confirm == nil {
+		t.Fatal("D did not ask")
+	}
+	screen := ansi.Strip(m.confirm.title + "\n" + strings.Join(m.confirm.lines, "\n"))
+	for _, want := range []string{"python:3.9-slim", "shop-api", "shop-db", "2 containers still use it", "docker refuses"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("dialog %q, want %q in it", screen, want)
+		}
+	}
+	if m.confirm.run == nil {
+		t.Error("the dialog has nothing to run when the person says yes")
+	}
+}
+
+// An image that is not on disk has nothing to remove, and kho says so instead
+// of opening a dialog that would fail.
+func TestImageRemoveNeedsItOnDisk(t *testing.T) {
+	refs := sampleImages()
+	refs[0].Presence = image.NotPulled
+	m := onImages(t, withImages(t, refs...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, key("D"))
+
+	if m.confirm != nil {
+		t.Error("D asked to remove an image that is not on disk")
+	}
+	if !strings.Contains(m.notice, "not on disk") {
+		t.Errorf("notice %q, want it to say why nothing happened", m.notice)
 	}
 }

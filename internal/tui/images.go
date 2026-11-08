@@ -31,10 +31,68 @@ type imageTagsMsg struct {
 	err  error
 }
 
+// imageRemoveMsg is what docker said about the containers using an image, on
+// the way to asking whether to remove it.
+type imageRemoveMsg struct {
+	ref   image.Ref
+	users []image.Container
+	err   error
+}
+
 // imageTagsRetryMsg comes back once after a failed ask, so a hiccup heals
 // itself instead of waiting for someone to press v.
 type imageTagsRetryMsg struct {
 	key string
+}
+
+// removeImage asks whether to remove the selected image, and what would break
+// if it went: kho never removes an image without a person saying yes.
+func (m *model) removeImage() tea.Cmd {
+	r, ok := m.currentImg()
+	if !ok {
+		return nil
+	}
+	if r.Presence != image.OnDisk {
+		m.notice = r.Image + " is not on disk, so there is nothing to remove"
+		return nil
+	}
+	ref := r
+	return func() tea.Msg {
+		users, err := imageUsers(context.Background(), ref)
+		return imageRemoveMsg{ref: ref, users: users, err: err}
+	}
+}
+
+// askImageRemove builds the dialog: what the image is, what uses it, and what
+// docker will do.
+func (m *model) askImageRemove(msg imageRemoveMsg) {
+	lines := []string{bold().Render(msg.ref.Image), ""}
+	switch {
+	case msg.err != nil:
+		lines = append(lines, red().Render("could not ask docker what uses it: "+msg.err.Error()), "")
+	case len(msg.users) > 0:
+		noun := "containers still use"
+		if len(msg.users) == 1 {
+			noun = "container still uses"
+		}
+		lines = append(lines, yellow().Render(fmt.Sprintf("⚠ %d %s it", len(msg.users), noun)), "")
+		for i, c := range msg.users {
+			if i >= 6 {
+				lines = append(lines, faint().Render(fmt.Sprintf("  … %d more", len(msg.users)-i)))
+				break
+			}
+			lines = append(lines, "  "+faint().Render(image.ContainerLine(c)))
+		}
+		lines = append(lines, "", faint().Render("docker refuses to remove an image a container uses."),
+			faint().Render("remove those containers first, or keep the image."), "")
+	default:
+		lines = append(lines, faint().Render("no container uses it"), "")
+	}
+	lines = append(lines, accent().Render("y")+faint().Render(" remove it   ")+accent().Render("n")+faint().Render(" keep it"))
+	title := "🗑 Remove " + msg.ref.Image
+	m.confirm = &confirm{title: title + "?", lines: lines,
+		run: startInstall(title, imageRemove(msg.ref), m.log,
+			installedMsg{provider: "docker", name: msg.ref.Image, removed: true})}
 }
 
 // wantTags asks for the selected image's tags when the Versions tab is the one
@@ -108,7 +166,9 @@ var (
 	machineImages = func(ctx context.Context, local []image.LocalImage, ask image.Asker) []image.Ref {
 		return image.Machine(ctx, local, ask, now())
 	}
-	tagsFor = func(ctx context.Context, r image.Ref, ask image.Asker) ([]image.Tag, error) {
+	imageUsers  = image.Users
+	imageRemove = image.RemoveCmd
+	tagsFor     = func(ctx context.Context, r image.Ref, ask image.Asker) ([]image.Tag, error) {
 		t, ok := ask.(interface {
 			Tags(context.Context, image.Ref) ([]image.Tag, error)
 		})

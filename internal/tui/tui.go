@@ -498,6 +498,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.imgTags[msg.key] = msg.tags
 		}
 		return m, nil
+	case imageRemoveMsg:
+		m.askImageRemove(msg)
+		return m, nil
 	case imageTagsRetryMsg:
 		r, ok := m.currentImg()
 		if !ok || r.Canonical() != msg.key || m.imgTags[msg.key] != nil || m.imgTagBusy[msg.key] {
@@ -910,9 +913,10 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
 	case "D":
-		if !isImageRow(m.curRow().kind) {
-			m.askRemove()
+		if isImageRow(m.curRow().kind) {
+			return m.removeImage(), false
 		}
+		m.askRemove()
 	case "p":
 		m.prodOnly = !m.prodOnly
 		m.cursor, m.offset = 0, 0

@@ -31,7 +31,8 @@ var helpSections = []struct {
 		{"pgup pgdn  space", "page"},
 		{"g G", "first or last"},
 		{"enter", "open the selection in the next panel, or open and close the project"},
-		{"D", "remove the selected package, after asking"},
+		{"D", "remove the selected package or image, after asking"},
+		{"", "an image says which containers still use it first"},
 	}},
 	{"Sidebar", [][2]string{
 		{"1-6  [ ]", "pick a tab, or the previous or next"},
