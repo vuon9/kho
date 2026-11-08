@@ -148,8 +148,8 @@ func TestImagesRailRow(t *testing.T) {
 			line = l
 		}
 	}
-	if !strings.Contains(line, "4") || !strings.Contains(line, "⚠2") || !strings.Contains(line, "⟳1") {
-		t.Errorf("rail line %q should count 4 images, 2 past their line and 1 stale", line)
+	if !strings.Contains(line, "4") || !strings.Contains(line, "⚠2") || !strings.Contains(line, "↑1") {
+		t.Errorf("rail line %q should count 4 images, 2 EOL and 1 stale", line)
 	}
 }
 
@@ -174,11 +174,11 @@ func TestImagesFilter(t *testing.T) {
 	if strings.Contains(got, "node:22-alpine") || !strings.Contains(got, "python:3.9-slim") {
 		t.Errorf("the past line filter should show only the closed lines:\n%s", got)
 	}
-	if !strings.Contains(got, "⚠ past line") {
+	if !strings.Contains(got, "⚠ EOL") {
 		t.Errorf("the title should name the filter:\n%s", got)
 	}
-	// past line, stale, tracked, untracked, on disk, not pulled.
-	m = press(t, m, "f", "f", "f")
+	// EOL, gone, stale, tracked, untracked, on disk, not pulled.
+	m = press(t, m, "f", "f", "f", "f")
 	if got := screen(m); !strings.Contains(got, "◌ untracked") || !strings.Contains(got, "${BASE_IMAGE}") || strings.Contains(got, "python:3.9-slim") {
 		t.Errorf("the untracked filter should show only what kho cannot follow:\n%s", got)
 	}
@@ -210,7 +210,7 @@ func TestImagesSidebar(t *testing.T) {
 func TestImagesUnresolvedIsHonest(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	// Unverified images are out of the way unless the untracked filter asks.
-	m = press(t, m, "f", "f", "f", "f")
+	m = press(t, m, "f", "f", "f", "f", "f")
 	for i, r := range m.imgRows() {
 		if r.Unresolved {
 			m.cursor = i
@@ -240,7 +240,7 @@ func TestImagesNarrow(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 110, Height: 40})
 	got := screen(m)
-	if !strings.Contains(got, "⚠ EOL") || !strings.Contains(got, "⟳ stale") {
+	if !strings.Contains(got, "⚠ EOL") || !strings.Contains(got, "↑ stale") {
 		t.Errorf("the state must survive a narrow table:\n%s", got)
 	}
 	if strings.Contains(got, "…") && strings.Contains(got, "STATE …") {
@@ -470,7 +470,7 @@ func TestImagesHideUnverified(t *testing.T) {
 	if !strings.Contains(got, "1 unverified hidden") {
 		t.Errorf("the title should say one is hidden:\n%s", got)
 	}
-	m = press(t, m, "f", "f", "f", "f")
+	m = press(t, m, "f", "f", "f", "f", "f")
 	if !strings.Contains(screen(m), "BASE_IMAGE") {
 		t.Errorf("the untracked filter should show it again:\n%s", screen(m))
 	}
@@ -610,18 +610,18 @@ func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
 
 	bar := ansi.Strip(m.filterBar())
-	for _, want := range []string{"⌕", "All ", "⚠", "⟳", "◎", "●"} {
+	for _, want := range []string{"⌕", "All ", "⚠", "↑", "◎", "●"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("bar %q, want %q in it", bar, want)
 		}
 	}
-	if counts := m.imgCounts(); counts[imgStatusPast] != 2 {
+	if counts := m.imgCounts(); counts[imgStatusEOL] != 2 {
 		t.Errorf("counts %v, want two images past their line", counts)
 	}
 
 	// and a click on the second chip selects that state, like a package table
 	m = update(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"})
-	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "⚠ past line") {
+	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "⚠ EOL") {
 		t.Errorf("bar %q, want the active chip named in full", bar)
 	}
 	head, chips := m.filterBarChips()
@@ -629,8 +629,8 @@ func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	if got := m.chipAt(x); got != chips[0].status {
 		t.Errorf("clicking the first chip gave %d, want %d", got, chips[0].status)
 	}
-	if m.imgStatus() != imgStatusPast {
-		t.Errorf("f left the images on state %d, want past line", m.imgStatus())
+	if m.imgStatus() != imgStatusEOL {
+		t.Errorf("f left the images on state %d, want EOL", m.imgStatus())
 	}
 }
 

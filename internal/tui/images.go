@@ -359,7 +359,8 @@ func (m *model) applyFact(msg imageFactMsg) {
 // untracked is the only one that shows what kho could not identify.
 const (
 	imgStatusAll = iota
-	imgStatusPast
+	imgStatusEOL
+	imgStatusGone
 	imgStatusStale
 	imgStatusTracked
 	imgStatusUntracked
@@ -368,8 +369,8 @@ const (
 )
 
 var (
-	imageStatusNames = []string{"All", "⚠ past line", "⟳ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
-	imageStatusIcons = []string{"All", "⚠", "⟳", "◎", "◌", "●", "○"}
+	imageStatusNames = []string{"All", "⚠ EOL", "⚠ gone", "↑ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
+	imageStatusIcons = []string{"All", "⚠", "✗", "↑", "◎", "◌", "●", "○"}
 )
 
 func (m model) imgStatus() int { return m.imgStatuses[m.curRow().key] }
@@ -497,8 +498,10 @@ func (m model) matchImgStatus(r image.Ref) bool { return m.imgMatchStatus(r, m.i
 
 func (m model) imgMatchStatus(r image.Ref, s int) bool {
 	switch s {
-	case imgStatusPast:
-		return r.State == image.EOL || r.State == image.Gone
+	case imgStatusEOL:
+		return r.State == image.EOL
+	case imgStatusGone:
+		return r.State == image.Gone
 	case imgStatusStale:
 		return r.State == image.Stale
 	case imgStatusTracked:
@@ -595,13 +598,13 @@ func shortState(r image.Ref) string {
 	case image.Fresh:
 		return "✓ fresh"
 	case image.Stale:
-		return "⟳ stale"
+		return "↑ stale"
 	case image.EOL:
 		return "⚠ EOL"
 	case image.Gone:
 		return "⚠ gone"
 	case image.Pinned:
-		return "· pinned"
+		return "⚑ pinned"
 	case image.Local:
 		return "· local"
 	case image.None:
@@ -788,12 +791,14 @@ func (m model) sideBoxFor(w, h int, focused bool) string {
 // imageStatusBar counts the project's images by what matters: past the line,
 // stale, and held on the machine.
 func (m model) imageStatusBar() string {
-	var past, stale, disk int
+	var eol, gone, stale, disk int
 	list := m.imgList()
 	for _, r := range list {
 		switch r.State {
-		case image.EOL, image.Gone:
-			past++
+		case image.EOL:
+			eol++
+		case image.Gone:
+			gone++
 		case image.Stale:
 			stale++
 		}
@@ -802,11 +807,14 @@ func (m model) imageStatusBar() string {
 		}
 	}
 	parts := []string{" " + pillOn(fmt.Sprintf("%d images", len(list)), th.subtle, th.selFg)}
-	if past > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d past their line", past), th.red, th.selFg))
+	if eol > 0 {
+		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d EOL", eol), th.red, th.selFg))
+	}
+	if gone > 0 {
+		parts = append(parts, pillOn(fmt.Sprintf("✗ %d gone", gone), th.red, th.selFg))
 	}
 	if stale > 0 {
-		parts = append(parts, pill(fmt.Sprintf("⟳ %d stale", stale), th.yellow))
+		parts = append(parts, pill(fmt.Sprintf("↑ %d stale", stale), th.yellow))
 	}
 	parts = append(parts, pill(fmt.Sprintf("● %d on disk", disk), th.cyan), pill(fmt.Sprintf("○ %d not pulled", len(list)-disk), th.muted))
 	left := strings.Join(parts, " ")
