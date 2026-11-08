@@ -8,7 +8,7 @@
 
 ![kho](https://github.com/user-attachments/assets/955660c2-7728-4f2b-b8b1-90ba7b144888)
 
-*Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, Composer, pipx, uv, `go install`, mise and the skills CLI have put on your machine, and what the project in front of you depends on. It tells you which of those packages have known vulnerabilities, and upgrades the machine's only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
+*Kho* is Vietnamese for storehouse. It gathers what the package managers on your machine have installed, and what the project in front of you depends on, into one table: each version, where it came from, and whether it is safe. It checks them against public vulnerability data, and changes the machine only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
 
 <details>
 <summary>See it run</summary>
@@ -21,13 +21,11 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
-- **Everything in one list.** Packages from every manager in one table, with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
-- **Knows what's unsafe.** Checks packages against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
-- **Knows your project too.** Run kho in a project folder and it reads the lockfiles there in the background: `package-lock.json`, `composer.lock`, `go.mod`, `uv.lock`, `poetry.lock`, pinned `requirements*.txt` and `Cargo.lock`, four folders deep. They show in their own section at the bottom of the sidebar, with each dependency's chain back to what you required, dev packages marked, and the project's own command to fix a vulnerable one. kho only reads lockfiles. It never runs the project's tools and never changes the project.
-- **Reads before you change.** Versions with their release notes, dependencies (flagged when they're vulnerable), and for skills: SKILL.md, the README, and which agents can see the skill.
-- **Changes only on your say-so.** Pick a version to upgrade or downgrade, read the exact command, confirm, and watch it run in a popup without leaving kho. Link or unlink a skill for any agent the skills CLI supports. Every command kho runs is kept in a history you can browse.
-- **Works for agents too.** `kho check --json` answers "am I safe?", `kho check --project` asks the same of a project (and works as a CI gate), and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
-- **Pleasant to live in.** Mouse and keyboard, resizable panels, selectable text, five themes, a `?` key that lists every shortcut.
+- **Everything in one list.** Every package the machine has, and every package the project names, in one table with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
+- **Knows what's unsafe.** Packages are checked against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
+- **Reads your project.** In a project folder kho reads its lockfiles in the background and shows them in the sidebar, with each dependency's chain back to what you required, dev packages marked, and the project's own command to fix a vulnerable one. It only reads: it never runs the project's tools and never changes the project.
+- **Changes only on your say-so.** Pick a version, read the exact command, confirm, and watch it run without leaving kho. Remove a package, link a skill for an agent, or remove an image after seeing which containers use it. Every command kho runs is kept in a history you can browse.
+- **Works for agents too.** `kho check --json` answers "am I safe?", `kho check --project` asks the same of a project and works as a CI gate, and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
 
 ## Supported sources
 
@@ -65,22 +63,9 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
 
 ## Use it
 
-Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any time for every key.
+Run `kho`, or `kho <folder>` to read another folder's project.
 
-| Key | Does |
-|---|---|
-| `tab` `h` `l` | move between Machine, Packages and the sidebar |
-| `↑` `↓` `enter` | pick, then open in the next panel; `enter` on the project opens or closes it |
-| `d` `p` | show or hide dependencies (vulnerable ones always show), hide a project's dev packages |
-| `/` `f` | filter by name, step through status filters |
-| `s` `S` | sort by the next column, reverse it |
-| `i` `v` `a` | sidebar tabs: Info, Versions, Security |
-| `enter` on a version | upgrade or downgrade to it, after a confirmation |
-| `H` | history of every command kho ran |
-| `<` `>` `{` `}` | resize panels and the sidebar's halves |
-| `D` | remove the selected package, after asking |
-| `t` | next theme |
-| `w` `c` | open the homepage, copy the text you're reading (on a project package's Security tab, its fix command) |
+kho is built for the mouse and the keyboard: every action has a shortcut, and `?` lists them all. Panels resize, sidebar text can be selected and copied, and five themes are a keypress away.
 
 ## Commands
 
