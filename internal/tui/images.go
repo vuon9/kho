@@ -27,6 +27,26 @@ var trivyAvailable = trivy.Available
 type imageTagsMsg struct {
 	key  string
 	tags []image.Tag
+	err  error
+}
+
+// tabTo switches the sidebar tab, and asks for an image's tags when the tab
+// that needs them opens, however it was opened: the v key, a numbered tab, or
+// a click on the tab bar.
+func (m *model) tabTo(tab int) tea.Cmd {
+	m.setTab(tab)
+	if tab != tabVersions {
+		return nil
+	}
+	r, ok := m.currentImg()
+	if !ok || !isImageRow(m.curRow().kind) {
+		return nil
+	}
+	key := r.Canonical()
+	if m.imgTags[key] != nil || m.imgTagBusy[key] {
+		return nil
+	}
+	return m.tagsCmd()
 }
 
 // tagsCmd asks a repository what it publishes, when a person opens Versions
@@ -39,7 +59,8 @@ func (m model) tagsCmd() tea.Cmd {
 	key, ask := r.Canonical(), m.imgAsk
 	m.imgTagBusy[key] = true
 	return func() tea.Msg {
-		return imageTagsMsg{key: key, tags: tagsFor(context.Background(), r, ask)}
+		tags, err := tagsFor(context.Background(), r, ask)
+		return imageTagsMsg{key: key, tags: tags, err: err}
 	}
 }
 
@@ -63,18 +84,18 @@ var (
 	machineImages = func(ctx context.Context, local []image.LocalImage, ask image.Asker) []image.Ref {
 		return image.Machine(ctx, local, ask, now())
 	}
-	tagsFor = func(ctx context.Context, r image.Ref, ask image.Asker) []image.Tag {
+	tagsFor = func(ctx context.Context, r image.Ref, ask image.Asker) ([]image.Tag, error) {
 		t, ok := ask.(interface {
 			Tags(context.Context, image.Ref) ([]image.Tag, error)
 		})
 		if !ok {
-			return nil
+			return nil, nil
 		}
 		tags, err := t.Tags(ctx, r)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return tags
+		return tags, nil
 	}
 )
 
@@ -862,16 +883,21 @@ func versionOf(name string) string {
 // imageVersionLines lists the tags the repository publishes, newest first,
 // with the one in use marked.
 func (m model) imageVersionLines(r image.Ref) []line {
-	tags := m.sortedTags(r)
-	if len(tags) == 0 {
+	// The tag in use is always shown, so ask what the registry said before
+	// that: an empty answer must read as empty, not as one version.
+	if len(m.imgTags[r.Canonical()]) == 0 {
 		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
 			return plain(faint().Render(" this image has no repository to ask"))
 		}
 		if m.imgTagBusy[r.Canonical()] {
 			return plain(faint().Render(" asking " + r.Registry + " for its tags"))
 		}
+		if e := m.imgTagErr[r.Canonical()]; e != "" {
+			return plain(faint().Render(" " + ansi.Truncate(e, 52, "…")))
+		}
 		return plain(faint().Render(" press v again to ask " + r.Registry))
 	}
+	tags := m.sortedTags(r)
 	var lines []line
 	for _, t := range tags {
 		mark := "  "

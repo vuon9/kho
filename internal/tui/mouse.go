@@ -216,8 +216,7 @@ func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 		for i, label := range m.tabLabels() {
 			edge += lipgloss.Width(label) + 1
 			if x < edge {
-				m.setTab(m.tabs()[i])
-				return nil
+				return m.tabTo(m.tabs()[i])
 			}
 		}
 	case row < l.topRows:
@@ -265,8 +264,7 @@ func (m *model) clickImageSide(x, row int, focused bool) tea.Cmd {
 		for i, label := range m.tabLabels() {
 			edge += lipgloss.Width(label) + 1
 			if x < edge {
-				m.setTab(m.tabs()[i])
-				return nil
+				return m.tabTo(m.tabs()[i])
 			}
 		}
 		return nil

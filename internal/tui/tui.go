@@ -240,6 +240,7 @@ type model struct {
 	imgVulns    map[string][]trivy.Vuln
 	imgScanning map[string]bool
 	imgTagBusy  map[string]bool
+	imgTagErr   map[string]string
 	imgScanErr  map[string]string
 	imgErr      error
 	imgBusy     bool
@@ -311,7 +312,8 @@ func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
 		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
 		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
-		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{}}
+		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{},
+		imgTagErr: map[string]string{}}
 	m.reset()
 	return m
 }
@@ -464,7 +466,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reindex()
 	case imageTagsMsg:
 		delete(m.imgTagBusy, msg.key)
-		if msg.tags != nil {
+		if msg.err != nil {
+			m.imgTagErr[msg.key] = msg.err.Error()
+			return m, nil
+		}
+		delete(m.imgTagErr, msg.key)
+		if len(msg.tags) > 0 {
 			m.imgTags[msg.key] = msg.tags
 		}
 		return m, nil
@@ -891,21 +898,18 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.railW, m.sideW, m.split = 0, 0, 0
 	case "1", "2", "3", "4", "5", "6":
 		if i := int(key[0] - '1'); i < len(tabs) {
-			m.setTab(tabs[i])
+			return m.tabTo(tabs[i]), false
 		}
 	case "i":
 		m.setTab(tabInfo)
 	case "v":
-		m.setTab(tabVersions)
-		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imgTags[r.Canonical()] == nil && !m.imgTagBusy[r.Canonical()] {
-			return m.tagsCmd(), false
-		}
+		return m.tabTo(tabVersions), false
 	case "a":
 		m.setTab(tabSecurity)
 	case "]":
-		m.setTab(tabs[(slices.Index(tabs, m.activeTab())+1)%len(tabs)])
+		return m.tabTo(tabs[(slices.Index(tabs, m.activeTab())+1)%len(tabs)]), false
 	case "[":
-		m.setTab(tabs[(slices.Index(tabs, m.activeTab())+len(tabs)-1)%len(tabs)])
+		return m.tabTo(tabs[(slices.Index(tabs, m.activeTab())+len(tabs)-1)%len(tabs)]), false
 	case "J", "ctrl+d":
 		m.scrollDetail(map[string]int{"J": 1, "ctrl+d": m.layout().bottomRows / 2}[key])
 	case "K", "ctrl+u":

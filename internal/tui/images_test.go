@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"testing"
 	"time"
@@ -471,5 +473,72 @@ func TestImagesHideUnverified(t *testing.T) {
 	m = press(t, m, "f", "f", "f", "f")
 	if !strings.Contains(screen(m), "BASE_IMAGE") {
 		t.Errorf("the untracked filter should show it again:\n%s", screen(m))
+	}
+}
+
+// Opening Versions asks the repository, whether it was opened with v, with a
+// numbered tab, or with a click on the tab bar.
+func TestVersionsTabAsksHoweverItOpens(t *testing.T) {
+	asked := 0
+	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
+		asked++
+		return []image.Tag{{Name: "22.23.4"}}, nil
+	}
+	t.Cleanup(func() {
+		tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) { return nil, nil }
+	})
+
+	for _, open := range []struct {
+		id string
+		do func(model) model
+	}{
+		{id: "the v key", do: func(m model) model { return update(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"}) }},
+		{id: "the numbered tab", do: func(m model) model { return update(t, m, tea.KeyPressMsg{Code: '2', Text: "2"}) }},
+		{id: "a click on the tab bar", do: func(m model) model {
+			l := m.layout()
+			tabX := l.sideX + 3 + lipgloss.Width(m.tabLabels()[0]) + 2
+			return update(t, m, tea.MouseClickMsg{X: tabX, Y: l.top, Button: tea.MouseLeft})
+		}},
+	} {
+		asked = 0
+		m := onImages(t, withImages(t, sampleImages()...))
+		m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+		m = open.do(m)
+		if asked != 1 {
+			t.Errorf("%s: asked %d times, want once", open.id, asked)
+			continue
+		}
+		r, _ := m.currentImg()
+		if got := m.imgTags[r.Canonical()]; len(got) != 1 {
+			t.Errorf("%s: tags %v, want the repository's answer", open.id, got)
+		}
+	}
+}
+
+// An empty answer reads as empty and says why, instead of looking like a
+// repository that publishes one version.
+func TestVersionsSaysWhyItIsEmpty(t *testing.T) {
+	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
+		return nil, errors.New("docker hub answered 429 for library/python")
+	}
+	t.Cleanup(func() {
+		tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) { return nil, nil }
+	})
+
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
+
+	r, _ := m.currentImg()
+	var text []string
+	for _, l := range m.imageVersionLines(r) {
+		text = append(text, l.text)
+	}
+	joined := ansi.Strip(strings.Join(text, "\n"))
+	if !strings.Contains(joined, "429") {
+		t.Errorf("panel %q, want the reason it is empty", joined)
+	}
+	if strings.Contains(joined, "→") {
+		t.Errorf("panel %q, want no version row when the registry said nothing", joined)
 	}
 }
