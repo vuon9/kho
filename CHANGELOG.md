@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.11](https://github.com/vuon9/kho/compare/v0.1.10...v0.1.11) (2026-11-08)
+
+
+### Features
+
+* **status:** one vocabulary for packages and images ([#41](https://github.com/vuon9/kho/issues/41)) ([7e5db12](https://github.com/vuon9/kho/commit/7e5db1297cadec1810c39eb007ec234e7f4fb5f7))
+
+
+### Documentation
+
+* **agents:** record the rules this release earned, and drop the stale ones ([#43](https://github.com/vuon9/kho/issues/43)) ([cd61119](https://github.com/vuon9/kho/commit/cd611190bdf5ddc68bbd7f02af24f70414c3a0a3))
+
 ## [0.1.10](https://github.com/vuon9/kho/compare/v0.1.9...v0.1.10) (2026-11-08)
 
 
