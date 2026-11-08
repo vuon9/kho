@@ -21,11 +21,11 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
-- **Everything in one list.** Every package the machine has, and every package the project names, in one table with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
-- **Knows what's unsafe.** Packages are checked against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
-- **Reads your project.** In a project folder kho reads its lockfiles in the background and shows them in the sidebar, with each dependency's chain back to what you required, dev packages marked, and the project's own command to fix a vulnerable one. It only reads: it never runs the project's tools and never changes the project.
-- **Changes only on your say-so.** Pick a version, read the exact command, confirm, and watch it run without leaving kho. Remove a package, link a skill for an agent, or remove an image after seeing which containers use it. Every command kho runs is kept in a history you can browse.
-- **Works for agents too.** `kho check --json` answers "am I safe?", `kho check --project` asks the same of a project and works as a CI gate, and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
+- **One list** of the machine's packages and the project's dependencies, with installed and latest versions.
+- **Advisory checks** from [OSV](https://osv.dev) and [skills.sh](https://skills.sh), plus the version that fixes each finding.
+- **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
+- **Explicit changes**: install, upgrade, remove, each showing its command first.
+- **Agent-friendly**: JSON output, scriptable exit codes, and the `use-kho` skill.
 
 ## Supported sources
 
