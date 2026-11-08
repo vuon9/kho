@@ -18,8 +18,10 @@ type Remote struct {
 	// Upstream is the version the image declares, as in 22.23.4 from
 	// NODE_VERSION.
 	Upstream string
-	// Base is the distribution the image sits on, when it says.
-	Base string
+	// Base is the distribution or runtime the image sits on, when it says, and
+	// BaseVersion is that runtime's own version, which is never Upstream.
+	Base        string
+	BaseVersion string
 	// Gone means the registry does not publish this tag at all.
 	Gone bool
 }
@@ -103,7 +105,7 @@ func Decide(r Ref, remote Remote, life Life, now time.Time) Ref {
 		r.State = None
 		return r
 	}
-	r.Upstream, r.Base = remote.Upstream, remote.Base
+	r.Upstream, r.Base, r.BaseVersion = remote.Upstream, remote.Base, remote.BaseVersion
 	if !life.EOL.IsZero() {
 		r.EOL = life.EOL
 	}

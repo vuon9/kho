@@ -89,6 +89,7 @@ type Ref struct {
 	// What the registry and the lifecycle pages said.
 	Upstream     string    `json:"upstream,omitempty"`
 	Base         string    `json:"base,omitempty"`
+	BaseVersion  string    `json:"baseVersion,omitempty"`
 	Built        time.Time `json:"built,omitzero"`
 	RemoteDigest string    `json:"remoteDigest,omitempty"`
 	RemotePushed time.Time `json:"remotePushed,omitzero"`

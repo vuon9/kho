@@ -191,7 +191,7 @@ func (c *Client) fetchFrom(ctx context.Context, r image.Ref, s source, ref strin
 	if err != nil || status != http.StatusOK {
 		return remote, true, nil
 	}
-	remote.Pushed, remote.Upstream, remote.Base = readConfig(configBody, r)
+	remote.Pushed, remote.Upstream, remote.Base, remote.BaseVersion = readConfig(configBody, r)
 	_ = media
 	return remote, true, nil
 }
@@ -215,7 +215,7 @@ func pickPlatform(manifests []struct {
 
 // readConfig pulls the facts an image declares: when it was built, which
 // upstream version it carries, and which distribution it sits on.
-func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base string) {
+func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base, baseVersion string) {
 	var doc struct {
 		Created time.Time `json:"created"`
 		Config  struct {
@@ -224,7 +224,7 @@ func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base stri
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return time.Time{}, "", ""
+		return time.Time{}, "", "", ""
 	}
 	pushed = doc.Created
 	versions := map[string]string{}
@@ -234,21 +234,100 @@ func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base stri
 			versions[name] = value
 		}
 	}
-	for _, name := range []string{"NODE_VERSION", "PYTHON_VERSION", "RUBY_VERSION", "GO_VERSION", "PHP_VERSION",
-		"JAVA_VERSION", "NGINX_VERSION", "REDIS_VERSION", "PG_VERSION", "MARIADB_VERSION", "MYSQL_VERSION"} {
-		if v := versions[name]; v != "" {
-			upstream = v
-			break
-		}
-	}
-	if upstream == "" {
-		upstream = doc.Config.Labels["org.opencontainers.image.version"]
-	}
-	base = doc.Config.Labels["org.opencontainers.image.base.name"]
+	base = shortBase(doc.Config.Labels["org.opencontainers.image.base.name"])
 	if base == "" {
 		base = baseFromTag(r.Tag)
 	}
-	return pushed, upstream, base
+	upstream, baseVersion, runtime := imageVersion(versions, r, base)
+	if upstream == "" {
+		upstream = doc.Config.Labels["org.opencontainers.image.version"]
+	}
+	if base == "" {
+		base = runtime
+	}
+	if baseVersion == "" && base != "" {
+		baseVersion = versions[versionToken(base)+"_VERSION"]
+	}
+	return pushed, upstream, base, baseVersion
+}
+
+// imageVersion picks the version of the thing the image is for, not the one of
+// the image it is built on: composer:2 carries both PHP_VERSION and
+// COMPOSER_VERSION, and only the second is Composer.
+func imageVersion(versions map[string]string, r image.Ref, base string) (upstream, baseVersion, runtime string) {
+	product := versionToken(r.Repo)
+	if product != "" {
+		for name, v := range versions {
+			if v == "" || !strings.HasSuffix(name, "_VERSION") {
+				continue
+			}
+			if name == product+"_VERSION" || strings.Contains(name, product) {
+				upstream = v
+				break
+			}
+		}
+	}
+	// Whichever known runtime is not the product is the base the image sits on.
+	baseToken := versionToken(base)
+	for _, name := range []string{"NODE_VERSION", "PYTHON_VERSION", "RUBY_VERSION", "GO_VERSION", "PHP_VERSION",
+		"JAVA_VERSION", "NGINX_VERSION", "REDIS_VERSION", "PG_VERSION", "MARIADB_VERSION", "MYSQL_VERSION"} {
+		v := versions[name]
+		if v == "" {
+			continue
+		}
+		if product != "" && strings.Contains(name, product) {
+			continue
+		}
+		if baseToken != "" && strings.Contains(name, baseToken) {
+			// The base is known by name, so this version is the base's, never
+			// the version of the thing the image is for.
+			baseVersion = v
+			break
+		}
+		if upstream == "" {
+			// Nothing names the product, so the runtime is the best answer there is.
+			upstream = v
+			continue
+		}
+		baseVersion = v
+		if base == "" {
+			runtime = strings.ToLower(strings.TrimSuffix(name, "_VERSION"))
+		}
+		break
+	}
+	return upstream, baseVersion, runtime
+}
+
+// shortBase turns an OCI base label into the word a person reads: the
+// repository's last path segment, without a tag.
+func shortBase(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexAny(name, ":@"); i >= 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+// versionToken turns a repository or base name into the word its version
+// variable is built from: library/composer becomes COMPOSER.
+func versionToken(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexAny(name, ":@"); i >= 0 {
+		name = name[:i]
+	}
+	var b strings.Builder
+	for _, c := range strings.ToUpper(name) {
+		if c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }
 
 // baseFromTag names the distribution an official image sits on, which its

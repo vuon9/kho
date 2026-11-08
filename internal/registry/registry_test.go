@@ -166,9 +166,9 @@ func TestBaseFromTag(t *testing.T) {
 
 func TestReadConfig(t *testing.T) {
 	body := []byte(`{"created":"2026-11-05T19:50:58Z","config":{"Env":["NODE_VERSION=22.23.4","YARN_VERSION=1.22.22"],"Labels":{"org.opencontainers.image.version":"22.23.4"}}}`)
-	pushed, upstream, base := readConfig(body, image.Parse("node:22-alpine"))
-	if upstream != "22.23.4" || base != "alpine" || pushed.IsZero() {
-		t.Errorf("readConfig = %v %q %q", pushed, upstream, base)
+	pushed, upstream, base, baseVersion := readConfig(body, image.Parse("node:22-alpine"))
+	if upstream != "22.23.4" || base != "alpine" || baseVersion != "" || pushed.IsZero() {
+		t.Errorf("readConfig = %v %q %q %q", pushed, upstream, base, baseVersion)
 	}
 	if json.Valid(body) == false {
 		t.Error("fixture is not JSON")
@@ -430,5 +430,67 @@ func TestHubTagsKeepOnlyTheLine(t *testing.T) {
 	}
 	if want := []string{"13.23", "13.22", "13.21", "13.20", "13.19", "13.18", "13.17", "13.16", "13"}; !slices.Equal(names, want) {
 		t.Errorf("got %v, want only the 13 line: %v", names, want)
+	}
+}
+
+// An image's version is the thing it is for, not the runtime it is built on:
+// composer:2 carries both PHP_VERSION and COMPOSER_VERSION.
+func TestUpstreamIsTheProductsVersion(t *testing.T) {
+	config := []byte(`{"created":"2026-11-05T08:00:00Z","config":{"Env":[
+		"PATH=/usr/local/bin","PHP_VERSION=8.5.12","PHP_URL=https://example.invalid/php",
+		"COMPOSER_VERSION=2.11.1"],"Labels":{}}}`)
+	child := []byte(fmt.Sprintf(`{"config":{"digest":"%s"}}`, digestOf(config)))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/2"):
+			fmt.Fprintf(w, `{"manifests":[{"digest":"%s","platform":{"os":"linux","architecture":"arm64"}}]}`, digestOf(child))
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Write(child)
+		default:
+			w.Write(config)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), Base: func(string) string { return srv.URL }}
+
+	remote, err := c.Remote(context.Background(), image.Parse("composer:2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Upstream != "2.11.1" {
+		t.Errorf("upstream %q, want the Composer version, not the PHP one", remote.Upstream)
+	}
+	if remote.Base != "php" || remote.BaseVersion != "8.5.12" {
+		t.Errorf("base %q %q, want php 8.5.12 named as the base", remote.Base, remote.BaseVersion)
+	}
+}
+
+// The runtime the image is built on is not its version, so a base whose label
+// names it leaves that key out.
+func TestUpstreamIgnoresTheBaseRuntime(t *testing.T) {
+	config := []byte(`{"created":"2026-11-05T08:00:00Z","config":{"Env":["PHP_VERSION=8.5.12"],"Labels":{"org.opencontainers.image.base.name":"docker.io/library/php"}}}`)
+	child := []byte(fmt.Sprintf(`{"config":{"digest":"%s"}}`, digestOf(config)))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/9.9"):
+			fmt.Fprintf(w, `{"manifests":[{"digest":"%s","platform":{"os":"linux","architecture":"arm64"}}]}`, digestOf(child))
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Write(child)
+		default:
+			w.Write(config)
+		}
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), Base: func(string) string { return srv.URL }}
+
+	remote, err := c.Remote(context.Background(), image.Parse("some-tool:9.9"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Upstream != "" {
+		t.Errorf("upstream %q, want nothing rather than the base's PHP", remote.Upstream)
+	}
+	if remote.Base != "php" || remote.BaseVersion != "8.5.12" {
+		t.Errorf("base %q %q, want php 8.5.12 from the label and its key", remote.Base, remote.BaseVersion)
 	}
 }
