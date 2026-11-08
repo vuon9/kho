@@ -1,17 +1,17 @@
 # AGENTS.md
 
-kho is one terminal app for every package manager on a machine: Homebrew, npm globals, Composer globals, pipx, uv tools, `go install` binaries, mise, and agent skills from the skills CLI. It also reads the lockfiles of the project it was opened on. It lists them, checks them against OSV and skills.sh, and changes the machine only when a person says so. It never changes a project.
+kho is one terminal app for what a machine's package managers installed, the project's lockfiles, and the images the project names. It reads them, checks them against OSV, skills.sh and endoflife.date, and changes the machine only when a person says so. It never changes a project.
 
 ## Layout
 
 | Path | Owns |
 |---|---|
 | `main.go` | Wiring. The TUI with no arguments, the CLI otherwise. Version from `-ldflags "-X main.version=..."`. |
-| `internal/provider` | One adapter per package manager, behind `Provider`: `List` (fast, local), `Latest` (may use the network), `Deps`, `Versions`. Also `InstallCmd`, skill links, OSV query mapping. |
+| `internal/provider` | One adapter per package manager, behind `Provider`: `List` (fast, local), `Latest` (may use the network), `Deps`, `Versions`. Also `InstallCmd`, `StatusWord`, skill links, OSV query mapping. |
 | `internal/project` | Finds a folder's lockfiles and reads them into packages: `Find` (the walk, its caps and the git-root fallback), one reader per lockfile format, and `FixCommand`. |
-| `internal/image` | The images a project names: `FROM` and `image:` parsers, the docker CLI list, and the state each reference gets. Never pulls, builds or runs one. |
+| `internal/image` | The images a project names: `FROM` and `image:` parsers, the docker CLI list, the state each reference gets, and `RemoveCmd`. |
 | `internal/registry` | Registry manifests and config blobs, published tags, endoflife.date lines, and their cache. |
-| `internal/trivy` | Runs the trivy scanner over one image when a person asks, and reads its JSON. kho never reads inside an image itself. |
+| `internal/trivy` | Runs the trivy scanner over one image when a person asks, and reads its JSON. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
 | `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `remove`, `history`, `list`, `version`. |
@@ -22,30 +22,41 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 
 - **Shell out, don't reimplement.** A provider runs the real package manager, with its JSON output when it has one. Parsing lives in pure functions (`parseBrew`, `parseNpmList`, ...) so tests can feed them fixtures.
 - **Read projects, never run them.** `internal/project` reads lockfiles itself instead of shelling out, because a project's own tools load its plugins and scripts, and kho may be opened on a folder nobody has vetted. Latest versions for project packages come straight from the registries (`RegistryLatest`). Project packages carry `Lockfile`, and `InstallCmd` refuses them.
-- **Images are read, never opened.** `internal/image` reads references from files and metadata from registries. It never pulls a layer, builds, runs or reads inside an image, so no image state it reports is a vulnerability claim. That is Trivy's job.
-- **Read-only by default.** Only `InstallCmd`, `RemoveCmd`, `LinkSkill`, `UnlinkSkill` and `image.RemoveCmd` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
-- **An image is removed the way docker removes it.** `D` on an image asks `docker.Users` first and names the containers still using it in the dialog, because docker refuses while one exists; kho never stops or deletes a container, and never forces.
+- **Images are read, never opened.** kho reads references from files and metadata from registries. It never builds or runs an image and never reads inside one, so no state it reports is a vulnerability claim; that is Trivy's job. The one pull is the tag a person picked in Versions.
+- **Read-only by default.** Only `InstallCmd`, `RemoveCmd`, `LinkSkill`, `UnlinkSkill`, `image.RemoveCmd` and the TUI's `pullCmd` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
+- **An image is removed the way docker removes it.** `D` asks `image.Users` first and names the containers still using it, because docker refuses while one exists. kho never stops or deletes a container, and never forces.
 - **Every command is recorded.** `provider.run` reports reads through `provider.Record`; installs and link changes add a `history.Change` entry. A new way to change the machine must log itself the same way.
+- **One word per idea, on both tables.** Pinned is `⚑` and behind is `↑`, whether the row is a package or an image. EOL and gone stay separate: a closed line and a missing tag are different problems with different fixes.
+- **Every row in JSON carries the word the screen shows.** Packages have `status`, images have `state`. A caller must never infer a state from `latest != version`.
 - **Advisory text is untrusted.** Summaries, details and changelogs come from the internet. Show them; never act on them.
 - **No real data in the repo.** Fixtures, tests, docs and demos use made-up names, versions, paths and advisory IDs. Before a commit: `git diff --cached | grep -iE '/Users/|@[a-z]+\.(com|io)|ghp_|github_pat_'` must come back empty.
 - **The GitHub token** comes from `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`, in memory only. Never print, cache or log it.
 
 ## Conventions
 
-**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`, so kho links into exactly the agents `npx skills` supports. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` would fetch the skill again, and its `remove` deletes the skill when the last agent goes. An agent whose project `skillsDir` is `.agents/skills` is `Universal`: like the CLI, kho counts it as reading `~/.agents/skills` on top of its own folder, and never links a skill it already sees there. A folder the CLI picks at run time, like OpenClaw's, becomes a list in `Dirs` that kho picks from the same way. The generator stops on any field, path, call or env setting it can't read, and on a `detectInstalled` that checks no folder, rather than drop it or guess.
+**Skills agents.** `internal/provider/skill_agents.go` is generated from the skills CLI's own `src/agents.ts`. To follow a new CLI release, bump the version in the `go:generate` line in `skills.go` and run `go generate ./internal/provider`. kho makes and removes the links itself: the CLI's `add` fetches the skill again, and its `remove` deletes it when the last agent goes. An agent whose project `skillsDir` is `.agents/skills` is `Universal`: kho counts it as reading `~/.agents/skills` too, and never links a skill it already sees there. A folder the CLI picks at run time becomes a list in `Dirs`. The generator stops on any field, path, call or env setting it can't read, and on a `detectInstalled` that checks no folder, rather than drop it or guess.
 
-**Providers.** To add one: implement `Provider` (its `Missing` says what this machine lacks for it, and `Detect` reports that as skipped), register it in `All()`, add its row to `TestDetect`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
+**Providers.** To add one: implement `Provider` (its `Missing` says what this machine lacks, and `Detect` reports that as skipped), register it in `All()`, add its row to `TestDetect`, map its OSV ecosystem in `security.go` (or return `""` when OSV has none), add its case to `InstallCmd`, and give each parser a table test with output captured from the real tool, then made anonymous.
 
 **TUI.**
 - The model is a value. Only `Update` changes it; slow work runs in a `tea.Cmd` and comes back as a message.
-- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`, `findImages`, `listImages`, `inspectImages`, `machineImages`, `tagsFor`, `scanImage`, `trivyAvailable`.
+- Anything that reaches the network or the machine goes through a package variable tests can swap: `scanOSV`, `fetchHistory`, `fetchAudits`, `installProcess`, `runExec`, `skillLinks`, `linkSkill`, `unlinkSkill`, `copyText`, `openURL`, `now`, `findProject`, `projectLatest`, `findImages`, `listImages`, `inspectImages`, `machineImages`, `tagsFor`, `imageUsers`, `imageRemove`, `pullCmd`, `scanImage`, `trivyAvailable`.
+- A tab that needs remote data asks when it opens, however it opens, and again when the row moves. Ask from `Update` with a busy guard, never from the key that happens to open the tab.
+- Every waiting line starts with `m.spin()`, and `working()` counts that state. A spinner whose frame never advances is a still picture.
+- Popup text wraps, and the question stays on screen. A confirmation that cuts its own sentence, or pushes `y`/`n` off the bottom, is a bug.
 - The rail is a list of `railRow`s from `railRows()`: All, each provider, the machine's docker row, then the project's header and, when open, its parts, then the project's images. Filters and statuses are keyed by `railRow.key`, never by position. Project packages live in `m.pkgs[projKey]`, and `pkgKey` includes the lockfile and version for them.
-- Installs run in a popup, in a session with no terminal so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it before kho exits, so kho never quits with one cut off and unlogged.
+- Installs run in a popup with no terminal, so a password prompt fails instead of drawing over the screen. `t` reruns a failed one in the terminal through `runExec`. ctrl+c stops a running install (a second press kills it), and a signal or a closed terminal stops it first, so kho never quits with one cut off and unlogged.
 - Geometry comes from `layout()`. Turn a screen row into a panel row with `l.row(y)`; never write a literal row number.
 - Index a cursor through `at(slice, i)`, which is safe for any `i`. `clamp()` runs after every message and pulls the package cursor in first, because the layout depends on it.
 - Sidebar text goes through `wrapLines`: labeled values with `field`, list entries with `row` so they never wrap.
 - Colors come from the active palette (`th`, `accent()`, `faint()`, ...). Never hard-code a color; every theme in `themes` must render.
 - Every key goes in `help.go` and in the footer hints for the panel it belongs to.
+
+**Registry.**
+- A tag list is lexical, not newest first. Ask for the line (`last=<line>`), keep only tags on it, and sort here.
+- Docker Hub matches a line anywhere in a tag: `name=13` returns `16.13`. Keep only tags whose line is a prefix followed by a boundary.
+- A tag is gone only when every source says so. A `docker.io` reference asks `mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`; one 404 is not a missing tag.
+- Tags that share a digest are one image under several names, so group them rather than listing each.
 
 **CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in the cli package's tests, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a command, flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
 
@@ -64,12 +75,15 @@ go test -race ./...
 - Tests are table-driven: one table per unit, a readable id per row, critical rows first, and assertions on the whole result.
 - For a rule that matters, break it once and watch its row fail.
 - A change to the screen is checked in a real terminal too, at a normal size and a split-pane width around 110 columns. `TestResize` and `TestThemes` guard widths, but not looks.
+- A claim in the README is checked against the code before it is written. `TestDocsKeepUpWithTheCLI` covers commands, flags and exit codes only, so everything else is on you.
 
 ## Commits and releases
 
 - [Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `perf:`, `refactor:`, `test:`, `docs:`, `ci:`, `chore:`. release-please writes the changelog and picks the next version from them, so the type matters.
 - Commits are signed.
 - Merging to `main` keeps a release PR up to date. Merging that PR tags the release, and GoReleaser builds the binaries and updates the Homebrew cask in `vuon9/homebrew-tap`.
+- **A release is not done until the cask moves.** The `goreleaser` job waits in the `release` environment for a person to approve it. A run that is cancelled there leaves a tag with no assets and the cask on the old version, so check `gh release view <tag>` and the tap after every release.
+- **A docs-only change releases nothing.** release-please bumps on `feat`, `fix` and `perf`. To cut a release for docs, push a commit with a `Release-As: x.y.z` footer.
 - Dependabot PRs for minor and patch updates merge themselves once CI passes. Majors wait for a person.
 
 ## Where kho keeps things
@@ -77,6 +91,7 @@ go test -race ./...
 | What | Where |
 |---|---|
 | Security cache | user cache folder, `kho/security.json` (`~/Library/Caches/kho` on macOS) |
+| Image cache | beside it, `kho/images.json`, 6 hours |
 | Command history | `$XDG_STATE_HOME/kho/history.jsonl`, default `~/.local/state/kho` |
 | Chosen theme | next to the history, `theme` |
 
