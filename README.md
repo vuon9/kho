@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
-- **One list** of the machine's packages and the project's dependencies, with installed and latest versions.
+- **One list** of the machine's packages, the project's dependencies, and the images they name, with installed and latest versions.
 - **Advisory checks** from [OSV](https://osv.dev) and [skills.sh](https://skills.sh), plus the version that fixes each finding.
 - **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
 - **Explicit changes**: install, upgrade, remove, each showing its command first.
@@ -38,6 +38,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | uv tools | `uv tool list` | PyPI | OSV |
 | `go install` binaries | build info inside each binary | Go module proxy | OSV, plus every module built in |
 | mise | `mise ls --json`, `mise outdated` | mise | not covered by OSV yet |
+| Container images | `FROM` lines in Dockerfiles, `image:` in compose files, and `docker image ls` | the image's own registry | trivy, when you ask it to scan |
 | Agent skills | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
 
 ## Install
