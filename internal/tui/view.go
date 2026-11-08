@@ -83,9 +83,9 @@ func (m model) installLines(rows int) []string {
 	var status string
 	switch in.phase() {
 	case instRunning:
-		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
+		status = m.spin() + faint().Render(" running "+took)
 	case instStopping:
-		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" stopping after "+took)
+		status = m.spin() + faint().Render(" stopping after "+took)
 	case instFailed:
 		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
 	default:
@@ -189,7 +189,7 @@ func (m model) activity() string {
 		busy = append(busy, "security")
 	}
 	if len(busy) > 0 {
-		return accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" checking "+strings.Join(busy, ", ")+" ")
+		return m.spin() + faint().Render(" checking "+strings.Join(busy, ", ")+" ")
 	}
 	if m.secErr != nil {
 		return red().Render("security check failed: "+m.secErr.Error()) + " "
@@ -435,7 +435,7 @@ func (m model) tableLines() []string {
 			return []string{"", red().Render(" " + err.Error())}
 		}
 		if m.busy[name] == "listing" {
-			return []string{"", faint().Render(" " + spinner[m.frame%len(spinner)] + " scanning " + name + "…")}
+			return []string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}
 		}
 	}
 	cols := m.tableColumns()

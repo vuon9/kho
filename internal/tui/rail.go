@@ -217,11 +217,11 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 		case m.errs[r.name] != nil:
 			mark = red().Render("!")
 		case m.busy[r.name] != "":
-			mark = accent().Render(spinner[m.frame%len(spinner)])
+			mark = m.spin()
 		}
 	case rowImages, rowMachineImages:
 		if m.imgBusy {
-			mark = accent().Render(spinner[m.frame%len(spinner)])
+			mark = m.spin()
 		}
 	case rowPart:
 		for _, lf := range m.partLockfiles(r) {
@@ -297,7 +297,7 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	}
 	var mark string
 	if m.projBusy != "" {
-		mark = accent().Render(spinner[m.frame%len(spinner)])
+		mark = m.spin()
 	}
 	line := arrow + " " + icon("project") + " " + pad(name, nameW) + m.badges(railRow{kind: rowProject, key: "project"}) + " " + mark
 	if selectedRow {
@@ -312,7 +312,7 @@ func (m model) projStatusLine() string {
 	name := icon("project") + " " + m.projName()
 	switch {
 	case m.projBusy == projReading:
-		return "▸ " + name + "  " + accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" reading lockfiles")
+		return "▸ " + name + "  " + m.spin() + faint().Render(" reading lockfiles")
 	case m.projErr != nil:
 		return "  " + name + red().Render(" · "+m.projErr.Error())
 	}

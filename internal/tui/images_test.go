@@ -741,3 +741,39 @@ func TestImageRemoveNeedsItOnDisk(t *testing.T) {
 		t.Errorf("notice %q, want it to say why nothing happened", m.notice)
 	}
 }
+
+// Every line that says work is in progress starts with the same spinner, and
+// the ticker runs while it does, so the frame moves.
+func TestImageProgressSpins(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.frame = 3
+	m.images, m.imgBusy = nil, true
+	if !m.working() {
+		t.Error("the ticker must run while kho reads a project's images")
+	}
+	screen := ansi.Strip(strings.Join(m.imageTableLines(), "\n"))
+	if !strings.Contains(screen, spinner[3]+" reading Dockerfiles and compose files") {
+		t.Errorf("table %q, want the spinner in front of the reading line", screen)
+	}
+
+	refs := sampleImages()
+	m = onImages(t, withImages(t, refs...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.frame = 5
+	m.setTab(tabVersions)
+	r, _ := m.currentImg()
+	m.imgTagBusy[r.Canonical()] = true
+	if !m.working() {
+		t.Error("the ticker must run while a repository is asked for tags")
+	}
+	if got := ansi.Strip(m.imageTabStatus()); !strings.Contains(got, spinner[5]+" asking") {
+		t.Errorf("tab status %q, want the spinner in front of asking", got)
+	}
+	m.imgTagBusy[r.Canonical()] = false
+	m.imgScanning[r.Canonical()] = true
+	m.setTab(tabSecurity)
+	if got := ansi.Strip(m.imageTabStatus()); !strings.Contains(got, spinner[5]+" scanning") {
+		t.Errorf("tab status %q, want the spinner in front of scanning", got)
+	}
+}

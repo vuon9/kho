@@ -510,7 +510,7 @@ func (m model) imageTitle() string {
 		title += " · " + imageStatusNames[s]
 	}
 	if m.imgBusy {
-		title += " · reading"
+		title += " · " + m.spin() + " reading"
 	}
 	title = fmt.Sprintf("%s · %d", title, len(m.imgRows()))
 	if n := m.hiddenUnverified(); n > 0 && m.imgStatus() != imgStatusUntracked {
@@ -692,7 +692,7 @@ func (m model) imageTableLines() []string {
 		why := "no images in this project"
 		switch {
 		case m.imgBusy:
-			why = "reading Dockerfiles and compose files"
+			why = m.spin() + " reading Dockerfiles and compose files"
 		case len(m.imgList()) > 0:
 			// there are images, the filter is hiding them
 			why = "nothing matches"
@@ -978,7 +978,7 @@ func (m model) imageTabStatus() string {
 			return "no repository to ask"
 		}
 		if m.imgTagBusy[r.Canonical()] {
-			return "asking " + r.Registry + " for its tags"
+			return m.spin() + " asking " + r.Registry + " for its tags"
 		}
 		return "tags · " + r.Registry
 	case tabSecurity:
@@ -986,7 +986,7 @@ func (m model) imageTabStatus() string {
 			return fmt.Sprintf("%d findings · trivy", n)
 		}
 		if m.imgScanning[r.Canonical()] {
-			return "scanning · trivy"
+			return m.spin() + " scanning · trivy"
 		}
 		return "no scan yet · trivy"
 	}
@@ -1120,7 +1120,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 			return plain(faint().Render(" this image has no repository to ask"))
 		}
 		if m.imgTagBusy[r.Canonical()] {
-			return plain(faint().Render(" asking " + r.Registry + " for its tags"))
+			return plain(m.spin() + faint().Render(" asking "+r.Registry+" for its tags"))
 		}
 		if e := m.imgTagErr[r.Canonical()]; e != "" {
 			return plain(faint().Render(" " + ansi.Truncate(e, 52, "…")))
@@ -1150,7 +1150,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 	key := r.Canonical()
 	if m.imgScanning[key] {
-		return plain(faint().Render(" scanning with trivy, this takes a moment"))
+		return plain(m.spin() + faint().Render(" scanning with trivy, this takes a moment"))
 	}
 	if err := m.imgScanErr[key]; err != "" {
 		return append(plain(red().Render(" "+err)), plain(faint().Render(" the rest of kho still works without a scan"))...)

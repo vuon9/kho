@@ -387,7 +387,18 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running()
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() ||
+		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning)
+}
+
+// anyOf says whether any entry of a per-image map is on.
+func (m model) anyOf(set map[string]bool) bool {
+	for _, on := range set {
+		if on {
+			return true
+		}
+	}
+	return false
 }
 
 // startTicking runs the spinner while something is loading.
