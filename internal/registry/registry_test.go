@@ -174,6 +174,24 @@ func TestReadConfig(t *testing.T) {
 	}
 }
 
+// A full version tag asks about its line, not about that one tag, or the list
+// is a single row.
+func TestHubTagsAskForTheLineOfAFullVersion(t *testing.T) {
+	tests := []struct{ tag, line string }{
+		{"3.19", "3.19"},
+		{"3.19.9", "3.19"},
+		{"3.19-slim", "3.19"},
+		{"22-alpine", "22"},
+		{"latest", ""},
+		{"edge", ""},
+	}
+	for _, tt := range tests {
+		if got := releaseLine(tt.tag); got != tt.line {
+			t.Errorf("releaseLine(%q) = %q, want %q", tt.tag, got, tt.line)
+		}
+	}
+}
+
 // A tag names a release line, and the repository's newest tags belong to newer
 // lines, so the Hub is asked for the line's own tags.
 func TestHubTagsAskForTheLine(t *testing.T) {

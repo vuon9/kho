@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/vuon9/kho/internal/image"
@@ -29,13 +31,33 @@ func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 	// A tag names a release line (3.19), and a busy repository's newest tags are
 	// all newer lines, so the newest page says nothing about this one. Ask the
-	// Hub for the line's own tags first.
-	if line := r.Cycle(); line != "" {
+	// Hub for the line's own tags first, and for a full version (3.19.9) ask
+	// about its line rather than about that one tag, or the list is one row.
+	if line := releaseLine(r.Tag); line != "" {
 		if tags, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil && len(tags) > 0 {
 			return tags, nil
 		}
 	}
 	return c.hubTagPage(ctx, r, "&page_size=40")
+}
+
+// tagVersion is the leading version of a tag, the same shape the image package
+// reads for a lifecycle line.
+var tagVersion = regexp.MustCompile(`^v?(\d+(?:\.\d+)*)`)
+
+// releaseLine is the line a tag belongs to: 3.19.9 and 3.19-slim both belong
+// to 3.19, and 22-alpine to 22. A tag with no version in it has no line.
+func releaseLine(tag string) string {
+	base, _, _ := strings.Cut(tag, "-")
+	m := tagVersion.FindStringSubmatch(base)
+	if m == nil {
+		return ""
+	}
+	parts := strings.Split(m[1], ".")
+	if len(parts) > 2 {
+		parts = parts[:2]
+	}
+	return strings.Join(parts, ".")
 }
 
 func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]image.Tag, error) {
