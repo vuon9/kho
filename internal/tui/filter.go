@@ -92,9 +92,27 @@ func (m model) counts() []int {
 	return n
 }
 
-// filterBar is the last line of the package panel: the keyword, then a chip
-// for each status with its count, the active one lit and named in full.
-func (m model) filterBar() string {
+// statusChips is the bottom bar's vocabulary for the row that is showing:
+// image states on an image row, package statuses everywhere else.
+func (m model) statusChips() (names, icons []string, counts []int, active int) {
+	if isImageRow(m.curRow().kind) {
+		return imageStatusNames, imageStatusIcons, m.imgCounts(), m.imgStatus()
+	}
+	return statusNames, statusIcons, m.counts(), m.status()
+}
+
+// chipEntry is one status chip and the index of the status it stands for, so
+// a bar that had to drop chips can still map a click back.
+type chipEntry struct {
+	status int
+	text   string
+}
+
+// filterBarChips is the bar's head (the keyword box) and the chips that fit.
+// A narrow table drops the tail rather than cutting a chip in half, and never
+// drops the one that is on.
+func (m model) filterBarChips() (string, []chipEntry) {
+	names, icons, counts, active := m.statusChips()
 	query := faint().Render("/ to filter")
 	switch {
 	case m.filtering:
@@ -102,35 +120,64 @@ func (m model) filterBar() string {
 	case m.filter() != "":
 		query = m.filter()
 	}
-	bar := " " + accent().Render("⌕ ") + pad(query, filterWidth) + " "
-	counts := m.counts()
-	for i := range statusNames {
-		bar += m.chip(i, counts[i]) + " "
+	head := " " + accent().Render("⌕ ") + pad(query, filterWidth) + " "
+	var chips []chipEntry
+	for i := range names {
+		chips = append(chips, chipEntry{status: i, text: m.chip(names, icons, i, active, counts[i])})
 	}
-	return bar
+	width := func(list []chipEntry) int {
+		var texts []string
+		for _, c := range list {
+			texts = append(texts, c.text)
+		}
+		return lipgloss.Width(head + strings.Join(texts, " "))
+	}
+	limit := m.layout().tableW - 4
+	for len(chips) > 1 && width(chips) > limit {
+		drop := len(chips) - 1
+		if chips[drop].status == active {
+			drop--
+		}
+		if drop < 0 {
+			break
+		}
+		chips = append(chips[:drop], chips[drop+1:]...)
+	}
+	return head, chips
+}
+
+// filterBar is the last line of the table: the keyword, then a chip for each
+// status with its count, the active one lit and named in full.
+func (m model) filterBar() string {
+	head, chips := m.filterBarChips()
+	var texts []string
+	for _, c := range chips {
+		texts = append(texts, c.text)
+	}
+	return head + strings.Join(texts, " ")
 }
 
 const filterWidth = 14
 
-func (m model) chip(i, count int) string {
-	if i == m.status() {
-		return pillOn(fmt.Sprintf("%s %d", statusNames[i], count), th.accent, th.pillFg)
+func (m model) chip(names, icons []string, i, active, count int) string {
+	if i == active {
+		return pillOn(fmt.Sprintf("%s %d", names[i], count), th.accent, th.pillFg)
 	}
-	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(fmt.Sprintf("%s %d", statusIcons[i], count))
+	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(fmt.Sprintf("%s %d", icons[i], count))
 }
 
-// chipAt maps an x offset within the package panel to the status chip under
-// it, or -1, or -2 for the keyword box.
+// chipAt maps an x offset within the table panel to the status chip under it,
+// or -1, or -2 for the keyword box.
 func (m model) chipAt(x int) int {
-	edge := 1 + 2 + filterWidth + 1
+	head, chips := m.filterBarChips()
+	edge := lipgloss.Width(head)
 	if x < edge {
 		return -2
 	}
-	counts := m.counts()
-	for i := range statusNames {
-		edge += lipgloss.Width(m.chip(i, counts[i])) + 1
+	for _, c := range chips {
+		edge += lipgloss.Width(c.text) + 1
 		if x < edge {
-			return i
+			return c.status
 		}
 	}
 	return -1

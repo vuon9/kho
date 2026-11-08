@@ -119,6 +119,12 @@ func logo() string {
 
 var spinner = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 
+// spin is the frame every in-progress line starts with, so waiting reads as
+// working instead of as a sentence that never changes.
+func (m model) spin() string {
+	return accent().Render(spinner[m.frame%len(spinner)])
+}
+
 func severityPill(sev string) string {
 	switch sev {
 	case "CRITICAL":

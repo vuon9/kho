@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,5 +172,263 @@ func TestReadConfig(t *testing.T) {
 	}
 	if json.Valid(body) == false {
 		t.Error("fixture is not JSON")
+	}
+}
+
+// A full version tag asks about its line, not about that one tag, or the list
+// is a single row.
+func TestHubTagsAskForTheLineOfAFullVersion(t *testing.T) {
+	tests := []struct{ tag, line string }{
+		{"3.19", "3.19"},
+		{"3.19.9", "3.19"},
+		{"3.19-slim", "3.19"},
+		{"22-alpine", "22"},
+		{"latest", ""},
+		{"edge", ""},
+	}
+	for _, tt := range tests {
+		if got := releaseLine(tt.tag); got != tt.line {
+			t.Errorf("releaseLine(%q) = %q, want %q", tt.tag, got, tt.line)
+		}
+	}
+}
+
+// A tag names a release line, and the repository's newest tags belong to newer
+// lines, so the Hub is asked for the line's own tags.
+func TestHubTagsAskForTheLine(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.RawQuery)
+		if r.URL.Query().Get("name") == "3.19" {
+			fmt.Fprint(w, `{"results":[{"name":"3.19.9","last_updated":"2025-01-01T00:00:00Z"},{"name":"3.19.0"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"name":"3.22.0"},{"name":"latest"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Ref{Registry: "docker.io", Repo: "library/alpine", Tag: "3.19"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) < 2 || tags[0].Name != "3.19.9" || tags[1].Name != "3.19.0" {
+		t.Errorf("tags %+v, want the 3.19 line first", tags)
+	}
+	if len(asked) == 0 || !strings.Contains(asked[0], "name=3.19") {
+		t.Errorf("asked %q, want the line first", asked)
+	}
+
+	asked = nil
+	tags, err = c.Tags(context.Background(), image.Ref{Registry: "docker.io", Repo: "library/alpine", Tag: "latest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 2 || len(asked) != 1 || strings.Contains(asked[0], "name=") {
+		t.Errorf("a tag with no line asked %q and got %+v, want the newest page", asked, tags)
+	}
+}
+
+// mirrorServer answers per host, so a test can make one mirror refuse and see
+// which source kho settles on.
+func mirrorServer(t *testing.T, answer map[string]http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var asked []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Host+r.URL.Path)
+		for prefix, h := range answer {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				h(w, r)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &asked
+}
+
+// byHost routes each registry host at the same test server, keeping the host in
+// the path so the handlers can tell them apart.
+func byHost(srv *httptest.Server) func(string) string {
+	return func(host string) string { return srv.URL + "/" + host }
+}
+
+func TestRemoteMirrorsDockerHub(t *testing.T) {
+	config := []byte(`{"created":"2026-11-05T08:09:10Z","config":{"Env":["PYTHON_VERSION=3.12.16"],"Labels":{}}}`)
+	child := []byte(fmt.Sprintf(`{"config":{"digest":"%s"}}`, digestOf(config)))
+	served := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/3.12-slim"):
+			fmt.Fprintf(w, `{"manifests":[{"digest":"%s","platform":{"os":"linux","architecture":"arm64"}}]}`, digestOf(child))
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Write(child)
+		default:
+			w.Write(config)
+		}
+	}
+	srv, asked := mirrorServer(t, map[string]http.HandlerFunc{
+		"/mirror.gcr.io/":        func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },
+		"/public.ecr.aws/":       served,
+		"/registry-1.docker.io/": served,
+	})
+	c := &Client{HTTP: srv.Client(), Base: byHost(srv)}
+	ref := image.Parse("python:3.12-slim")
+
+	remote, err := c.Remote(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Upstream != "3.12.16" {
+		t.Errorf("upstream %q, want the answer the mirror chain found", remote.Upstream)
+	}
+	joined := strings.Join(*asked, " ")
+	if !strings.Contains(joined, "/public.ecr.aws/v2/docker/library/python/manifests/3.12-slim") {
+		t.Errorf("asked %q, want the ecr mirror with its docker/ prefix", joined)
+	}
+	if strings.Contains(joined, "registry-1.docker.io") {
+		t.Errorf("asked %q, want the last source left alone when the second answers", joined)
+	}
+}
+
+func TestRemoteGoneOnlyWhenEverySourceSaysSo(t *testing.T) {
+	srv, asked := mirrorServer(t, map[string]http.HandlerFunc{
+		"/mirror.gcr.io/":        func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+		"/public.ecr.aws/":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },
+		"/registry-1.docker.io/": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+	})
+	c := &Client{HTTP: srv.Client(), Base: byHost(srv)}
+
+	if _, err := c.Remote(context.Background(), image.Parse("python:3.12-slim")); err == nil {
+		t.Errorf("a source that could not answer must not read as gone, asked %q", *asked)
+	}
+	if len(*asked) != 3 {
+		t.Errorf("asked %q, want every source tried", *asked)
+	}
+
+	srv2, _ := mirrorServer(t, map[string]http.HandlerFunc{
+		"/": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+	})
+	c2 := &Client{HTTP: srv2.Client(), Base: byHost(srv2)}
+	remote, err := c2.Remote(context.Background(), image.Parse("python:3.12-slim"))
+	if err != nil || !remote.Gone {
+		t.Errorf("got %+v err %v, want gone when every source says so", remote, err)
+	}
+}
+
+func TestOrderTagsPutsNumbersFirst(t *testing.T) {
+	got := orderTags([]string{"latest", "0.9.28", "initial", "0.11.6", "0.11.6-alpine"})
+	want := []string{"0.11.6", "0.11.6-alpine", "0.9.28", "initial", "latest"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeTagsKeepsTheFirstOfAName(t *testing.T) {
+	first := []image.Tag{{Name: "13.4", Pushed: time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)}}
+	second := []image.Tag{{Name: "13.4"}, {Name: "13.3"}}
+	got := mergeTags(first, second)
+	if len(got) != 2 || !got[0].Pushed.Equal(first[0].Pushed) {
+		t.Errorf("got %+v, want the first page's 13.4 kept and 13.3 added", got)
+	}
+}
+
+// A registry lists tags lexically, so the line's tags are found by asking for
+// what follows the line, and only the line's own tags are shown.
+func TestRegistryTagsAskForTheLine(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.RequestURI())
+		fmt.Fprint(w, `{"tags":["0.11.0","0.11.6","0.11.6-alpine","0.12.0","0.2.1"]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), Base: func(string) string { return srv.URL }}
+	ref := image.Parse("ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie")
+
+	tags, err := c.Tags(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "last=0.11") {
+		t.Errorf("asked %v, want one request for the line", asked)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"0.11.6", "0.11.6-alpine", "0.11.0"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want only the 0.11 line, newest first: %v", names, want)
+	}
+}
+
+// A line named thinly still gets the repository's recent tags beside it.
+func TestHubTagsAddRecentWhenLineIsThin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") == "13.4" {
+			fmt.Fprint(w, `{"results":[{"name":"13.4","last_updated":"2026-05-08T00:00:00Z"},{"name":"13.4-slim","last_updated":"2026-05-08T00:00:00Z"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"name":"13.4","last_updated":"2026-05-08T00:00:00Z"},{"name":"13.3","last_updated":"2026-02-10T00:00:00Z"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Parse("debian:13.4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 3 {
+		t.Fatalf("got %d tags, want the line's two plus 13.3", len(tags))
+	}
+}
+
+// The hub's web API is rate limited on its own, and the registry lists the
+// same tags without dates, so a 429 there does not empty the tab.
+func TestTagsFallBackToTheRegistryWhenTheHubFails(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer hub.Close()
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tags":["3.19.9","3.19.8","3.20.0"]}`)
+	}))
+	defer reg.Close()
+	c := &Client{HTTP: reg.Client(), HubBase: hub.URL, Base: func(string) string { return reg.URL }}
+
+	tags, err := c.Tags(context.Background(), image.Parse("alpine:3.19"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"3.19.9", "3.19.8"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want the registry's own tags for the line: %v", names, want)
+	}
+}
+
+// The hub matches a line anywhere in a tag, so a line filter must not let a
+// newer major version's tags into the list.
+func TestHubTagsKeepOnlyTheLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"results":[{"name":"16.13"},{"name":"15.13"},{"name":"13.23"},{"name":"13.22"},{"name":"13.21"},
+			{"name":"13.20"},{"name":"13.19"},{"name":"13.18"},{"name":"13.17"},{"name":"13.16"},{"name":"13"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Parse("postgres:13"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"13.23", "13.22", "13.21", "13.20", "13.19", "13.18", "13.17", "13.16", "13"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want only the 13 line: %v", names, want)
 	}
 }

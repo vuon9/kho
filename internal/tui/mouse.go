@@ -90,7 +90,14 @@ func (m model) confirmRect() rect {
 	for _, l := range m.confirm.lines {
 		w = max(w, lipgloss.Width(l)+4)
 	}
-	return m.centered(min(w, m.width-8), len(m.confirm.lines)+popupFrame)
+	w = min(w, m.width-8)
+	// count the rows after wrapping, so a long line grows the dialog instead
+	// of running out of it
+	rows := 0
+	for _, l := range m.confirm.lines {
+		rows += len(wrapStyled(" "+l, w-2))
+	}
+	return m.centered(w, min(rows+popupFrame, m.height-2))
 }
 
 func (m model) helpRect() rect {
@@ -179,16 +186,24 @@ func (m *model) click(x, y int) tea.Cmd {
 		m.focus = focusTable
 		switch {
 		case r == 0:
-			m.sortBy(m.columnAt(x - l.tableX - 3))
+			if isImageRow(m.curRow().kind) {
+				m.sortImgBy(m.imageColumnAt(x - l.tableX - 3))
+			} else {
+				m.sortBy(m.columnAt(x - l.tableX - 3))
+			}
 		case r == l.bodyH-3:
 			switch c := m.chipAt(x - l.tableX - 1); {
 			case c == -2:
 				m.filtering = true
+			case c >= 0 && isImageRow(m.curRow().kind):
+				m.setImgStatus(c)
 			case c >= 0:
 				m.setStatus(c)
 			}
 		case r > 0 && r <= l.rows:
-			if i := m.offset + r - 1; i < len(m.rows()) {
+			// The images table keeps its rows elsewhere, so the count comes
+			// from the row that is open, not from the packages.
+			if i := m.offset + r - 1; i < m.rowLen() {
 				m.cursor = i
 			}
 		}
@@ -214,8 +229,7 @@ func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 		for i, label := range m.tabLabels() {
 			edge += lipgloss.Width(label) + 1
 			if x < edge {
-				m.setTab(m.tabs()[i])
-				return nil
+				return m.tabTo(m.tabs()[i])
 			}
 		}
 	case row < l.topRows:
@@ -263,8 +277,7 @@ func (m *model) clickImageSide(x, row int, focused bool) tea.Cmd {
 		for i, label := range m.tabLabels() {
 			edge += lipgloss.Width(label) + 1
 			if x < edge {
-				m.setTab(m.tabs()[i])
-				return nil
+				return m.tabTo(m.tabs()[i])
 			}
 		}
 		return nil

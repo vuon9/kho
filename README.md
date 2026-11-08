@@ -8,7 +8,7 @@
 
 ![kho](https://github.com/user-attachments/assets/955660c2-7728-4f2b-b8b1-90ba7b144888)
 
-*Kho* is Vietnamese for storehouse. It lists what Homebrew, npm, Composer, pipx, uv, `go install`, mise and the skills CLI have put on your machine, and what the project in front of you depends on. It tells you which of those packages have known vulnerabilities, and upgrades the machine's only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
+*Kho* is Vietnamese for storehouse. It gathers what the package managers on your machine have installed, and what the project in front of you depends on, into one table: each version, where it came from, and whether it is safe. It checks them against public vulnerability data, and changes the machine only when you say so. It runs as a terminal app for you and as a JSON CLI for your agents.
 
 <details>
 <summary>See it run</summary>
@@ -21,13 +21,11 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
-- **Everything in one list.** Packages from every manager in one table, with installed and latest versions. Sort by any column, filter by name or status, and each source keeps its own filters.
-- **Knows what's unsafe.** Checks packages against [OSV](https://osv.dev) and agent skills against [skills.sh](https://skills.sh) audits. Each version in a package's history is marked as affected or safe, so you can see which upgrade actually fixes things.
-- **Knows your project too.** Run kho in a project folder and it reads the lockfiles there in the background: `package-lock.json`, `composer.lock`, `go.mod`, `uv.lock`, `poetry.lock`, pinned `requirements*.txt` and `Cargo.lock`, four folders deep. They show in their own section at the bottom of the sidebar, with each dependency's chain back to what you required, dev packages marked, and the project's own command to fix a vulnerable one. kho only reads lockfiles. It never runs the project's tools and never changes the project.
-- **Reads before you change.** Versions with their release notes, dependencies (flagged when they're vulnerable), and for skills: SKILL.md, the README, and which agents can see the skill.
-- **Changes only on your say-so.** Pick a version to upgrade or downgrade, read the exact command, confirm, and watch it run in a popup without leaving kho. Link or unlink a skill for any agent the skills CLI supports. Every command kho runs is kept in a history you can browse.
-- **Works for agents too.** `kho check --json` answers "am I safe?", `kho check --project` asks the same of a project (and works as a CI gate), and the `use-kho` skill teaches an agent to report risks and fix them with your approval.
-- **Pleasant to live in.** Mouse and keyboard, resizable panels, selectable text, five themes, a `?` key that lists every shortcut.
+- **One list** of the machine's packages and the project's dependencies, with installed and latest versions.
+- **Advisory checks** from [OSV](https://osv.dev) and [skills.sh](https://skills.sh), plus the version that fixes each finding.
+- **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
+- **Explicit changes**: install, upgrade, remove, each showing its command first.
+- **Agent-friendly**: JSON output, scriptable exit codes, and the `use-kho` skill.
 
 ## Supported sources
 
@@ -65,21 +63,56 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
 
 ## Use it
 
-Run `kho`, or `kho <folder>` to read another folder's project. Press `?` at any time for every key.
+Run `kho`, or `kho <folder>` to read another folder's project.
 
-| Key | Does |
+kho is built for the mouse and the keyboard: every action has a shortcut, and `?` lists them all. Panels resize, sidebar text can be selected and copied, and five themes are a keypress away.
+
+## Commands
+
+`kho` with no arguments opens the terminal app. These commands are the other half: `--json` where it is offered, progress and errors on stderr, and nothing changes the machine without `--yes`.
+
+| Command | Does |
 |---|---|
-| `tab` `h` `l` | move between Machine, Packages and the sidebar |
-| `↑` `↓` `enter` | pick, then open in the next panel; `enter` on the project opens or closes it |
-| `d` `p` | show or hide dependencies (vulnerable ones always show), hide a project's dev packages |
-| `/` `f` | filter by name, step through status filters |
-| `s` `S` | sort by the next column, reverse it |
-| `i` `v` `a` | sidebar tabs: Info, Versions, Security |
-| `enter` on a version | upgrade or downgrade to it, after a confirmation |
-| `H` | history of every command kho ran |
-| `<` `>` `{` `}` | resize panels and the sidebar's halves |
-| `t` | next theme |
-| `w` `c` | open the homepage, copy the text you're reading (on a project package's Security tab, its fix command) |
+| `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and known advisories |
+| `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
+| `kho show <source>/<name> [--json]` | one package, with every advisory |
+| `kho install <source>/<name>@<version> [--yes] [--json]` | upgrade or downgrade one package |
+| `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
+| `kho history [--json] [--changes] [-n N]` | the commands kho ran, newest first |
+| `kho list` | every package as JSON |
+| `kho version`, `kho help` | the version, and every command |
+
+`<source>` is the manager kho read the package from: `brew`, `cask`, `npm`, `composer`, `pipx`, `uv`, `go`, `mise` or `skills`.
+
+### Uninstalling
+
+`kho remove` runs the package manager's own uninstaller: `brew uninstall` (with `--cask` for a cask), `npm uninstall -g`, `pipx uninstall`, `uv tool uninstall`, `composer global remove`, or `mise uninstall`. It changes no project manifest and no lockfile, so a project's dependency is not something it removes. (`composer global remove` does edit Composer's own global `composer.json`, which is a fact about the machine.)
+
+It takes exactly one `<source>/<name>` and no version, since the installed version is what gets removed. Without `--yes` it prints the exact command and changes nothing:
+
+```bash
+kho remove pipx/bramble               # would run: pipx uninstall bramble
+kho remove pipx/bramble --yes         # removed pipx/bramble 26.10.1
+kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
+```
+
+| Flag | Does |
+|---|---|
+| `--yes` | run it; without this kho only prints what it would run |
+| `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
+| `--json` | print `{"package","version","command","ran","error","notes"}` instead of text |
+
+`ran` is false in a dry run, and `error` is set only when the manager itself failed, which also exits 1. A package that is not installed exits 1 with `<ref> is not installed`, so a typo never reads as success. A name that is installed under a different manager is named back to you: `kho remove brew/focusbar` says `focusbar is installed as cask/focusbar`. A source that is not on this machine, or could not be read, says that instead.
+
+Exit 2 is a usage error: a ref with no source, a source kho does not know, no ref, more than one ref, `--force` on anything but a Homebrew formula, or a version in the ref that matches what is installed, which kho names back to you without it. That last check needs the package installed to tell a version apart from a scoped npm name, and a Homebrew name that carries its own `@` is left alone, so an uninstalled one is reported as not installed first.
+
+`--json` answers every outcome, a miss or a refusal included, with the same object on stdout and nothing on stderr, so a caller never has to parse prose. Anything kho would have said as a `note:` line arrives in the object's `notes` list instead.
+
+A package that is only there because another package needs it gets a note first, on stderr in text mode and in `notes` under `--json`: without `--force` it says the manager may refuse, and with `--force` it says what breaks.
+
+Homebrew refuses to uninstall a formula another installed formula needs. kho passes that refusal through as a failure (exit 1); `--force` adds `--ignore-dependencies` so it goes ahead, leaving whatever needed the formula broken until that package is reinstalled. kho never uses `brew -f`, which would delete every installed version.
+
+`go install` binaries and skills are not removed by kho: it names the binary to delete, or points at `npx skills remove`. `mise` uninstalls the version kho listed and warns that `mise.toml` is untouched, so `mise install` may bring it back.
 
 ## For agents
 

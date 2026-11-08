@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageScanMsg, imageTagsMsg:
+		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -1177,7 +1177,7 @@ func TestHelp(t *testing.T) {
 		{"k scrolls back up", 40, []tea.Msg{key("?"), key("j"), key("j"), key("j"), key("k")}, 2, "", first, true},
 		{"the wheel scrolls it", 40, []tea.Msg{key("?"), wheel, wheel}, 2, "", first, true},
 		{"it opens at the top again", 40, []tea.Msg{key("?"), key("j"), key("j"), key("?"), key("?")}, 0, first, last, true},
-		{"a tall screen shows every key", 50, []tea.Msg{key("?"), key("j")}, 0, first + "|" + last, "", false},
+		{"a tall screen shows every key", 52, []tea.Msg{key("?"), key("j")}, 0, first + "|" + last, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1270,7 +1270,7 @@ func TestInstall(t *testing.T) {
 				}
 			}
 			if tt.cmd != nil {
-				m = update(t, m, startInstall("⬆ Upgrade anvil", tt.cmd, m.log, installedMsg{"brew", "anvil", "v0.2.94", nil})())
+				m = update(t, m, startInstall("⬆ Upgrade anvil", tt.cmd, m.log, installedMsg{provider: "brew", name: "anvil", version: "v0.2.94"})())
 			}
 			m = press(t, m, tt.keys...)
 			s := screen(m)
@@ -1297,6 +1297,87 @@ func TestInstall(t *testing.T) {
 				t.Errorf("screen shows %q:\n%s", tt.hides, s)
 			}
 		})
+	}
+}
+
+// selectPkg puts the cursor on a package by name, so a test does not depend on
+// the order the fakes list them in.
+func selectPkg(t *testing.T, m model, name string) model {
+	t.Helper()
+	m = press(t, m, "g")
+	for i := 0; i < 50; i++ {
+		if p, ok := m.current(); ok && p.Name == name {
+			return m
+		}
+		m = press(t, m, "j")
+	}
+	t.Fatalf("no package named %q", name)
+	return m
+}
+
+// D asks before it removes anything, and a refusal explains itself instead of
+// leaving a person guessing.
+func TestRemoveAsks(t *testing.T) {
+	tests := []struct {
+		id    string
+		pkg   string
+		deps  bool
+		keys  []string
+		title string
+		lines string
+		ran   []string
+	}{
+		{id: "D asks first", pkg: "anvil", keys: []string{"D"}, title: "🗑 Remove anvil?", lines: "0.2.89|brew uninstall anvil|remove it"},
+		{id: "n changes nothing", pkg: "anvil", keys: []string{"D", "n"}},
+		{id: "y removes it and says so", pkg: "anvil", keys: []string{"D", "y"}, ran: []string{"brew uninstall anvil"}},
+		{id: "a dependency is named as one", pkg: "cobalt", deps: true, keys: []string{"D"}, title: "🗑 Remove cobalt?", lines: "another installed package needs it"},
+		{id: "a pinned package can still go", pkg: "gust", keys: []string{"D"}, title: "🗑 Remove gust?", lines: "brew uninstall gust"},
+		{id: "a skill says why kho won't", pkg: "pathmaker", keys: []string{"D"}, title: "Can't remove pathmaker", lines: "npx skills remove pathmaker"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := loaded(t)
+			if tt.deps {
+				m = press(t, m, "d")
+			}
+			m = selectPkg(t, m, tt.pkg)
+			m = press(t, m, tt.keys...)
+			if !slices.Equal(ran, tt.ran) {
+				t.Errorf("ran %q, want %q", ran, tt.ran)
+			}
+			if tt.title == "" {
+				if m.confirm != nil {
+					t.Errorf("dialog %q, want none", m.confirm.title)
+				}
+				return
+			}
+			if m.confirm == nil {
+				t.Fatalf("no dialog, want %q", tt.title)
+			}
+			if m.confirm.title != tt.title {
+				t.Errorf("dialog %q, want %q", m.confirm.title, tt.title)
+			}
+			joined := strings.Join(m.confirm.lines, "\n")
+			for _, want := range strings.Split(tt.lines, "|") {
+				if want != "" && !strings.Contains(joined, want) {
+					t.Errorf("dialog lacks %q:\n%s", want, joined)
+				}
+			}
+		})
+	}
+}
+
+// A removal that ran is logged like an install, and the notice says what
+// happened rather than which version it landed on.
+func TestRemoveIsLogged(t *testing.T) {
+	m := selectPkg(t, loaded(t), "anvil")
+	m = press(t, m, "D", "y")
+	if m.notice != "anvil is removed" {
+		t.Errorf("notice %q", m.notice)
+	}
+	entries := m.log.Entries()
+	if len(entries) != 1 || entries[0].Kind != history.Change || !slices.Equal(entries[0].Command, []string{"brew", "uninstall", "anvil"}) {
+		t.Errorf("history %+v", entries)
 	}
 }
 
@@ -1667,7 +1748,7 @@ func TestSignal(t *testing.T) {
 				err = serve(m, sigs, &said, tea.WithInput(nil), tea.WithOutput(io.Discard))
 			}
 			if tt.late {
-				if msg := startInstall("⬆ Upgrade anvil", exec.Command("brew", "upgrade", "anvil"), m.log, installedMsg{"brew", "anvil", "v0.2.94", nil})(); msg != nil {
+				if msg := startInstall("⬆ Upgrade anvil", exec.Command("brew", "upgrade", "anvil"), m.log, installedMsg{provider: "brew", name: "anvil", version: "v0.2.94"})(); msg != nil {
 					t.Errorf("an install started as kho left: %T", msg)
 				}
 			}
@@ -1813,7 +1894,7 @@ func TestDependencyList(t *testing.T) {
 	brew := slices.Clone(fakes(t)[0].(fake).pkgs)
 	brew[0].Deps = []provider.Dep{{Name: "openssl@4", Version: "4.2.0", Direct: true}, {Name: "ca-certificates", Version: "2026-10-20"}}
 	brew[2].Latest = "1.27.3"
-	relisted := []tea.Msg{installedMsg{"brew", "openssl@4", "4.2.0", nil}, listedMsg{"brew", brew, nil}}
+	relisted := []tea.Msg{installedMsg{provider: "brew", name: "openssl@4", version: "4.2.0"}, listedMsg{"brew", brew, nil}}
 	tests := []struct {
 		id   string
 		keys []string
@@ -1823,7 +1904,7 @@ func TestDependencyList(t *testing.T) {
 		want []string
 	}{
 		{id: "after an install the list is the new version's", keys: pick("tidyup"),
-			msgs: []tea.Msg{installedMsg{"go", "tidyup", "v1.3.0", nil}, listedMsg{"go", []provider.Package{upgraded}, nil}},
+			msgs: []tea.Msg{installedMsg{provider: "go", name: "tidyup", version: "v1.3.0"}, listedMsg{"go", []provider.Package{upgraded}, nil}},
 			want: []string{" · example.org/text   v0.31.0"}},
 		{id: "and a dependency upgraded on its own shows its new version", keys: pick("anvil"), msgs: relisted,
 			want: []string{" • openssl@4 4.2.0", " · ca-certificates 2026-10-20"}},
@@ -1914,9 +1995,9 @@ func TestFooter(t *testing.T) {
 		keys []string
 		want string
 	}{
-		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ J K dependency  enter its advisories  [ ] tabs  w home  ? help"},
-		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ agent  enter link or unlink  A all agents  [ ] tabs  ? help"},
-		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ agent  enter link or unlink  A installed only  [ ] tabs  ? help"},
+		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ select  tab panel  [ ] tabs  enter its advisories  D remove  i v a tabs  s sort  f status  / filter  w home  ? help"},
+		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A all agents  ? help"},
+		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A installed only  ? help"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

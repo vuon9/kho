@@ -316,7 +316,7 @@ func (m model) bottomLines(inner int) []line {
 		d := m.docs[cacheKey(p)]
 		switch {
 		case d == nil || !d.done:
-			return plain(faint().Render(" loading…"))
+			return plain(m.spin() + faint().Render(" loading…"))
 		case d.err != nil:
 			return plain(red().Render(" " + d.err.Error()))
 		}
@@ -531,7 +531,7 @@ func (m model) unchecked(name string) []line {
 	again := faint().Render(" R checks again.")
 	switch {
 	case m.scanning > 0:
-		return plain("", faint().Render(" "+spinner[m.frame%len(spinner)]+" checking osv.dev…"))
+		return plain("", " "+m.spin()+faint().Render(" checking osv.dev…"))
 	case m.secErr != nil:
 		return plain("", red().Render(" security check failed: "+m.secErr.Error()), again)
 	}
@@ -542,7 +542,7 @@ func (m model) depLines(p provider.Package, inner int) []line {
 	d := m.deps[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
-		return plain(faint().Render(" loading…"))
+		return plain(m.spin() + faint().Render(" loading…"))
 	case d.err != nil:
 		return plain(red().Render(" " + d.err.Error()))
 	case len(d.val) == 0:
@@ -568,7 +568,7 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	v := m.versions[cacheKey(p)]
 	switch {
 	case v == nil || !v.done:
-		return plain(faint().Render(" " + spinner[m.frame%len(spinner)] + " loading versions…"))
+		return plain(" " + m.spin() + faint().Render(" loading versions…"))
 	case v.err != nil:
 		return plain(red().Render(" " + v.err.Error()))
 	case len(v.val) == 0:
@@ -776,7 +776,7 @@ func (m model) skillMetaLines(p provider.Package) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
-		return plain(faint().Render(" loading…"))
+		return plain(m.spin() + faint().Render(" loading…"))
 	case d.err != nil:
 		return plain(red().Render(" " + d.err.Error()))
 	}
@@ -794,7 +794,7 @@ func (m model) readmeLines(p provider.Package, inner int) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
-		return plain(faint().Render(" loading…"))
+		return plain(m.spin() + faint().Render(" loading…"))
 	case d.err != nil:
 		return plain(red().Render(" " + d.err.Error()))
 	case d.val.Readme == "":

@@ -42,10 +42,11 @@ func (m model) View() tea.View {
 	switch m.popup() {
 	case popHelp:
 		r := m.helpRect()
-		screen = overlay(screen, popupBox("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
+		screen = overlay(screen, popupRows("⌨ Keys", helpLines()[m.helpTop:], r), r.x, r.y, r.w)
 	case popInstall:
 		r := m.installRect()
-		screen = overlay(screen, popupBox(m.inst.title, m.installLines(popupText(r).h), r), r.x, r.y, r.w)
+		t := popupText(r)
+		screen = overlay(screen, popupRows(m.inst.title, m.installLines(t.h, t.w), r), r.x, r.y, r.w)
 	case popDep:
 		r := m.depRect()
 		t := popupText(r)
@@ -58,7 +59,7 @@ func (m model) View() tea.View {
 			}
 			lines = append(lines, text)
 		}
-		screen = overlay(screen, popupBox(m.depPopTitle(), lines, r), r.x, r.y, r.w)
+		screen = overlay(screen, popupRows(m.depPopTitle(), lines, r), r.x, r.y, r.w)
 	case popConfirm:
 		r := m.confirmRect()
 		var lines []string
@@ -73,7 +74,7 @@ func (m model) View() tea.View {
 
 // installLines fills the install popup: the command, as much of its output
 // as fits, and how it is going.
-func (m model) installLines(rows int) []string {
+func (m model) installLines(rows, width int) []string {
 	in := m.inst
 	end := in.end
 	if in.running() {
@@ -83,23 +84,32 @@ func (m model) installLines(rows int) []string {
 	var status string
 	switch in.phase() {
 	case instRunning:
-		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" running "+took)
+		status = m.spin() + faint().Render(" running "+took)
 	case instStopping:
-		status = accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" stopping after "+took)
+		status = m.spin() + faint().Render(" stopping after "+took)
 	case instFailed:
 		status = red().Render("✗ "+in.done.err.Error()) + faint().Render(" after "+took)
 	default:
 		status = green().Render("✓ done") + faint().Render(" in "+took)
 	}
-	lines := []string{faint().Render(" runs  ") + strings.Join(in.cmd.Args, " "), ""}
-	room := max(rows-len(lines)-2, 0)
-	for _, l := range in.lines[max(len(in.lines)-room, 0):] {
-		lines = append(lines, " "+l)
+	// The command and the output wrap, so a long error reads in full instead
+	// of ending in an ellipsis, and the status keeps the last rows.
+	cmd := wrapStyled(faint().Render(" runs  ")+strings.Join(in.cmd.Args, " "), width)
+	statusRows := wrapStyled(" "+status, width)
+	room := max(rows-len(cmd)-1-len(statusRows), 0)
+	var out []string
+	for _, l := range in.lines {
+		out = append(out, wrapStyled(" "+l, width)...)
 	}
-	for len(lines) < rows-1 {
+	if len(out) > room {
+		out = out[max(len(out)-room, 0):]
+	}
+	lines := append(append([]string{}, cmd...), "")
+	lines = append(lines, out...)
+	for len(lines) < rows-len(statusRows) {
 		lines = append(lines, "")
 	}
-	return append(lines, " "+status)
+	return append(lines, statusRows...)
 }
 
 // actionable is a package an upgrade would move: outdated and not pinned.
@@ -189,7 +199,7 @@ func (m model) activity() string {
 		busy = append(busy, "security")
 	}
 	if len(busy) > 0 {
-		return accent().Render(spinner[m.frame%len(spinner)]) + faint().Render(" checking "+strings.Join(busy, ", ")+" ")
+		return m.spin() + faint().Render(" checking "+strings.Join(busy, ", ")+" ")
 	}
 	if m.secErr != nil {
 		return red().Render("security check failed: "+m.secErr.Error()) + " "
@@ -227,7 +237,94 @@ func keys(pairs ...string) string {
 	return strings.Join(out, faint().Render("  "))
 }
 
+// rowKeys lists what a person can do with the selected row, most useful first.
+// The footer shows what fits of it, so a row offers the same actions whether
+// the cursor is on it or one of the sidebar's tabs is open.
+func (m model) rowKeys() []string {
+	var pairs []string
+	if m.focus == focusSide {
+		pairs = append(pairs, "↑↓", "select")
+	} else {
+		pairs = append(pairs, "↑↓", "move")
+	}
+	pairs = append(pairs, "tab", "panel", "[ ]", "tabs", "enter", m.enterLabel())
+	switch {
+	case isImageRow(m.curRow().kind):
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "state", "/", "filter", "w", "copy name", "x", "scan")
+	case m.inProjectPkg():
+		pairs = append(pairs, "s", "sort", "f", "status", "/", "filter", "w", "home")
+	case m.inProject():
+		pairs = append(pairs, "s", "sort", "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home")
+	default:
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home")
+	}
+	switch m.activeTab() {
+	case tabVersions:
+		pairs = append(pairs, "y", "open page", "J K", "scroll changelog")
+	case tabSecurity:
+		if m.currentFix() != "" && m.sidePart == 0 {
+			pairs = append(pairs, "c", "copy the fix")
+		}
+		pairs = append(pairs, "J K", "scroll detail")
+	case tabLinks:
+		if m.allAgents {
+			pairs = append(pairs, "A", "installed only")
+		} else {
+			pairs = append(pairs, "A", "all agents")
+		}
+	}
+	return append(pairs, "?", "help")
+}
+
+// enterLabel is what enter does where the cursor is: the panel decides, and the
+// footer says so instead of promising one thing for both.
+func (m model) enterLabel() string {
+	switch {
+	case m.focus == focusTable:
+		return "details"
+	case m.activeTab() == tabVersions && !m.inProjectPkg():
+		return "install it"
+	case m.activeTab() == tabLinks:
+		return "link or unlink"
+	case m.depList() != nil:
+		return "its advisories"
+	}
+	return "read"
+}
+
+// fitKeys renders the pairs that fit in width and always the last one, so the
+// help key is there on a narrow screen even when the row's actions are many.
+func fitKeys(width int, pairs []string) string {
+	if len(pairs) < 2 {
+		return ""
+	}
+	sep := faint().Render("  ")
+	last := keys(pairs[len(pairs)-2:]...)
+	limit := width - lipgloss.Width(last) - lipgloss.Width(sep)
+	out := ""
+	for i := 0; i+3 < len(pairs); i += 2 {
+		p := keys(pairs[i], pairs[i+1])
+		cand := p
+		if out != "" {
+			cand = out + sep + p
+		}
+		if lipgloss.Width(cand) > limit {
+			break
+		}
+		out = cand
+	}
+	if out == "" {
+		return last
+	}
+	return out + sep + last
+}
+
 func (m model) footer() string {
+	// A notice sits at the right of this line, so the keys have to leave it room.
+	reserve := 0
+	if m.notice != "" {
+		reserve = lipgloss.Width(faint().Render(m.notice+" ")) + 1
+	}
 	var line string
 	switch pop := m.popup(); {
 	case pop == popHelp && m.helpHidden() > 0:
@@ -258,30 +355,11 @@ func (m model) footer() string {
 		line = keys("↑↓", "source", "enter", "open project", "p", "dev", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
 	case m.focus == focusRail:
 		line = keys("↑↓", "source", "enter", "packages", "tab", "panel", "< >", "resize", "H", "history", "?", "help", "q", "quit")
-	case m.focus == focusSide && isImageRow(m.curRow().kind):
-		line = keys("↑↓", "select", "[ ]", "tabs", "x", "scan with trivy", "esc", "back", "? ", "help")
-	case m.focus == focusTable && (m.curRow().kind == rowImages || m.curRow().kind == rowMachineImages):
-		line = keys("↑↓", "move", "enter", "details", "f", "state", "/", "filter", "w", "copy name", "x", "scan", "? ", "help")
-	case m.focus == focusTable && m.inProject():
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home", "?", "help")
-	case m.focus == focusTable:
-		line = keys("↑↓", "move", "enter", "details", "s", "sort: "+strings.ToLower(columns[m.sortCol]), "f", "status", "/", "filter", "w", "home", "?", "help")
-	case m.activeTab() == tabVersions && m.inProjectPkg():
-		line = keys("↑↓", "version", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help") + faint().Render("   kho doesn't change projects")
-	case m.activeTab() == tabVersions:
-		line = keys("↑↓", "version", "enter", "install it", "J K", "scroll changelog", "y", "open page", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabSecurity && m.sidePart == 0 && m.currentFix() != "":
-		line = keys("↑↓", "select", "enter", "read", "c", "copy the fix", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabLinks && m.allAgents:
-		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "installed only", "[ ]", "tabs", "?", "help")
-	case m.activeTab() == tabLinks:
-		line = keys("↑↓", "agent", "enter", "link or unlink", "A", "all agents", "[ ]", "tabs", "?", "help")
-	case m.sideListLen() >= 0 && m.sidePart == 0:
-		line = keys("↑↓", "select", "enter", "read", "J K", "scroll detail", "[ ]", "tabs", "?", "help")
-	case m.depList() != nil:
-		line = keys("↑↓ J K", "dependency", "enter", "its advisories", "[ ]", "tabs", "w", "home", "?", "help")
 	default:
-		line = keys("↑↓", "scroll", "J K", "scroll detail", "esc", "back", "[ ]", "tabs", "w", "home", "?", "help")
+		line = fitKeys(max(m.width-2-reserve, 24), m.rowKeys())
+		if m.inProjectPkg() && m.activeTab() == tabVersions {
+			line += faint().Render("   kho doesn't change projects")
+		}
 	}
 	line = " " + line
 	if m.notice != "" {
@@ -367,7 +445,7 @@ func (m model) tableLines() []string {
 			return []string{"", red().Render(" " + err.Error())}
 		}
 		if m.busy[name] == "listing" {
-			return []string{"", faint().Render(" " + spinner[m.frame%len(spinner)] + " scanning " + name + "…")}
+			return []string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}
 		}
 	}
 	cols := m.tableColumns()
@@ -545,7 +623,29 @@ func popupText(r rect) rect {
 
 // popupBox draws a dialog so it can't be taken for a panel: a heavy border and
 // a filled title bar.
+// popupBox draws a dialog and wraps what is in it, so a sentence a person has
+// to read is never cut by the border. Its rect must already be tall enough for
+// the wrapped lines.
 func popupBox(title string, lines []string, r rect) string {
+	return drawPopup(title, wrapPopup(lines, popupText(r).w), r)
+}
+
+// popupRows draws a dialog whose lines are one per row and scroll on their own,
+// so it pads and cuts rather than wrapping: the caller counts rows.
+func popupRows(title string, lines []string, r rect) string {
+	return drawPopup(title, lines, r)
+}
+
+// wrapPopup wraps every line to the popup's width.
+func wrapPopup(lines []string, w int) []string {
+	var out []string
+	for _, l := range lines {
+		out = append(out, wrapStyled(l, w)...)
+	}
+	return out
+}
+
+func drawPopup(title string, lines []string, r rect) string {
 	e := fg(th.accent)
 	t := popupText(r)
 	bar := lipgloss.NewStyle().Background(th.accent).Foreground(th.pillFg).Bold(true).Render(pad(" "+title, t.w))

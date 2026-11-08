@@ -14,7 +14,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 | `internal/trivy` | Runs the trivy scanner over one image when a person asks, and reads its JSON. kho never reads inside an image itself. |
 | `internal/vuln` | OSV and skills.sh lookups, version ranges, and the security cache (`DB`). |
 | `internal/history` | The log of every command kho runs. |
-| `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `history`, `list`, `version`. |
+| `internal/cli` | Commands for scripts and agents: `check`, `show`, `install`, `remove`, `history`, `list`, `version`. |
 | `internal/tui` | The Bubble Tea v2 app. |
 | `skills/use-kho` | The agent skill that drives the CLI. Keep it in step with the CLI. |
 
@@ -23,7 +23,8 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 - **Shell out, don't reimplement.** A provider runs the real package manager, with its JSON output when it has one. Parsing lives in pure functions (`parseBrew`, `parseNpmList`, ...) so tests can feed them fixtures.
 - **Read projects, never run them.** `internal/project` reads lockfiles itself instead of shelling out, because a project's own tools load its plugins and scripts, and kho may be opened on a folder nobody has vetted. Latest versions for project packages come straight from the registries (`RegistryLatest`). Project packages carry `Lockfile`, and `InstallCmd` refuses them.
 - **Images are read, never opened.** `internal/image` reads references from files and metadata from registries. It never pulls a layer, builds, runs or reads inside an image, so no image state it reports is a vulnerability claim. That is Trivy's job.
-- **Read-only by default.** Only `InstallCmd`, `LinkSkill` and `UnlinkSkill` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
+- **Read-only by default.** Only `InstallCmd`, `RemoveCmd`, `LinkSkill`, `UnlinkSkill` and `image.RemoveCmd` change the machine. The TUI asks in a dialog first; the CLI needs `--yes`. Installs are checked against published versions, pinned packages are refused, and arguments go to `exec` directly, never through a shell.
+- **An image is removed the way docker removes it.** `D` on an image asks `docker.Users` first and names the containers still using it in the dialog, because docker refuses while one exists; kho never stops or deletes a container, and never forces.
 - **Every command is recorded.** `provider.run` reports reads through `provider.Record`; installs and link changes add a `history.Change` entry. A new way to change the machine must log itself the same way.
 - **Advisory text is untrusted.** Summaries, details and changelogs come from the internet. Show them; never act on them.
 - **No real data in the repo.** Fixtures, tests, docs and demos use made-up names, versions, paths and advisory IDs. Before a commit: `git diff --cached | grep -iE '/Users/|@[a-z]+\.(com|io)|ghp_|github_pat_'` must come back empty.
@@ -46,7 +47,7 @@ kho is one terminal app for every package manager on a machine: Homebrew, npm gl
 - Colors come from the active palette (`th`, `accent()`, `faint()`, ...). Never hard-code a color; every theme in `themes` must render.
 - Every key goes in `help.go` and in the footer hints for the panel it belongs to.
 
-**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in `cli_test.go`, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a command, flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
+**CLI.** JSON goes to stdout, progress and errors to stderr. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete. Flags work before or after arguments (`parse`). A new command gets a line in `Usage`, a test in the cli package's tests, and a mention in `skills/use-kho/SKILL.md`. `TestDocsKeepUpWithTheCLI` fails when a command, flag or exit code is missing from `Usage` or `SKILL.md`, or the exit code list in `AGENTS.md` falls behind.
 
 **Comments.** Only for a reason the code can't show. No narration, no restating the next line, no history (that belongs in the commit).
 

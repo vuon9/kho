@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vuon9/kho/internal/image"
@@ -33,6 +34,10 @@ type Client struct {
 	HubBase  string
 	// NoCache asks the registries again, for --refresh.
 	NoCache bool
+
+	mu      sync.Mutex
+	tokens  map[string]string
+	demands map[string]string
 }
 
 func (c *Client) base(host string) string {
@@ -44,9 +49,17 @@ func (c *Client) base(host string) string {
 
 // New is a client with a timeout and a cache at path, which may be "".
 func New(cachePath string) *Client {
+	// Images are asked about in parallel, so the pool has to be wider than the
+	// two connections net/http keeps per host by default, or every lookup pays
+	// for a new handshake.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 16
 	return &Client{
-		HTTP:  &http.Client{Timeout: 15 * time.Second},
-		Cache: Open(cachePath, 6*time.Hour),
+		HTTP:    &http.Client{Timeout: 15 * time.Second, Transport: transport},
+		Cache:   Open(cachePath, 6*time.Hour),
+		tokens:  map[string]string{},
+		demands: map[string]string{},
 	}
 }
 
@@ -77,25 +90,70 @@ func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) 
 	return remote, nil
 }
 
+// source is where a reference is asked about: a registry host, and the prefix
+// its repository path carries there.
+type source struct {
+	host   string
+	prefix string
+}
+
+// sources lists where a reference is asked, in order. A docker.io reference
+// goes to a pull-through mirror first, because Docker Hub rate limits
+// anonymous pulls hard enough to fail a whole project; every other registry is
+// asked directly, since a mirror only carries Docker Hub's images.
+func sources(r image.Ref) []source {
+	if r.Registry != "docker.io" {
+		return []source{{host: r.Registry}}
+	}
+	return []source{
+		{host: "mirror.gcr.io"},
+		{host: "public.ecr.aws", prefix: "docker/"},
+		{host: "registry-1.docker.io"},
+	}
+}
+
 func (c *Client) fetch(ctx context.Context, r image.Ref) (image.Remote, error) {
 	ref := r.Tag
 	if ref == "" {
 		ref = r.Digest
 	}
-	host := r.Registry
-	if host == "docker.io" {
-		host = "registry-1.docker.io"
+	all := sources(r)
+	var missing, errored int
+	var lastErr error
+	for _, s := range all {
+		remote, found, err := c.fetchFrom(ctx, r, s, ref)
+		switch {
+		case err != nil:
+			errored++
+			lastErr = err
+		case !found:
+			missing++
+		default:
+			return remote, nil
+		}
 	}
-	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(host), r.RemoteRepo(), ref)
-	body, media, status, err := c.get(ctx, manifestURL, host, r.RemoteRepo())
-	if err != nil {
-		return image.Remote{}, err
-	}
-	if status == http.StatusNotFound {
+	// A tag is only gone when every source says so: a mirror that has not
+	// cached it yet says the same thing as one that never will.
+	if missing == len(all) {
 		return image.Remote{Gone: true}, nil
 	}
-	if status != http.StatusOK {
-		return image.Remote{}, fmt.Errorf("%s answered %d", r.Registry, status)
+	return image.Remote{}, lastErr
+}
+
+// fetchFrom asks one source. found is false when that source says the tag does
+// not exist, which is not an error: the next source may have it.
+func (c *Client) fetchFrom(ctx context.Context, r image.Ref, s source, ref string) (image.Remote, bool, error) {
+	repo, base := s.prefix+r.RemoteRepo(), c.base(s.host)
+	body, media, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", base, repo, ref), s.host, repo)
+	if err != nil {
+		return image.Remote{}, false, err
+	}
+	switch status {
+	case http.StatusNotFound:
+		return image.Remote{}, false, nil
+	case http.StatusOK:
+	default:
+		return image.Remote{}, false, fmt.Errorf("%s answered %d", s.host, status)
 	}
 	remote := image.Remote{Digest: "sha256:" + hex.EncodeToString(sum(body))}
 	var doc struct {
@@ -112,30 +170,30 @@ func (c *Client) fetch(ctx context.Context, r image.Ref) (image.Remote, error) {
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return image.Remote{}, err
+		return image.Remote{}, false, err
 	}
 	if len(doc.Manifests) > 0 {
 		child := pickPlatform(doc.Manifests)
-		childBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(host), r.RemoteRepo(), child), host, r.RemoteRepo())
+		childBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", base, repo, child), s.host, repo)
 		if err != nil || status != http.StatusOK {
 			// The index answered, so the tag exists: report the digest and
 			// leave the rest to the next run.
-			return remote, nil
+			return remote, true, nil
 		}
 		if err := json.Unmarshal(childBody, &doc); err != nil {
-			return remote, nil
+			return remote, true, nil
 		}
 	}
 	if doc.Config.Digest == "" {
-		return remote, nil
+		return remote, true, nil
 	}
-	configBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", c.base(host), r.RemoteRepo(), doc.Config.Digest), host, r.RemoteRepo())
+	configBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", base, repo, doc.Config.Digest), s.host, repo)
 	if err != nil || status != http.StatusOK {
-		return remote, nil
+		return remote, true, nil
 	}
 	remote.Pushed, remote.Upstream, remote.Base = readConfig(configBody, r)
 	_ = media
-	return remote, nil
+	return remote, true, nil
 }
 
 func pickPlatform(manifests []struct {
@@ -212,16 +270,42 @@ func baseFromTag(tag string) string {
 
 // get asks for a URL, taking a bearer token when the registry asks for one.
 func (c *Client) get(ctx context.Context, raw, host, repo string) (body []byte, media string, status int, err error) {
+	// A registry that asked for a token once will ask again, and every probe
+	// costs a round trip: remember the challenge and skip it.
+	if challenge := c.remembered(host); challenge != "" {
+		if token, terr := c.token(ctx, challenge, repo); terr == nil {
+			body, media, status, _, err = c.do(ctx, raw, token)
+			return body, media, status, err
+		}
+	}
 	body, media, status, challenge, err := c.do(ctx, raw, "")
 	if status != http.StatusUnauthorized || challenge == "" {
 		return body, media, status, err
 	}
+	c.remember(host, challenge)
 	token, err := c.token(ctx, challenge, repo)
 	if err != nil {
 		return nil, "", status, err
 	}
 	body, media, status, _, err = c.do(ctx, raw, token)
 	return body, media, status, err
+}
+
+// remembered is the challenge a host gave last time, or "".
+func (c *Client) remembered(host string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.demands[host]
+}
+
+func (c *Client) remember(host, challenge string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A Client built as a literal, which tests do, has no maps yet.
+	if c.demands == nil {
+		c.demands = map[string]string{}
+	}
+	c.demands[host] = challenge
 }
 
 func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media string, status int, challenge string, err error) {
@@ -249,6 +333,33 @@ func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media 
 // token follows a registry's bearer challenge, which is how public images on
 // Docker Hub and ghcr are read without an account.
 func (c *Client) token(ctx context.Context, challenge, repo string) (string, error) {
+	realm, service, scope := challengeScope(challenge, repo)
+	if realm == "" {
+		return "", fmt.Errorf("registry wants credentials")
+	}
+	key := realm + "|" + service + "|" + scope
+	c.mu.Lock()
+	cached := c.tokens[key]
+	c.mu.Unlock()
+	if cached != "" {
+		return cached, nil
+	}
+	tok, err := c.askToken(ctx, realm, service, scope)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	if c.tokens == nil {
+		c.tokens = map[string]string{}
+	}
+	c.tokens[key] = tok
+	c.mu.Unlock()
+	return tok, nil
+}
+
+// challengeScope reads the token endpoint, the service and the scope a registry
+// asked for, falling back to the repository being pulled.
+func challengeScope(challenge, repo string) (realm, service, scope string) {
 	params := map[string]string{}
 	for _, part := range strings.Split(strings.TrimPrefix(challenge, "Bearer "), ",") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
@@ -256,17 +367,17 @@ func (c *Client) token(ctx context.Context, challenge, repo string) (string, err
 			params[key] = strings.Trim(value, `"`)
 		}
 	}
-	realm := params["realm"]
-	if realm == "" {
-		return "", fmt.Errorf("registry wants credentials")
-	}
-	q := url.Values{}
-	if s := params["service"]; s != "" {
-		q.Set("service", s)
-	}
-	scope := params["scope"]
+	scope = params["scope"]
 	if scope == "" {
 		scope = "repository:" + repo + ":pull"
+	}
+	return params["realm"], params["service"], scope
+}
+
+func (c *Client) askToken(ctx context.Context, realm, service, scope string) (string, error) {
+	q := url.Values{}
+	if service != "" {
+		q.Set("service", service)
 	}
 	q.Set("scope", scope)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, realm+"?"+q.Encode(), nil)

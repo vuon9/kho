@@ -232,33 +232,41 @@ type model struct {
 
 	// images are the container images the project names, and imgBusy says a
 	// scan is still running. imgAsk is what answers the registries.
-	images      []image.Ref
-	machineImgs []image.Ref
-	imgTags     map[string][]image.Tag
-	imgVulns    map[string][]trivy.Vuln
-	imgScanning map[string]bool
-	imgTagBusy  map[string]bool
-	imgScanErr  map[string]string
-	imgErr      error
-	imgBusy     bool
-	imgGen      int
-	imgAsk      image.Asker
-	imgStatuses map[string]int
-	filtering   bool
-	showDeps    bool
-	help        bool
-	helpTop     int
-	confirm     *confirm
-	inst        *installing
-	depCursor   int
-	depPop      *depPopup
-	allAgents   bool
-	sel         *textSel
-	railW       int
-	sideW       int
-	split       int
-	resizing    int
-	grab        int
+	images       []image.Ref
+	machineImgs  []image.Ref
+	localImgs    []image.LocalImage
+	factCh       <-chan imageFactMsg
+	imgTags      map[string][]image.Tag
+	imgVulns     map[string][]trivy.Vuln
+	imgScanning  map[string]bool
+	imgTagBusy   map[string]bool
+	imgTagErr    map[string]string
+	imgTagTried  map[string]bool
+	imgUsers     map[string][]image.Container
+	imgUsersBusy map[string]bool
+	imgUsersErr  map[string]string
+	imgSort      int
+	imgScanErr   map[string]string
+	imgErr       error
+	imgBusy      bool
+	imgGen       int
+	imgAsk       image.Asker
+	imgStatuses  map[string]int
+	filtering    bool
+	showDeps     bool
+	help         bool
+	helpTop      int
+	confirm      *confirm
+	inst         *installing
+	depCursor    int
+	depPop       *depPopup
+	allAgents    bool
+	sel          *textSel
+	railW        int
+	sideW        int
+	split        int
+	resizing     int
+	grab         int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -309,7 +317,12 @@ func newModel(ps []provider.Provider, dbPath string) model {
 	m := model{providers: ps, focus: focusTable, sortCol: colSource, dbPath: dbPath, db: vuln.Load(dbPath), md: newMDCache(), ticking: true, log: history.Open(""), version: "dev",
 		filters: map[string]string{}, statuses: map[string]int{}, imgStatuses: map[string]int{},
 		imgTags: map[string][]image.Tag{}, imgVulns: map[string][]trivy.Vuln{},
-		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{}}
+		imgScanning: map[string]bool{}, imgScanErr: map[string]string{}, imgTagBusy: map[string]bool{},
+		imgTagErr:    map[string]string{},
+		imgTagTried:  map[string]bool{},
+		imgUsers:     map[string][]image.Container{},
+		imgUsersBusy: map[string]bool{},
+		imgUsersErr:  map[string]string{}}
 	m.reset()
 	return m
 }
@@ -380,7 +393,18 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running()
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() ||
+		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning)
+}
+
+// anyOf says whether any entry of a per-image map is on.
+func (m model) anyOf(set map[string]bool) bool {
+	for _, on := range set {
+		if on {
+			return true
+		}
+	}
+	return false
 }
 
 // startTicking runs the spinner while something is loading.
@@ -416,7 +440,23 @@ func cacheKey(p provider.Package) string {
 	return pkgKey(p) + "\x00" + p.Version
 }
 
+// Update runs the handler, then asks for the selected image's tags if the
+// Versions tab is showing and this image has not been asked about yet, so
+// moving down the table fills the panel in without a keypress.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if mm, ok := next.(model); ok {
+		if ask := mm.wantTags(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
+		if ask := mm.wantUsers(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
+	}
+	return next, cmd
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
@@ -462,10 +502,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reindex()
 	case imageTagsMsg:
 		delete(m.imgTagBusy, msg.key)
-		if msg.tags != nil {
+		if msg.err != nil {
+			m.imgTagErr[msg.key] = msg.err.Error()
+			if m.imgTagTried[msg.key] {
+				return m, nil
+			}
+			m.imgTagTried[msg.key] = true
+			key := msg.key
+			return m, tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg {
+				return imageTagsRetryMsg{key: key}
+			})
+		}
+		delete(m.imgTagErr, msg.key)
+		if len(msg.tags) > 0 {
 			m.imgTags[msg.key] = msg.tags
 		}
 		return m, nil
+	case imageUsersMsg:
+		delete(m.imgUsersBusy, msg.key)
+		if msg.err != nil {
+			m.imgUsersErr[msg.key] = msg.err.Error()
+			return m, nil
+		}
+		if msg.users == nil {
+			msg.users = []image.Container{}
+		}
+		m.imgUsers[msg.key] = msg.users
+		return m, nil
+	case imageRemoveMsg:
+		m.askImageRemove(msg)
+		return m, nil
+	case imageTagsRetryMsg:
+		r, ok := m.currentImg()
+		if !ok || r.Canonical() != msg.key || m.imgTags[msg.key] != nil || m.imgTagBusy[msg.key] {
+			return m, nil
+		}
+		return m, m.tagsCmd()
 	case imageScanMsg:
 		m.imgScanning[msg.key] = false
 		if msg.err != nil {
@@ -477,6 +549,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case imagesMsg:
 		m.gotImages(msg)
+		if msg.local != nil && msg.err == nil {
+			return m, m.factsCmd()
+		}
+		return m, nil
+	case imageFactMsg:
+		m.applyFact(msg)
+		if msg.gen != m.imgGen {
+			return m, nil
+		}
+		return m, readFact(m.factCh, m.imgGen)
+	case imageFactsDoneMsg:
+		if msg.gen == m.imgGen {
+			m.imgBusy = false
+			m.reindex()
+		}
 		return m, nil
 	case projectMsg:
 		cmds = append(cmds, m.gotProject(msg))
@@ -521,9 +608,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inst != nil {
 			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
 		}
-		m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
-		if msg.err != nil {
+		switch {
+		case msg.err != nil && msg.removed:
+			m.notice = fmt.Sprintf("%s was not removed: %v", msg.name, msg.err)
+		case msg.err != nil:
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
+		case msg.removed:
+			m.notice = msg.name + " is removed"
+		default:
+			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 		if msg.provider == "docker" {
@@ -828,9 +921,13 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.setFilter("")
 		}
 	case "o":
-		m.toggleStatus(statusOutdated)
+		if !isImageRow(m.curRow().kind) {
+			m.toggleStatus(statusOutdated)
+		}
 	case "!":
-		m.toggleStatus(statusVulnerable)
+		if !isImageRow(m.curRow().kind) {
+			m.toggleStatus(statusVulnerable)
+		}
 	case "f":
 		if m.curRow().kind == rowImages {
 			m.cycleImgStatus()
@@ -838,16 +935,36 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		m.setStatus(m.status() + 1)
 	case "F":
+		if isImageRow(m.curRow().kind) {
+			m.stepImgStatus(-1)
+			return nil, false
+		}
 		m.setStatus(m.status() - 1)
 	case "d":
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
+	case "D":
+		if isImageRow(m.curRow().kind) {
+			return m.removeImage(), false
+		}
+		m.askRemove()
 	case "p":
 		m.prodOnly = !m.prodOnly
 		m.cursor, m.offset = 0, 0
 	case "s":
+		if isImageRow(m.curRow().kind) {
+			m.imgSort = (m.imgSort + 1) % len(imageColumns)
+			m.cursor, m.offset = 0, 0
+			return nil, false
+		}
 		m.sortCol = (m.sortCol + 1) % 5
 	case "S":
+		if isImageRow(m.curRow().kind) && m.imgSort == imgColFile {
+			// file order has no reverse, so start from the name column
+			m.imgSort, m.sortDesc = imgColName, true
+			m.cursor, m.offset = 0, 0
+			return nil, false
+		}
 		m.sortDesc = !m.sortDesc
 	case "c":
 		if p, ok := m.current(); ok && m.activeTab() == tabSecurity && m.projectFix(p) != "" {
@@ -866,21 +983,18 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.railW, m.sideW, m.split = 0, 0, 0
 	case "1", "2", "3", "4", "5", "6":
 		if i := int(key[0] - '1'); i < len(tabs) {
-			m.setTab(tabs[i])
+			return m.tabTo(tabs[i]), false
 		}
 	case "i":
 		m.setTab(tabInfo)
 	case "v":
-		m.setTab(tabVersions)
-		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) && m.imgTags[r.Canonical()] == nil && !m.imgTagBusy[r.Canonical()] {
-			return m.tagsCmd(), false
-		}
+		return m.tabTo(tabVersions), false
 	case "a":
 		m.setTab(tabSecurity)
 	case "]":
-		m.setTab(tabs[(slices.Index(tabs, m.activeTab())+1)%len(tabs)])
+		return m.tabTo(tabs[(slices.Index(tabs, m.activeTab())+1)%len(tabs)]), false
 	case "[":
-		m.setTab(tabs[(slices.Index(tabs, m.activeTab())+len(tabs)-1)%len(tabs)])
+		return m.tabTo(tabs[(slices.Index(tabs, m.activeTab())+len(tabs)-1)%len(tabs)]), false
 	case "J", "ctrl+d":
 		m.scrollDetail(map[string]int{"J": 1, "ctrl+d": m.layout().bottomRows / 2}[key])
 	case "K", "ctrl+u":

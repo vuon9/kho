@@ -1,6 +1,6 @@
 ---
 name: use-kho
-description: "Use when the user asks whether their machine or a project is safe, which installed packages, project dependencies or agent skills have known vulnerabilities or failed audits, what is outdated, or to upgrade, downgrade, or fix packages installed through Homebrew, npm, Composer, pipx, uv, go install, mise, or the skills CLI. Drives the kho CLI, which reports packages and their security as JSON and installs versions only when told to."
+description: "Use when the user asks whether their machine or a project is safe, which installed packages, project dependencies or agent skills have known vulnerabilities or failed audits, what is outdated, or to upgrade, downgrade, fix or uninstall packages installed through Homebrew, npm, Composer, pipx, uv, go install, mise, or the skills CLI. Drives the kho CLI, which reports packages and their security as JSON and installs versions only when told to."
 ---
 
 # Use kho
@@ -74,6 +74,20 @@ Only on the user's go-ahead, one package at a time.
 kho refuses pinned packages, versions the registry never published, older Homebrew versions, and older skill commits. Pass its reason on to the user. Do not work around it with the package manager directly unless the user asks.
 
 A Go tool that moved to a new major lives under a different module path (`example.com/tool/v2`), so `kho` cannot install across it. When that is the reason, the refusal names the module path that does serve the version, and the workaround is `go install <that path>/cmd/<tool>@<version>` with the user's go-ahead.
+
+To uninstall a package, the same rule applies: dry run first, then `--yes`. Exactly one `<source>/<name>` per call, no version in the ref.
+
+```bash
+kho remove pipx/bramble              # says what it would run, changes nothing
+kho remove pipx/bramble --yes --json # runs the manager's own uninstall
+kho remove brew/anvil --yes --force  # overrides Homebrew's dependency refusal
+```
+
+`remove` never edits a project manifest or lockfile (Composer's global `composer.json` is the one file a manager rewrites for it): it runs the package manager's uninstaller (`brew uninstall`, `npm uninstall -g`, `pipx uninstall`, `uv tool uninstall`, `composer global remove`, `mise uninstall`) and reports `removed <ref> <version>`. JSON is `{"package","version","command","ran","error","notes"}`, and it answers every outcome, a miss or a refusal included, so `--json` callers never parse prose; `ran` is false without `--yes`, and `error` is set when the manager failed, which also exits 1. Exit 2 means a usage error: a ref with no source, a source kho does not know, no ref, more than one ref, a version in the ref that matches what is installed (kho names the ref without it), `--dry-run` (dry run is the default, there is no such flag), or `--force` on anything but a Homebrew formula. A package that is not installed exits 1, so a typo never reads as success, and a name installed under another manager is named back to you.
+
+A package installed only because another package needs it gets a note first, on stderr in text mode and in `notes` under `--json`: without `--force` it says the manager may refuse, with `--force` it says what breaks. `--force` is for Homebrew formulae only and adds `--ignore-dependencies`.
+
+It refuses `go` binaries (remove the file yourself) and skills (`npx skills remove`, or unlink it per agent in the TUI), and any package that came from a project lockfile. `mise` uninstalls the version kho listed and says so in `notes`: `mise.toml` is left alone, so mise may install it again. Pass every refusal on to the user rather than working around it.
 
 ## Rules
 
