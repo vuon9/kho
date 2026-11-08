@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/url"
@@ -260,13 +261,21 @@ const (
 	imgStatusNotPulled
 )
 
-var imageStatusNames = []string{"All", "⚠ past line", "⟳ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
+var (
+	imageStatusNames = []string{"All", "⚠ past line", "⟳ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
+	imageStatusIcons = []string{"All", "⚠", "⟳", "◎", "◌", "●", "○"}
+)
 
 func (m model) imgStatus() int { return m.imgStatuses[m.curRow().key] }
 
 func (m *model) cycleImgStatus() {
+	m.stepImgStatus(1)
+}
+
+// stepImgStatus moves the image filter one chip along, forwards or back.
+func (m *model) stepImgStatus(by int) {
 	key := m.curRow().key
-	m.imgStatuses[key] = (m.imgStatuses[key] + 1) % len(imageStatusNames)
+	m.imgStatuses[key] = (m.imgStatuses[key] + by + len(imageStatusNames)) % len(imageStatusNames)
 	m.cursor, m.offset = 0, 0
 }
 
@@ -315,6 +324,49 @@ func (m model) hiddenUnverified() int {
 	return n
 }
 
+const (
+	imgColFile = iota
+	imgColName
+	imgColWhere
+	imgColUpstream
+	imgColState
+)
+
+// imageColumns are what s cycles on an image row, the natural order first so
+// a table reads in the order its files name the images.
+var imageColumns = []string{"", "IMAGE", "FROM", "UPSTREAM", "STATE"}
+
+// sortImg orders the rows by the column s selected, the same way the package
+// table sorts.
+func (m model) sortImg(rows []image.Ref) {
+	if m.imgSort <= 0 || m.imgSort >= len(imageColumns) {
+		return
+	}
+	key := func(r image.Ref) string {
+		switch m.imgSort {
+		case imgColWhere:
+			return strings.ToLower(imageWhere(r))
+		case imgColUpstream:
+			return r.Upstream
+		case imgColState:
+			return shortState(r)
+		}
+		return strings.ToLower(r.Image)
+	}
+	slices.SortStableFunc(rows, func(a, b image.Ref) int {
+		var c int
+		if m.imgSort == imgColUpstream {
+			c = vuln.Compare(key(a), key(b))
+		} else {
+			c = strings.Compare(key(a), key(b))
+		}
+		if m.sortDesc {
+			c = -c
+		}
+		return cmp.Or(c, strings.Compare(a.Image, b.Image))
+	})
+}
+
 // imgRows is the images table after the keyword and status filters.
 func (m model) imgRows() []image.Ref {
 	var out []image.Ref
@@ -331,11 +383,14 @@ func (m model) imgRows() []image.Ref {
 		}
 		out = append(out, r)
 	}
+	m.sortImg(out)
 	return out
 }
 
-func (m model) matchImgStatus(r image.Ref) bool {
-	switch m.imgStatus() {
+func (m model) matchImgStatus(r image.Ref) bool { return m.imgMatchStatus(r, m.imgStatus()) }
+
+func (m model) imgMatchStatus(r image.Ref, s int) bool {
+	switch s {
 	case imgStatusPast:
 		return r.State == image.EOL || r.State == image.Gone
 	case imgStatusStale:
@@ -350,6 +405,26 @@ func (m model) matchImgStatus(r image.Ref) bool {
 		return r.Presence == image.NotPulled
 	}
 	return true
+}
+
+// imgCounts tallies the row by state after the keyword filter, so each chip
+// says how many it would show.
+func (m model) imgCounts() []int {
+	n := make([]int, len(imageStatusNames))
+	for _, r := range m.imgList() {
+		if unverified(r) && m.imgStatus() != imgStatusUntracked {
+			continue
+		}
+		if f := m.filter(); f != "" && !strings.Contains(strings.ToLower(r.Image), strings.ToLower(f)) {
+			continue
+		}
+		for s := range imageStatusNames {
+			if m.imgMatchStatus(r, s) {
+				n[s]++
+			}
+		}
+	}
+	return n
 }
 
 // rowLen is how many rows the table holds: images on the images row,
@@ -461,6 +536,67 @@ func imageWhere(r image.Ref) string {
 	return fmt.Sprintf("%s:%d", r.File, r.Line)
 }
 
+// imageColWidths fits the image table's columns: the state always stays, then
+// the upstream version, then where the reference was read. The name never
+// takes more than it needs, because the sidebar spells the whole reference.
+func imageColWidths(inner int) (nameW, whereW, upstreamW, stateW int) {
+	const nameMax = 26
+	stateW, upstreamW, whereW = 10, 10, 16
+	if inner < 58 {
+		upstreamW = 0
+	}
+	if inner < 40 {
+		whereW = 0
+	}
+	nameW = min(max(inner-(stateW+upstreamW+whereW+4), 10), nameMax)
+	return nameW, whereW, upstreamW, stateW
+}
+
+// imageColumnAt maps an x offset within the image table's header to the column
+// under it, so a click sorts the way it does on a package table.
+func (m model) imageColumnAt(x int) int {
+	nameW, whereW, upstreamW, _ := imageColWidths(m.layout().tableW - 4)
+	// the row starts with the presence mark and a space
+	edges := []struct {
+		col, width int
+	}{{imgColName, nameW}, {imgColWhere, whereW}, {imgColUpstream, upstreamW}, {imgColState, 10}}
+	at := 2
+	for _, e := range edges {
+		if e.width == 0 {
+			continue
+		}
+		at += e.width + 1
+		if x < at {
+			return e.col
+		}
+	}
+	return -1
+}
+
+// setImgStatus shows one image state, or everything when it is already on.
+func (m *model) setImgStatus(s int) {
+	key := m.curRow().key
+	if s == m.imgStatuses[key] {
+		s = imgStatusAll
+	}
+	m.imgStatuses[key] = s
+	m.cursor, m.offset = 0, 0
+}
+
+// sortImgBy sets the image table's sort column, or reverses it when it is
+// already the one showing.
+func (m *model) sortImgBy(col int) {
+	if col < 0 || col >= len(imageColumns) {
+		return
+	}
+	if col == m.imgSort {
+		m.sortDesc = !m.sortDesc
+	} else {
+		m.imgSort, m.sortDesc = col, false
+	}
+	m.cursor, m.offset = 0, 0
+}
+
 func (m model) imageTableLines() []string {
 	inner := m.layout().tableW - 4
 	rows := m.imgRows()
@@ -468,23 +604,25 @@ func (m model) imageTableLines() []string {
 	// upstream version, then where the reference was read.
 	// The name never takes more than it needs: a long reference would push
 	// the state off the table, and the sidebar spells the whole name anyway.
-	const nameMax = 26
-	stateW, upstreamW, whereW := 10, 10, 16
-	if inner < 58 {
-		upstreamW = 0
+	nameW, whereW, upstreamW, stateW := imageColWidths(inner)
+	arrow := "▲"
+	if m.sortDesc {
+		arrow = "▼"
 	}
-	if inner < 40 {
-		whereW = 0
+	label := func(col int, text string) string {
+		if m.imgSort == col {
+			text += arrow
+		}
+		return text
 	}
-	nameW := min(max(inner-(stateW+upstreamW+whereW+4), 10), nameMax)
-	head := pad("IMAGE", nameW)
+	head := pad(label(imgColName, "IMAGE"), nameW)
 	if whereW > 0 {
-		head += " " + pad("FROM", whereW)
+		head += " " + pad(label(imgColWhere, "FROM"), whereW)
 	}
 	if upstreamW > 0 {
-		head += " " + pad("UPSTREAM", upstreamW)
+		head += " " + pad(label(imgColUpstream, "UPSTREAM"), upstreamW)
 	}
-	head += " " + pad("STATE", stateW)
+	head += " " + pad(label(imgColState, "STATE"), stateW)
 	lines := []string{faint().Render(ansi.Truncate(head, inner, "…"))}
 	if m.imgErr != nil {
 		lines = append(lines, styled(red(), wrap(m.imgErr.Error(), inner))...)
@@ -495,6 +633,12 @@ func (m model) imageTableLines() []string {
 		switch {
 		case m.imgBusy:
 			why = "reading Dockerfiles and compose files"
+		case len(m.imgList()) > 0:
+			// there are images, the filter is hiding them
+			why = "nothing matches"
+			if m.imgStatus() != imgStatusAll && m.filter() == "" {
+				why = "✨ all clear here"
+			}
 		case m.hiddenUnverified() > 0:
 			// Every row kho could not identify is hidden, and saying the
 			// project has none would be a lie.
@@ -521,7 +665,10 @@ func (m model) imageTableLines() []string {
 		}
 		lines = append(lines, line)
 	}
-	return lines
+	for len(lines) < m.layout().rows+1 {
+		lines = append(lines, "")
+	}
+	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
 }
 
 // sideBoxFor picks the sidebar the selected row needs: images have their own.

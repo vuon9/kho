@@ -240,7 +240,7 @@ func (m model) rowKeys() []string {
 	pairs = append(pairs, "tab", "panel", "[ ]", "tabs", "enter", m.enterLabel())
 	switch {
 	case isImageRow(m.curRow().kind):
-		pairs = append(pairs, "i v a", "tabs", "f", "state", "/", "filter", "w", "copy name", "x", "scan")
+		pairs = append(pairs, "i v a", "tabs", "s", "sort", "f", "state", "/", "filter", "w", "copy name", "x", "scan")
 	case m.inProjectPkg():
 		pairs = append(pairs, "s", "sort", "f", "status", "/", "filter", "w", "home")
 	case m.inProject():

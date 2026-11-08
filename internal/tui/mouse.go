@@ -179,11 +179,17 @@ func (m *model) click(x, y int) tea.Cmd {
 		m.focus = focusTable
 		switch {
 		case r == 0:
-			m.sortBy(m.columnAt(x - l.tableX - 3))
+			if isImageRow(m.curRow().kind) {
+				m.sortImgBy(m.imageColumnAt(x - l.tableX - 3))
+			} else {
+				m.sortBy(m.columnAt(x - l.tableX - 3))
+			}
 		case r == l.bodyH-3:
 			switch c := m.chipAt(x - l.tableX - 1); {
 			case c == -2:
 				m.filtering = true
+			case c >= 0 && isImageRow(m.curRow().kind):
+				m.setImgStatus(c)
 			case c >= 0:
 				m.setStatus(c)
 			}

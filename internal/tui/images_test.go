@@ -602,3 +602,95 @@ func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
 		t.Errorf("tags %v for the second image, want its answer", got)
 	}
 }
+
+// The image table carries the same bar as a package table: the keyword box,
+// then a chip per state with how many it holds.
+func TestImagesHaveTheSameFilterBar(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+
+	bar := ansi.Strip(m.filterBar())
+	for _, want := range []string{"⌕", "All ", "⚠", "⟳", "◎", "●"} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("bar %q, want %q in it", bar, want)
+		}
+	}
+	if counts := m.imgCounts(); counts[imgStatusPast] != 2 {
+		t.Errorf("counts %v, want two images past their line", counts)
+	}
+
+	// and a click on the second chip selects that state, like a package table
+	m = update(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"})
+	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "⚠ past line") {
+		t.Errorf("bar %q, want the active chip named in full", bar)
+	}
+	head, chips := m.filterBarChips()
+	x := lipgloss.Width(head) + 1
+	if got := m.chipAt(x); got != chips[0].status {
+		t.Errorf("clicking the first chip gave %d, want %d", got, chips[0].status)
+	}
+	if m.imgStatus() != imgStatusPast {
+		t.Errorf("f left the images on state %d, want past line", m.imgStatus())
+	}
+}
+
+// s sorts the image table by its own columns, and F steps the state back.
+func TestImagesSortAndReverse(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	first := m.imgRows()[0].Image
+
+	m = update(t, m, key("s"))
+	if m.imgSort != imgColName {
+		t.Fatalf("s left the sort on %d, want the name column", m.imgSort)
+	}
+	sorted := m.imgRows()[0].Image
+	if sorted == first {
+		t.Errorf("sorting by name left %q first", sorted)
+	}
+	if !strings.Contains(ansi.Strip(strings.Join(m.imageTableLines(), "\n")), "IMAGE▲") {
+		t.Error("the header does not mark the sorted column")
+	}
+	m = update(t, m, key("S"))
+	if got := m.imgRows()[0].Image; got == sorted {
+		t.Errorf("reversing left %q first", got)
+	}
+
+	m = update(t, m, key("f"))
+	m = update(t, m, key("F"))
+	if m.imgStatus() != imgStatusAll {
+		t.Errorf("F left the state on %d, want All", m.imgStatus())
+	}
+}
+
+// The keys that only mean something for a package do nothing on an image row.
+func TestPackageKeysIgnoreImageRows(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+
+	for _, k := range []string{"o", "!", "D"} {
+		before := m.statuses[m.curRow().key]
+		m = update(t, m, key(k))
+		if m.statuses[m.curRow().key] != before {
+			t.Errorf("%s changed the package status under an image row", k)
+		}
+		if m.confirm != nil {
+			t.Errorf("%s opened a dialog on an image row", k)
+		}
+	}
+}
+
+// A filter that hides every image says so, the way a package table does,
+// instead of claiming the project names no images.
+func TestImagesSayNothingMatches(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m.setFilter("no-such-image")
+	if len(m.imgRows()) != 0 {
+		t.Fatalf("rows %d, want the filter to hide them", len(m.imgRows()))
+	}
+	screen := ansi.Strip(strings.Join(m.imageTableLines(), "\n"))
+	if !strings.Contains(screen, "nothing matches") {
+		t.Errorf("screen %q, want it to say nothing matches", screen)
+	}
+}

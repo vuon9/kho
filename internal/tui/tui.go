@@ -242,6 +242,7 @@ type model struct {
 	imgTagBusy  map[string]bool
 	imgTagErr   map[string]string
 	imgTagTried map[string]bool
+	imgSort     int
 	imgScanErr  map[string]string
 	imgErr      error
 	imgBusy     bool
@@ -886,9 +887,13 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.setFilter("")
 		}
 	case "o":
-		m.toggleStatus(statusOutdated)
+		if !isImageRow(m.curRow().kind) {
+			m.toggleStatus(statusOutdated)
+		}
 	case "!":
-		m.toggleStatus(statusVulnerable)
+		if !isImageRow(m.curRow().kind) {
+			m.toggleStatus(statusVulnerable)
+		}
 	case "f":
 		if m.curRow().kind == rowImages {
 			m.cycleImgStatus()
@@ -896,18 +901,35 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		}
 		m.setStatus(m.status() + 1)
 	case "F":
+		if isImageRow(m.curRow().kind) {
+			m.stepImgStatus(-1)
+			return nil, false
+		}
 		m.setStatus(m.status() - 1)
 	case "d":
 		m.showDeps = !m.showDeps
 		m.cursor, m.offset = 0, 0
 	case "D":
-		m.askRemove()
+		if !isImageRow(m.curRow().kind) {
+			m.askRemove()
+		}
 	case "p":
 		m.prodOnly = !m.prodOnly
 		m.cursor, m.offset = 0, 0
 	case "s":
+		if isImageRow(m.curRow().kind) {
+			m.imgSort = (m.imgSort + 1) % len(imageColumns)
+			m.cursor, m.offset = 0, 0
+			return nil, false
+		}
 		m.sortCol = (m.sortCol + 1) % 5
 	case "S":
+		if isImageRow(m.curRow().kind) && m.imgSort == imgColFile {
+			// file order has no reverse, so start from the name column
+			m.imgSort, m.sortDesc = imgColName, true
+			m.cursor, m.offset = 0, 0
+			return nil, false
+		}
 		m.sortDesc = !m.sortDesc
 	case "c":
 		if p, ok := m.current(); ok && m.activeTab() == tabSecurity && m.projectFix(p) != "" {
