@@ -29,17 +29,22 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## Supported sources
 
-| Source | What kho reads | Latest version from | Security |
-|---|---|---|---|
-| Homebrew formulae and casks | `brew info --json=v2 --installed` | Homebrew | not covered by OSV yet |
-| npm globals | `npm ls -g`, `npm outdated -g` | npm registry | OSV, plus direct dependencies |
-| Composer globals | `composer global show`, `composer global show --tree`, `composer global outdated` | Packagist | OSV, plus every dependency |
-| pipx | `pipx list --json` | PyPI | OSV |
-| uv tools | `uv tool list` | PyPI | OSV |
-| `go install` binaries | build info inside each binary | Go module proxy | OSV, plus every module built in |
-| mise | `mise ls --json`, `mise outdated` | mise | not covered by OSV yet |
-| Container images | `FROM` lines in Dockerfiles, `image:` in compose files, and `docker image ls` | the image's own registry | trivy, when you ask it to scan |
-| Agent skills | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
+| Tool | Global | Project | What kho reads | Latest version from | Security |
+|---|---|---|---|---|---|
+| Homebrew | ✓ |  | `brew info --json=v2 --installed` | Homebrew | not covered by OSV yet |
+| npm | ✓ | ✓ | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
+| Composer | ✓ | ✓ | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
+| pipx | ✓ |  | `pipx list --json` | PyPI | OSV |
+| uv | ✓ | ✓ | `uv tool list`; `uv.lock` | PyPI | OSV |
+| pip |  | ✓ | `requirements*.txt` | PyPI | OSV |
+| Poetry |  | ✓ | `poetry.lock` | PyPI | OSV |
+| Go | ✓ | ✓ | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
+| Cargo |  | ✓ | `Cargo.lock` | crates.io | OSV |
+| mise | ✓ |  | `mise ls --json`, `mise outdated` | mise | not covered by OSV yet |
+| Agent skills | ✓ |  | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
+| Container images | ✓ | ✓ | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy, when you ask it to scan |
+
+Machine packages are installed and removed by kho; project dependencies are read from lockfiles and never changed.
 
 ## Install
 
