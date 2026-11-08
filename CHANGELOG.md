@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8](https://github.com/vuon9/kho/compare/v0.1.7...v0.1.8) (2026-11-08)
+
+
+### Features
+
+* read a project's container images and their registry facts ([#33](https://github.com/vuon9/kho/issues/33)) ([65b03b5](https://github.com/vuon9/kho/commit/65b03b5f50f8288ecca08223e46322b1cf174a4c))
+* remove packages and images, and make the images view behave like the rest ([#36](https://github.com/vuon9/kho/issues/36)) ([69167c5](https://github.com/vuon9/kho/commit/69167c52fd838c0bd4e726ba4cd5848a3ed852e5))
+
 ## [0.1.7](https://github.com/vuon9/kho/compare/v0.1.6...v0.1.7) (2026-11-06)
 
 
