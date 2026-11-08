@@ -45,7 +45,13 @@ func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) 
 	var tags []image.Tag
 	if line := releaseLine(r.Tag); line != "" {
 		if got, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil {
-			tags = got
+			// The hub matches the line anywhere in a tag, so 13 also finds
+			// 16.13: keep only the tags that belong to this line.
+			for _, t := range got {
+				if onLine(t.Name, line) {
+					tags = append(tags, t)
+				}
+			}
 		}
 	}
 	// Some lines are named thinly (debian's 13.4 is two tags), and a version
@@ -85,6 +91,18 @@ func orderTags(names []string) []string {
 		return out[i] < out[j]
 	})
 	return out
+}
+
+// onLine says a tag belongs to a release line: 3.19.9 and 3.19-slim do, and
+// 16.13 does not.
+func onLine(name, line string) bool {
+	if name == line {
+		return true
+	}
+	if !strings.HasPrefix(name, line) {
+		return false
+	}
+	return strings.ContainsRune(".-_+", rune(name[len(line)]))
 }
 
 // mergeTags joins two pages, keeping the first of any name it already has.

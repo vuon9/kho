@@ -572,3 +572,33 @@ func TestVersionsRetriesOnceByItself(t *testing.T) {
 		t.Errorf("tags %v after the retry, want the answer", got)
 	}
 }
+
+// Moving to another image while Versions is open asks about that image too,
+// instead of leaving the panel on "press v again".
+func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
+	asked := map[string]int{}
+	tagsFor = func(_ context.Context, r image.Ref, _ image.Asker) ([]image.Tag, error) {
+		asked[r.Canonical()]++
+		return []image.Tag{{Name: "1.0"}}, nil
+	}
+	t.Cleanup(func() {
+		tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) { return nil, nil }
+	})
+
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, tea.KeyPressMsg{Code: 'v', Text: "v"})
+
+	first, _ := m.currentImg()
+	m = update(t, m, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	second, _ := m.currentImg()
+	if first.Canonical() == second.Canonical() {
+		t.Fatal("the cursor did not move to another image")
+	}
+	if asked[second.Canonical()] != 1 {
+		t.Errorf("asked %v, want the image the cursor moved to", asked)
+	}
+	if got := m.imgTags[second.Canonical()]; len(got) != 1 {
+		t.Errorf("tags %v for the second image, want its answer", got)
+	}
+}

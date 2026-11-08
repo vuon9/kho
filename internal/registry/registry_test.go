@@ -409,3 +409,26 @@ func TestTagsFallBackToTheRegistryWhenTheHubFails(t *testing.T) {
 		t.Errorf("got %v, want the registry's own tags for the line: %v", names, want)
 	}
 }
+
+// The hub matches a line anywhere in a tag, so a line filter must not let a
+// newer major version's tags into the list.
+func TestHubTagsKeepOnlyTheLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"results":[{"name":"16.13"},{"name":"15.13"},{"name":"13.23"},{"name":"13.22"},{"name":"13.21"},
+			{"name":"13.20"},{"name":"13.19"},{"name":"13.18"},{"name":"13.17"},{"name":"13.16"},{"name":"13"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Parse("postgres:13"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"13.23", "13.22", "13.21", "13.20", "13.19", "13.18", "13.17", "13.16", "13"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want only the 13 line: %v", names, want)
+	}
+}

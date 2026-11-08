@@ -36,6 +36,23 @@ type imageTagsRetryMsg struct {
 	key string
 }
 
+// wantTags asks for the selected image's tags when the Versions tab is the one
+// showing, the image has none yet, and it has not already failed its retry.
+func (m *model) wantTags() tea.Cmd {
+	if m.imageTab() != tabVersions || !isImageRow(m.curRow().kind) {
+		return nil
+	}
+	r, ok := m.currentImg()
+	if !ok {
+		return nil
+	}
+	key := r.Canonical()
+	if m.imgTags[key] != nil || m.imgTagBusy[key] || m.imgTagTried[key] {
+		return nil
+	}
+	return m.tagsCmd()
+}
+
 // tabTo switches the sidebar tab, and asks for an image's tags when the tab
 // that needs them opens, however it was opened: the v key, a numbered tab, or
 // a click on the tab bar.

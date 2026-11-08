@@ -422,7 +422,20 @@ func cacheKey(p provider.Package) string {
 	return pkgKey(p) + "\x00" + p.Version
 }
 
+// Update runs the handler, then asks for the selected image's tags if the
+// Versions tab is showing and this image has not been asked about yet, so
+// moving down the table fills the panel in without a keypress.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if mm, ok := next.(model); ok {
+		if ask := mm.wantTags(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
+	}
+	return next, cmd
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
