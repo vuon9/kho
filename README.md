@@ -44,7 +44,13 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | Agent skills | ✓ |  | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
 | Docker images | ✓ | ✓ | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
 
-Machine packages are installed and removed by kho; project dependencies are read from lockfiles and never changed.
+kho reads all three, and changes only what is on the machine:
+
+| | Machine packages | Project dependencies | Images |
+|---|---|---|---|
+| Read | ✓ | ✓ | ✓ |
+| Install or upgrade | ✓ | never | pull a tag, in the TUI |
+| Remove | ✓ | never | `D`, after naming the containers |
 
 ## Install
 
