@@ -134,6 +134,18 @@ func (r Ref) Canonical() string {
 	return r.CanonicalRepo() + ":" + r.Tag
 }
 
+// BaseImage is the image this one sits on, written the way a reference is:
+// php:8.5.12 when both halves are known, and whichever half we have when not.
+func (r Ref) BaseImage() string {
+	switch {
+	case r.Base != "" && r.BaseVersion != "":
+		return r.Base + ":" + r.BaseVersion
+	case r.Base != "":
+		return r.Base
+	}
+	return r.BaseVersion
+}
+
 // CanonicalRepo is Canonical without the tag, for finding another tag of the
 // same repository.
 func (r Ref) CanonicalRepo() string {

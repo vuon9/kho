@@ -1091,7 +1091,7 @@ func (m model) imageLines(r image.Ref) []line {
 	add("where", imageWhere(r), "")
 	add("presence", presenceWord(r), "")
 	add("upstream", r.Upstream, "")
-	add("base", strings.TrimSpace(r.Base+" "+r.BaseVersion), "")
+	add("base image", r.BaseImage(), "")
 	if p := r.Product(); p != "" {
 		text := "endoflife.date/" + p
 		if c := r.Cycle(); c != "" {
