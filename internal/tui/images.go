@@ -602,7 +602,7 @@ func shortState(r image.Ref) string {
 	case image.EOL:
 		return "⚠ EOL"
 	case image.Gone:
-		return "⚠ gone"
+		return "✗ gone"
 	case image.Pinned:
 		return "⚑ pinned"
 	case image.Local:
