@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 | Tool | Global | Project | What kho reads | Latest version from | Security |
 |---|---|---|---|---|---|
-| Homebrew | ✓ |  | `brew info --json=v2 --installed` | Homebrew | not covered by OSV yet |
+| Homebrew | ✓ |  | `brew info --json=v2 --installed` | Homebrew | not covered yet |
 | npm | ✓ | ✓ | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
 | Composer | ✓ | ✓ | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
 | pipx | ✓ |  | `pipx list --json` | PyPI | OSV |
@@ -40,9 +40,9 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | Poetry |  | ✓ | `poetry.lock` | PyPI | OSV |
 | Go | ✓ | ✓ | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
 | Cargo |  | ✓ | `Cargo.lock` | crates.io | OSV |
-| mise | ✓ |  | `mise ls --json`, `mise outdated` | mise | not covered by OSV yet |
+| mise | ✓ |  | `mise ls --json`, `mise outdated` | mise | not covered yet |
 | Agent skills | ✓ |  | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
-| Container images | ✓ | ✓ | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy, when you ask it to scan |
+| Docker images | ✓ | ✓ | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
 
 Machine packages are installed and removed by kho; project dependencies are read from lockfiles and never changed.
 
