@@ -113,14 +113,6 @@ kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
 | `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
 | `--json` | print `{"package","version","command","ran","error","notes"}` instead of text |
 
-Exit 1 means the source refused or failed, or the ref is not installed, which a typo hits: `bramble is not installed`. Exit 2 is a usage mistake: no source, an unknown source, no ref, more than one ref, `--force` on anything but a Homebrew formula, a version in the ref that matches what is installed, or a name installed under another source, which kho names back (`focusbar is installed as cask/focusbar`).
-
-`--json` answers every outcome, a miss or a refusal included, with the same object on stdout, so a caller never parses prose. What text mode prints as a `note:` line arrives in `notes`, and `ran` is false in a dry run.
-
-Homebrew refuses to uninstall a formula another installed formula needs, and kho passes that refusal through. `--force` adds `--ignore-dependencies`, so it goes ahead and leaves whatever needed it broken until that package is reinstalled. A package that only exists as another's dependency gets that note before anything runs. kho never uses `brew -f`, which would delete every installed version.
-
-`go install` binaries and skills are not removed: kho names the binary to delete, or points at `npx skills remove`. `mise` uninstalls the version it listed and warns that `mise.toml` is untouched, so `mise install` may bring it back.
-
 ## For agents
 
 Give your agents the `use-kho` skill. `-g` installs it for your user, so it works in every project:
