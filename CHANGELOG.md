@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/vuon9/kho/compare/v0.1.9...v0.1.10) (2026-11-08)
+
+
+### Documentation
+
+* **readme:** show what kho may change, per scope ([#39](https://github.com/vuon9/kho/issues/39)) ([cd250aa](https://github.com/vuon9/kho/commit/cd250aad70109169674db329ae8c90795ec43894))
+
 ## [0.1.9](https://github.com/vuon9/kho/compare/v0.1.8...v0.1.9) (2026-11-08)
 
 
