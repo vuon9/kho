@@ -90,25 +90,70 @@ func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) 
 	return remote, nil
 }
 
+// source is where a reference is asked about: a registry host, and the prefix
+// its repository path carries there.
+type source struct {
+	host   string
+	prefix string
+}
+
+// sources lists where a reference is asked, in order. A docker.io reference
+// goes to a pull-through mirror first, because Docker Hub rate limits
+// anonymous pulls hard enough to fail a whole project; every other registry is
+// asked directly, since a mirror only carries Docker Hub's images.
+func sources(r image.Ref) []source {
+	if r.Registry != "docker.io" {
+		return []source{{host: r.Registry}}
+	}
+	return []source{
+		{host: "mirror.gcr.io"},
+		{host: "public.ecr.aws", prefix: "docker/"},
+		{host: "registry-1.docker.io"},
+	}
+}
+
 func (c *Client) fetch(ctx context.Context, r image.Ref) (image.Remote, error) {
 	ref := r.Tag
 	if ref == "" {
 		ref = r.Digest
 	}
-	host := r.Registry
-	if host == "docker.io" {
-		host = "registry-1.docker.io"
+	all := sources(r)
+	var missing, errored int
+	var lastErr error
+	for _, s := range all {
+		remote, found, err := c.fetchFrom(ctx, r, s, ref)
+		switch {
+		case err != nil:
+			errored++
+			lastErr = err
+		case !found:
+			missing++
+		default:
+			return remote, nil
+		}
 	}
-	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(host), r.RemoteRepo(), ref)
-	body, media, status, err := c.get(ctx, manifestURL, host, r.RemoteRepo())
-	if err != nil {
-		return image.Remote{}, err
-	}
-	if status == http.StatusNotFound {
+	// A tag is only gone when every source says so: a mirror that has not
+	// cached it yet says the same thing as one that never will.
+	if missing == len(all) {
 		return image.Remote{Gone: true}, nil
 	}
-	if status != http.StatusOK {
-		return image.Remote{}, fmt.Errorf("%s answered %d", r.Registry, status)
+	return image.Remote{}, lastErr
+}
+
+// fetchFrom asks one source. found is false when that source says the tag does
+// not exist, which is not an error: the next source may have it.
+func (c *Client) fetchFrom(ctx context.Context, r image.Ref, s source, ref string) (image.Remote, bool, error) {
+	repo, base := s.prefix+r.RemoteRepo(), c.base(s.host)
+	body, media, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", base, repo, ref), s.host, repo)
+	if err != nil {
+		return image.Remote{}, false, err
+	}
+	switch status {
+	case http.StatusNotFound:
+		return image.Remote{}, false, nil
+	case http.StatusOK:
+	default:
+		return image.Remote{}, false, fmt.Errorf("%s answered %d", s.host, status)
 	}
 	remote := image.Remote{Digest: "sha256:" + hex.EncodeToString(sum(body))}
 	var doc struct {
@@ -125,30 +170,30 @@ func (c *Client) fetch(ctx context.Context, r image.Ref) (image.Remote, error) {
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return image.Remote{}, err
+		return image.Remote{}, false, err
 	}
 	if len(doc.Manifests) > 0 {
 		child := pickPlatform(doc.Manifests)
-		childBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(host), r.RemoteRepo(), child), host, r.RemoteRepo())
+		childBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", base, repo, child), s.host, repo)
 		if err != nil || status != http.StatusOK {
 			// The index answered, so the tag exists: report the digest and
 			// leave the rest to the next run.
-			return remote, nil
+			return remote, true, nil
 		}
 		if err := json.Unmarshal(childBody, &doc); err != nil {
-			return remote, nil
+			return remote, true, nil
 		}
 	}
 	if doc.Config.Digest == "" {
-		return remote, nil
+		return remote, true, nil
 	}
-	configBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", c.base(host), r.RemoteRepo(), doc.Config.Digest), host, r.RemoteRepo())
+	configBody, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", base, repo, doc.Config.Digest), s.host, repo)
 	if err != nil || status != http.StatusOK {
-		return remote, nil
+		return remote, true, nil
 	}
 	remote.Pushed, remote.Upstream, remote.Base = readConfig(configBody, r)
 	_ = media
-	return remote, nil
+	return remote, true, nil
 }
 
 func pickPlatform(manifests []struct {

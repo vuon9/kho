@@ -209,3 +209,92 @@ func TestHubTagsAskForTheLine(t *testing.T) {
 		t.Errorf("a tag with no line asked %q and got %+v, want the newest page", asked, tags)
 	}
 }
+
+// mirrorServer answers per host, so a test can make one mirror refuse and see
+// which source kho settles on.
+func mirrorServer(t *testing.T, answer map[string]http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var asked []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Host+r.URL.Path)
+		for prefix, h := range answer {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				h(w, r)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &asked
+}
+
+// byHost routes each registry host at the same test server, keeping the host in
+// the path so the handlers can tell them apart.
+func byHost(srv *httptest.Server) func(string) string {
+	return func(host string) string { return srv.URL + "/" + host }
+}
+
+func TestRemoteMirrorsDockerHub(t *testing.T) {
+	config := []byte(`{"created":"2026-11-05T08:09:10Z","config":{"Env":["PYTHON_VERSION=3.12.16"],"Labels":{}}}`)
+	child := []byte(fmt.Sprintf(`{"config":{"digest":"%s"}}`, digestOf(config)))
+	served := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/3.12-slim"):
+			fmt.Fprintf(w, `{"manifests":[{"digest":"%s","platform":{"os":"linux","architecture":"arm64"}}]}`, digestOf(child))
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Write(child)
+		default:
+			w.Write(config)
+		}
+	}
+	srv, asked := mirrorServer(t, map[string]http.HandlerFunc{
+		"/mirror.gcr.io/":        func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },
+		"/public.ecr.aws/":       served,
+		"/registry-1.docker.io/": served,
+	})
+	c := &Client{HTTP: srv.Client(), Base: byHost(srv)}
+	ref := image.Parse("python:3.12-slim")
+
+	remote, err := c.Remote(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Upstream != "3.12.16" {
+		t.Errorf("upstream %q, want the answer the mirror chain found", remote.Upstream)
+	}
+	joined := strings.Join(*asked, " ")
+	if !strings.Contains(joined, "/public.ecr.aws/v2/docker/library/python/manifests/3.12-slim") {
+		t.Errorf("asked %q, want the ecr mirror with its docker/ prefix", joined)
+	}
+	if strings.Contains(joined, "registry-1.docker.io") {
+		t.Errorf("asked %q, want the last source left alone when the second answers", joined)
+	}
+}
+
+func TestRemoteGoneOnlyWhenEverySourceSaysSo(t *testing.T) {
+	srv, asked := mirrorServer(t, map[string]http.HandlerFunc{
+		"/mirror.gcr.io/":        func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+		"/public.ecr.aws/":       func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) },
+		"/registry-1.docker.io/": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+	})
+	c := &Client{HTTP: srv.Client(), Base: byHost(srv)}
+
+	if _, err := c.Remote(context.Background(), image.Parse("python:3.12-slim")); err == nil {
+		t.Errorf("a source that could not answer must not read as gone, asked %q", *asked)
+	}
+	if len(*asked) != 3 {
+		t.Errorf("asked %q, want every source tried", *asked)
+	}
+
+	srv2, _ := mirrorServer(t, map[string]http.HandlerFunc{
+		"/": func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+	})
+	c2 := &Client{HTTP: srv2.Client(), Base: byHost(srv2)}
+	remote, err := c2.Remote(context.Background(), image.Parse("python:3.12-slim"))
+	if err != nil || !remote.Gone {
+		t.Errorf("got %+v err %v, want gone when every source says so", remote, err)
+	}
+}
