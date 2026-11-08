@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.9](https://github.com/vuon9/kho/compare/v0.1.8...v0.1.9) (2026-11-08)
+
+
+### Documentation
+
+* **readme:** cut the prose and fix what it claimed ([#37](https://github.com/vuon9/kho/issues/37)) ([534ee12](https://github.com/vuon9/kho/commit/534ee1214dc776f09ad4e8be8b9eef1f183bfd2c))
+
+
+### Miscellaneous
+
+* release 0.1.9 ([cbf412e](https://github.com/vuon9/kho/commit/cbf412e2ea1f0cafdcde26452b65326c15333eb0))
+
 ## [0.1.8](https://github.com/vuon9/kho/compare/v0.1.7...v0.1.8) (2026-11-08)
 
 
