@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.12](https://github.com/vuon9/kho/compare/v0.1.11...v0.1.12) (2026-11-08)
+
+
+### Bug Fixes
+
+* **registry:** read the image's own version, and name the base it sits on ([#44](https://github.com/vuon9/kho/issues/44)) ([76f5e54](https://github.com/vuon9/kho/commit/76f5e5492f080bb18072171af6632510103ef418))
+* **tui:** write the base the way a reference reads ([#46](https://github.com/vuon9/kho/issues/46)) ([ebbd518](https://github.com/vuon9/kho/commit/ebbd5185f2fbdc48106c7e26579f414427cff47c))
+
 ## [0.1.11](https://github.com/vuon9/kho/compare/v0.1.10...v0.1.11) (2026-11-08)
 
 
