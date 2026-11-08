@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,10 +212,10 @@ func TestHubTagsAskForTheLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 2 || tags[0].Name != "3.19.9" || tags[1].Name != "3.19.0" {
-		t.Errorf("tags %+v, want the 3.19 line", tags)
+	if len(tags) < 2 || tags[0].Name != "3.19.9" || tags[1].Name != "3.19.0" {
+		t.Errorf("tags %+v, want the 3.19 line first", tags)
 	}
-	if len(asked) != 1 || !strings.Contains(asked[0], "name=3.19") {
+	if len(asked) == 0 || !strings.Contains(asked[0], "name=3.19") {
 		t.Errorf("asked %q, want the line first", asked)
 	}
 
@@ -314,5 +315,71 @@ func TestRemoteGoneOnlyWhenEverySourceSaysSo(t *testing.T) {
 	remote, err := c2.Remote(context.Background(), image.Parse("python:3.12-slim"))
 	if err != nil || !remote.Gone {
 		t.Errorf("got %+v err %v, want gone when every source says so", remote, err)
+	}
+}
+
+func TestOrderTagsPutsNumbersFirst(t *testing.T) {
+	got := orderTags([]string{"latest", "0.9.28", "initial", "0.11.6", "0.11.6-alpine"})
+	want := []string{"0.11.6", "0.11.6-alpine", "0.9.28", "initial", "latest"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestMergeTagsKeepsTheFirstOfAName(t *testing.T) {
+	first := []image.Tag{{Name: "13.4", Pushed: time.Date(2026, 5, 8, 0, 0, 0, 0, time.UTC)}}
+	second := []image.Tag{{Name: "13.4"}, {Name: "13.3"}}
+	got := mergeTags(first, second)
+	if len(got) != 2 || !got[0].Pushed.Equal(first[0].Pushed) {
+		t.Errorf("got %+v, want the first page's 13.4 kept and 13.3 added", got)
+	}
+}
+
+// A registry lists tags lexically, so the line's tags are found by asking for
+// what follows the line, and only the line's own tags are shown.
+func TestRegistryTagsAskForTheLine(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.RequestURI())
+		fmt.Fprint(w, `{"tags":["0.11.0","0.11.6","0.11.6-alpine","0.12.0","0.2.1"]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), Base: func(string) string { return srv.URL }}
+	ref := image.Parse("ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie")
+
+	tags, err := c.Tags(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "last=0.11") {
+		t.Errorf("asked %v, want one request for the line", asked)
+	}
+	names := []string{}
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	if want := []string{"0.11.6", "0.11.6-alpine", "0.11.0"}; !slices.Equal(names, want) {
+		t.Errorf("got %v, want only the 0.11 line, newest first: %v", names, want)
+	}
+}
+
+// A line named thinly still gets the repository's recent tags beside it.
+func TestHubTagsAddRecentWhenLineIsThin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") == "13.4" {
+			fmt.Fprint(w, `{"results":[{"name":"13.4","last_updated":"2026-05-08T00:00:00Z"},{"name":"13.4-slim","last_updated":"2026-05-08T00:00:00Z"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"name":"13.4","last_updated":"2026-05-08T00:00:00Z"},{"name":"13.3","last_updated":"2026-02-10T00:00:00Z"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Parse("debian:13.4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 3 {
+		t.Fatalf("got %d tags, want the line's two plus 13.3", len(tags))
 	}
 }

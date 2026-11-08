@@ -33,12 +33,65 @@ func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) 
 	// all newer lines, so the newest page says nothing about this one. Ask the
 	// Hub for the line's own tags first, and for a full version (3.19.9) ask
 	// about its line rather than about that one tag, or the list is one row.
+	var tags []image.Tag
 	if line := releaseLine(r.Tag); line != "" {
-		if tags, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil && len(tags) > 0 {
-			return tags, nil
+		if got, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil {
+			tags = got
 		}
 	}
-	return c.hubTagPage(ctx, r, "&page_size=40")
+	// Some lines are named thinly (debian's 13.4 is two tags), and a version
+	// tab holding two rows says less than the repository's recent tags do.
+	if len(tags) < 8 {
+		if newest, err := c.hubTagPage(ctx, r, "&page_size=40"); err == nil {
+			tags = mergeTags(tags, newest)
+		}
+	}
+	if len(tags) == 0 {
+		return c.hubTagPage(ctx, r, "&page_size=40")
+	}
+	return tags, nil
+}
+
+// orderTags puts numbered tags first, newest first, then the named ones. A
+// registry sorts lexically, where trixie outranks 0.11.6.
+func orderTags(names []string) []string {
+	version := func(name string) string {
+		base, _, _ := strings.Cut(name, "-")
+		if m := tagVersion.FindStringSubmatch(base); m != nil {
+			return m[1]
+		}
+		return ""
+	}
+	out := append([]string(nil), names...)
+	sort.SliceStable(out, func(i, j int) bool {
+		vi, vj := version(out[i]), version(out[j])
+		if (vi == "") != (vj == "") {
+			return vi != ""
+		}
+		if vi != "" {
+			if c := vuln.Compare(vi, vj); c != 0 {
+				return c > 0
+			}
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
+// mergeTags joins two pages, keeping the first of any name it already has.
+func mergeTags(pages ...[]image.Tag) []image.Tag {
+	seen := map[string]bool{}
+	var out []image.Tag
+	for _, page := range pages {
+		for _, t := range page {
+			if seen[t.Name] {
+				continue
+			}
+			seen[t.Name] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // tagVersion is the leading version of a tag, the same shape the image package
@@ -98,7 +151,36 @@ func (c *Client) registryTags(ctx context.Context, r image.Ref) ([]image.Tag, er
 	if host == "docker.io" {
 		host = "registry-1.docker.io"
 	}
-	raw := fmt.Sprintf("%s/v2/%s/tags/list?n=60", c.base(host), r.RemoteRepo())
+	// The distribution API lists tags in lexical order, so a plain page holds
+	// the alphabetically first tags, not the newest: for a repository with
+	// thousands of them, 0.11.6 sits past five pages of 0.1.x. The line the tag
+	// belongs to is contiguous in that order, so ask for what follows the line
+	// and keep the line's own tags.
+	if line := releaseLine(r.Tag); line != "" {
+		names, err := c.tagPage(ctx, r, host, "&last="+url.QueryEscape(line))
+		if err != nil {
+			return nil, err
+		}
+		var own []string
+		for _, name := range names {
+			if strings.HasPrefix(name, line) && (len(name) == len(line) || strings.ContainsRune(".-_+", rune(name[len(line)]))) {
+				own = append(own, name)
+			}
+		}
+		if len(own) > 0 {
+			return tagList(own), nil
+		}
+	}
+	names, err := c.tagPage(ctx, r, host, "")
+	if err != nil {
+		return nil, err
+	}
+	return tagList(names), nil
+}
+
+// tagPage reads one page of a registry's tags, from after the given suffix.
+func (c *Client) tagPage(ctx context.Context, r image.Ref, host, extra string) ([]string, error) {
+	raw := fmt.Sprintf("%s/v2/%s/tags/list?n=1000%s", c.base(host), r.RemoteRepo(), extra)
 	body, _, status, err := c.get(ctx, raw, host, r.RemoteRepo())
 	if err != nil {
 		return nil, err
@@ -112,15 +194,20 @@ func (c *Client) registryTags(ctx context.Context, r image.Ref) ([]image.Tag, er
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, err
 	}
-	sort.SliceStable(doc.Tags, func(i, j int) bool { return vuln.Compare(doc.Tags[i], doc.Tags[j]) > 0 })
-	if len(doc.Tags) > 40 {
-		doc.Tags = doc.Tags[:40]
+	return doc.Tags, nil
+}
+
+// tagList orders the tags newest first and keeps the ones the tab shows.
+func tagList(names []string) []image.Tag {
+	names = orderTags(names)
+	if len(names) > 40 {
+		names = names[:40]
 	}
-	tags := make([]image.Tag, 0, len(doc.Tags))
-	for _, t := range doc.Tags {
+	tags := make([]image.Tag, 0, len(names))
+	for _, t := range names {
 		tags = append(tags, image.Tag{Name: t})
 	}
-	return tags, nil
+	return tags
 }
 
 // hubBase is where the Docker Hub web API lives, for tests.
