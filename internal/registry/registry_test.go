@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,5 +171,41 @@ func TestReadConfig(t *testing.T) {
 	}
 	if json.Valid(body) == false {
 		t.Error("fixture is not JSON")
+	}
+}
+
+// A tag names a release line, and the repository's newest tags belong to newer
+// lines, so the Hub is asked for the line's own tags.
+func TestHubTagsAskForTheLine(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.RawQuery)
+		if r.URL.Query().Get("name") == "3.19" {
+			fmt.Fprint(w, `{"results":[{"name":"3.19.9","last_updated":"2025-01-01T00:00:00Z"},{"name":"3.19.0"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"name":"3.22.0"},{"name":"latest"}]}`)
+	}))
+	defer srv.Close()
+	c := &Client{HTTP: srv.Client(), HubBase: srv.URL}
+
+	tags, err := c.Tags(context.Background(), image.Ref{Registry: "docker.io", Repo: "library/alpine", Tag: "3.19"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 2 || tags[0].Name != "3.19.9" || tags[1].Name != "3.19.0" {
+		t.Errorf("tags %+v, want the 3.19 line", tags)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "name=3.19") {
+		t.Errorf("asked %q, want the line first", asked)
+	}
+
+	asked = nil
+	tags, err = c.Tags(context.Background(), image.Ref{Registry: "docker.io", Repo: "library/alpine", Tag: "latest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 2 || len(asked) != 1 || strings.Contains(asked[0], "name=") {
+		t.Errorf("a tag with no line asked %q and got %+v, want the newest page", asked, tags)
 	}
 }

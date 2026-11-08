@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"time"
 
@@ -26,7 +27,19 @@ func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 }
 
 func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
-	raw := fmt.Sprintf("%s/v2/repositories/%s/tags?page_size=40&ordering=last_updated", c.hubBase(), r.RemoteRepo())
+	// A tag names a release line (3.19), and a busy repository's newest tags are
+	// all newer lines, so the newest page says nothing about this one. Ask the
+	// Hub for the line's own tags first.
+	if line := r.Cycle(); line != "" {
+		if tags, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil && len(tags) > 0 {
+			return tags, nil
+		}
+	}
+	return c.hubTagPage(ctx, r, "&page_size=40")
+}
+
+func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]image.Tag, error) {
+	raw := fmt.Sprintf("%s/v2/repositories/%s/tags?ordering=last_updated%s", c.hubBase(), r.RemoteRepo(), query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
