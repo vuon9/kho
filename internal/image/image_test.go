@@ -65,3 +65,25 @@ func TestProduct(t *testing.T) {
 		}
 	}
 }
+
+// A base reads like a reference when both halves are known, and never makes one
+// up when they are not.
+func TestBaseImage(t *testing.T) {
+	tests := []struct {
+		id   string
+		ref  Ref
+		want string
+	}{
+		{"name and version", Ref{Base: "php", BaseVersion: "8.5.12"}, "php:8.5.12"},
+		{"name only", Ref{Base: "debian"}, "debian"},
+		{"version only", Ref{BaseVersion: "8.5.12"}, "8.5.12"},
+		{"neither", Ref{}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := tt.ref.BaseImage(); got != tt.want {
+				t.Errorf("BaseImage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
