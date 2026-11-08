@@ -39,9 +39,9 @@ type asker struct{}
 func (asker) Remote(context.Context, image.Ref) (image.Remote, error) { return image.Remote{}, nil }
 func (asker) Life(context.Context, image.Ref) (image.Life, error)     { return image.Life{}, nil }
 
-// The table is drawn from the files before the registries answer: the rows are
-// there, saying asking, and the answers replace them when they land.
-func TestImagesPaintBeforeTheRegistriesAnswer(t *testing.T) {
+// A row is only listed once kho knows what it is: while the registries are
+// being read the table says so, and nothing half-known is shown.
+func TestImagesWaitForTheirStatus(t *testing.T) {
 	ref := image.Ref{Image: "node:22-alpine", Registry: "docker.io", Repo: "library/node", Tag: "22-alpine", File: "Dockerfile", Line: 1, State: image.Unknown}
 	m := withProject(t, project.Scan{Root: "/work/app"}, false)
 	m.dir, m.imgAsk = "/work/app", asker{}
@@ -58,27 +58,21 @@ func TestImagesPaintBeforeTheRegistriesAnswer(t *testing.T) {
 	machineImages = func(context.Context, []image.LocalImage, image.Asker) []image.Ref { return nil }
 
 	m.gotImages(imagesMsg{gen: m.imgGen, refs: []image.Ref{ref}, local: []image.LocalImage{}})
-	if got := len(m.imgRows()); got != 1 {
-		t.Fatalf("%d rows while asking, want the one from the file", got)
-	}
-	if got := ansi.Strip(m.imageState(m.imgList()[0])); !strings.Contains(got, "asking") {
-		t.Errorf("the row says %q, want asking", got)
+	if got := len(m.imgRows()); got != 0 {
+		t.Errorf("%d rows before the registry answered, want none", got)
 	}
 	if !strings.Contains(ansi.Strip(m.imageTitle()), "reading") {
 		t.Errorf("title %q does not say it is reading", ansi.Strip(m.imageTitle()))
 	}
-	if !strings.Contains(ansi.Strip(m.tableTitle()), "reading") && !strings.Contains(ansi.Strip(m.imageTitle()), "reading") {
-		t.Errorf("nothing says reading")
+	if body := ansi.Strip(strings.Join(m.imageTableLines(), "\n")); !strings.Contains(body, "reading Dockerfiles") {
+		t.Errorf("the table says %q, want that it is reading", body)
 	}
 	m = update(t, m, m.factsCmd()())
 	if asked == 0 {
 		t.Fatal("the registries were never asked")
 	}
 	if got := m.imgRows(); len(got) != 1 || got[0].State != image.Fresh {
-		t.Errorf("after the answer the row is %+v, want fresh", got)
-	}
-	if strings.Contains(ansi.Strip(m.imageTitle()), "reading") {
-		t.Errorf("title %q still says reading", ansi.Strip(m.imageTitle()))
+		t.Errorf("after the answer the rows are %+v, want one fresh", got)
 	}
 }
 

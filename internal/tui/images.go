@@ -241,7 +241,7 @@ func (m model) imgRows() []image.Ref {
 	var out []image.Ref
 	only := m.imgStatus() == imgStatusUntracked
 	for _, r := range m.imgList() {
-		if unverified(r) && !only && !m.imgBusy {
+		if unverified(r) && !only {
 			continue
 		}
 		if f := m.filter(); f != "" && !strings.Contains(strings.ToLower(r.Image), strings.ToLower(f)) {
@@ -317,18 +317,7 @@ func presenceMark(r image.Ref) string {
 }
 
 // imageState paints the state the way the package table paints a status. The
-// asking is the state of a row whose registry has not answered yet: it is not
-// unverified, it is unanswered.
-func (m model) asking(r image.Ref) bool { return m.imgBusy && r.State == image.Unknown }
-
 // table gets a short word; the sidebar spells it out.
-func (m model) imageState(r image.Ref) string {
-	if m.asking(r) {
-		return faint().Render("· asking")
-	}
-	return imageState(r)
-}
-
 func imageState(r image.Ref) string {
 	switch r.State {
 	case image.EOL, image.Gone:
@@ -361,13 +350,6 @@ func shortState(r image.Ref) string {
 		return "· unverified"
 	}
 	return "· build"
-}
-
-func (m model) stateWord(r image.Ref) string {
-	if m.asking(r) {
-		return "· asking"
-	}
-	return stateWord(r)
 }
 
 func stateWord(r image.Ref) string {
@@ -454,7 +436,7 @@ func (m model) imageTableLines() []string {
 		if upstreamW > 0 {
 			line += " " + pad(ansi.Truncate(r.Upstream, upstreamW, "…"), upstreamW)
 		}
-		line += " " + m.imageState(r)
+		line += " " + imageState(r)
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
 		}
@@ -795,7 +777,7 @@ func (m model) imageLines(r image.Ref) []line {
 			add("support", "supported until "+r.EOL.Format("2006-01-02"), "")
 		}
 	}
-	add("state", m.stateWord(r), "")
+	add("state", stateWord(r), "")
 	if r.Note != "" {
 		add("note", r.Note, "")
 	}
