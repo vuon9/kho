@@ -17,7 +17,7 @@ func (c *Client) lifeBase() string {
 	if c.LifeBase != "" {
 		return c.LifeBase
 	}
-	return "https://endoflife.date"
+	return LifeURL
 }
 
 // Life answers the upstream release line a reference names. A product or
@@ -38,7 +38,7 @@ func (c *Client) Life(ctx context.Context, r image.Ref) (image.Life, error) {
 	if err != nil {
 		return image.Life{}, err
 	}
-	req.Header.Set("User-Agent", "kho")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return image.Life{}, err

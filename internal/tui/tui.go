@@ -757,7 +757,7 @@ func (m *model) reindex() {
 }
 
 func (m model) audit(p provider.Package) (vuln.SkillAudit, bool) {
-	a, ok := m.db.Audits[p.Repo+"/"+p.Name]
+	a, ok := m.db.Audits[vuln.AuditKey(p.Repo, p.Name)]
 	return a, ok
 }
 
@@ -1226,16 +1226,20 @@ func homeURL(p provider.Package) string {
 	case p.Homepage != "":
 		return p.Homepage
 	case p.Repo != "":
-		return "https://github.com/" + p.Repo
-	case p.Source == "npm":
+		return repoURL(p.Repo)
+	}
+	switch provider.Ecosystem(p) {
+	case vuln.NPM:
 		return "https://www.npmjs.com/package/" + p.Name
-	case p.Source == "pipx", p.Source == "uv":
+	case vuln.PyPI:
 		return "https://pypi.org/project/" + p.Name + "/"
-	case p.Source == "go":
+	case vuln.Go:
 		return "https://pkg.go.dev/" + p.Origin
 	}
 	return ""
 }
+
+func repoURL(repo string) string { return "https://github.com/" + repo }
 
 // openReleasePage opens the selected version's page when kho has no notes
 // to show for it.

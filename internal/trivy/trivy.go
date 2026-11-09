@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 // Vuln is one finding, as the Security tab lists it.
@@ -107,26 +108,12 @@ func Parse(data []byte) ([]Vuln, error) {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if ri, rj := rank(out[i].Severity), rank(out[j].Severity); ri != rj {
+		if ri, rj := vuln.Rank(out[i].Severity), vuln.Rank(out[j].Severity); ri != rj {
 			return ri < rj
 		}
 		return out[i].Package < out[j].Package
 	})
 	return out, nil
-}
-
-func rank(sev string) int {
-	switch sev {
-	case "CRITICAL":
-		return 0
-	case "HIGH":
-		return 1
-	case "MEDIUM":
-		return 2
-	case "LOW":
-		return 3
-	}
-	return 4
 }
 
 // clean turns the scanner's error report into one readable sentence: the

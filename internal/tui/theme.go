@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 type palette struct {
@@ -47,6 +49,14 @@ func themeNamed(name string) (palette, bool) {
 		}
 	}
 	return palette{}, false
+}
+
+func themeNames() string {
+	names := make([]string, len(themes))
+	for i, t := range themes {
+		names[i] = t.name
+	}
+	return strings.Join(names, ", ")
 }
 
 // defaultTheme fits the terminal's background when no theme was picked.
@@ -141,12 +151,12 @@ func severityPill(sev string) string {
 
 func verdictPill(verdict string) string {
 	switch verdict {
-	case "Pass":
-		return pill("Pass", th.green)
-	case "Warn":
-		return pill("Warn", th.yellow)
-	case "Fail":
-		return pill("Fail", th.red)
+	case vuln.Pass:
+		return pill(vuln.Pass, th.green)
+	case vuln.Warn:
+		return pill(vuln.Warn, th.yellow)
+	case vuln.Fail:
+		return pill(vuln.Fail, th.red)
 	}
 	return faint().Render("--")
 }

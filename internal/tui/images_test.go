@@ -893,3 +893,29 @@ func linesText(lines []line) []string {
 	}
 	return out
 }
+
+// A state has one mark in the table and the sidebar, the one a package with
+// the same problem has: stale is ↑ like outdated, pinned is ⚑ like pinned.
+func TestImageStateMarks(t *testing.T) {
+	tests := []struct {
+		state       image.State
+		table, side string
+	}{
+		{image.Stale, "↑ stale", "↑ stale"},
+		{image.Gone, "✗ gone", "✗ tag gone"},
+		{image.Pinned, "⚑ pinned", "⚑ pinned"},
+		{image.EOL, "⚠ EOL", "⚠ past line"},
+		{image.Fresh, "✓ fresh", "✓ fresh"},
+		{image.Local, "· local", "· local"},
+		{image.None, "· n/a", "· nothing to ask"},
+		{image.Unknown, "· unverified", "· unverified"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			r := image.Ref{State: tt.state}
+			if got, want := [2]string{shortState(r), stateWord(r)}, [2]string{tt.table, tt.side}; got != want {
+				t.Errorf("table and sidebar say %q, want %q", got, want)
+			}
+		})
+	}
+}

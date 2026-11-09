@@ -252,7 +252,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 				p.Note = "pinned to " + shortRef(e.Ref)
 			}
 		} else {
-			p.Note = "no lock entry, the skills CLI can't update it"
+			p.Note = noteNoLock + " entry, the skills CLI can't update it"
 		}
 		pkgs = append(pkgs, p)
 	}
@@ -264,7 +264,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 			Version: "-",
 			Path:    path,
 			Agents:  as,
-			Note:    "only in " + strings.Join(as, ", ") + ", not managed by the skills CLI",
+			Note:    noteOnlyIn + " " + strings.Join(as, ", ") + ", not managed by the skills CLI",
 		})
 	}
 	sortByName(pkgs)
@@ -324,7 +324,7 @@ func (Skills) Latest(ctx context.Context, pkgs []Package) ([]Package, error) {
 			continue
 		}
 		if err := failed[e.Source]; err != nil {
-			pkgs[i].Note = "latest unknown: " + err.Error()
+			pkgs[i].Note = noteLatestUnknown + ": " + err.Error()
 			continue
 		}
 		folder := skillFolder(e)

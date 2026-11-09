@@ -150,7 +150,7 @@ func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[strin
 	stale := map[string][]string{}
 	for source, slugs := range bySource {
 		for _, slug := range slugs {
-			if t, ok := db.AuditedAt[auditKey(source, slug)]; !ok || now.Sub(t) > MaxAge {
+			if t, ok := db.AuditedAt[AuditKey(source, slug)]; !ok || now.Sub(t) > MaxAge {
 				stale[source] = append(stale[source], slug)
 			}
 		}
@@ -171,7 +171,7 @@ func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudi
 	}
 	for source, slugs := range asked {
 		for _, slug := range slugs {
-			db.AuditedAt[auditKey(source, slug)] = now
+			db.AuditedAt[AuditKey(source, slug)] = now
 		}
 	}
 }

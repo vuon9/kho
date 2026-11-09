@@ -50,11 +50,11 @@ func (m model) statusRank(p provider.Package) int {
 		return 3
 	case p.Pinned:
 		return 4
-	case strings.HasPrefix(p.Note, "no lock"):
+	case p.NoLock():
 		return 5
-	case strings.HasPrefix(p.Note, "only in"):
+	case p.Unmanaged():
 		return 6
-	case p.Latest == "" || strings.HasPrefix(p.Note, "latest unknown"):
+	case p.Latest == "" || p.LatestUnknown():
 		return 7
 	}
 	return rankOK
@@ -66,5 +66,5 @@ const rankOK = 8
 // riskyAudit is a skill that an auditor on skills.sh failed.
 func (m model) riskyAudit(p provider.Package) bool {
 	a, ok := m.audit(p)
-	return ok && vuln.Verdict(a.Worst()) == "Fail"
+	return ok && vuln.Verdict(a.Worst()) == vuln.Fail
 }

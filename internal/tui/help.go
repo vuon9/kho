@@ -21,7 +21,7 @@ var helpSections = []struct {
 		{"< >", "narrow or widen the focused panel"},
 		{"{ }", "move the sidebar's divider up or down"},
 		{"=", "put every panel back to its size"},
-		{"t  T", "next or previous theme: Ocean, Paper, Forest, Lantern, Ember"},
+		{"t  T", "next or previous theme: " + themeNames()},
 		{"r", "rescan every package manager and the project"},
 		{"R", "check security again, skipping the cache"},
 		{"q  ctrl+c", "quit"},

@@ -2553,3 +2553,29 @@ func TestProjectStaysInViewInAShortTerminal(t *testing.T) {
 		t.Errorf("the open project is off screen:\n%s", rail)
 	}
 }
+
+// With no homepage or repo, w opens the package's page on its registry,
+// whichever tool put a Python package there.
+func TestHomeURL(t *testing.T) {
+	tests := []struct {
+		id   string
+		p    provider.Package
+		want string
+	}{
+		{"a poetry package", provider.Package{Source: "poetry", Name: "quill"}, "https://pypi.org/project/quill/"},
+		{"a pip package", provider.Package{Source: "pip", Name: "quill"}, "https://pypi.org/project/quill/"},
+		{"a pipx tool", provider.Package{Source: "pipx", Name: "quill"}, "https://pypi.org/project/quill/"},
+		{"its own homepage first", provider.Package{Source: "npm", Name: "lark", Homepage: "https://lark.example"}, "https://lark.example"},
+		{"then its repo", provider.Package{Source: "npm", Name: "lark", Repo: "acme/lark"}, "https://github.com/acme/lark"},
+		{"an npm package", provider.Package{Source: "npm", Name: "lark"}, "https://www.npmjs.com/package/lark"},
+		{"a go binary", provider.Package{Source: "go", Name: "wren", Origin: "example.com/acme/wren"}, "https://pkg.go.dev/example.com/acme/wren"},
+		{"a formula has none", provider.Package{Source: "brew", Name: "anvil"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := homeURL(tt.p); got != tt.want {
+				t.Errorf("homeURL = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

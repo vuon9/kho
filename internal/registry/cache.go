@@ -100,6 +100,9 @@ func (c *Cache) PutLife(key string, life image.Life) {
 	c.dirty = true
 }
 
+// keepFor is how long an entry stays in the file after it was asked.
+const keepFor = 30 * 24 * time.Hour
+
 // Save writes the cache back, dropping entries that are too old to use.
 func (c *Cache) Save() error {
 	c.mu.Lock()
@@ -109,7 +112,7 @@ func (c *Cache) Save() error {
 	}
 	fresh := map[string]entry{}
 	for k, e := range c.entries {
-		if time.Since(e.At) <= 30*24*time.Hour {
+		if time.Since(e.At) <= keepFor {
 			fresh[k] = e
 		}
 	}

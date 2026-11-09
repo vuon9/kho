@@ -535,11 +535,11 @@ func (m model) statusCell(p provider.Package) string {
 		return cyan().Render("⚑ pinned")
 	case p.Outdated:
 		return yellow().Render("↑ outdated")
-	case strings.HasPrefix(p.Note, "no lock"):
+	case p.NoLock():
 		return yellow().Render("◌ no lock")
-	case strings.HasPrefix(p.Note, "only in"):
+	case p.Unmanaged():
 		return faint().Render("◌ unmanaged")
-	case strings.HasPrefix(p.Note, "latest unknown"):
+	case p.LatestUnknown():
 		return faint().Render("?")
 	case p.Latest != "":
 		return green().Render("✓")

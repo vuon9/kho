@@ -34,6 +34,30 @@ const (
 	Unknown State = "unknown"
 )
 
+// Mark is the one character a state shows as, wherever kho prints it, so a
+// stale image reads like an outdated package and pinned like pinned.
+func (s State) Mark() string {
+	switch s {
+	case Fresh:
+		return "✓"
+	case Stale:
+		return "↑"
+	case EOL:
+		return "⚠"
+	case Gone:
+		return "✗"
+	case Pinned:
+		return "⚑"
+	}
+	return "·"
+}
+
+// DockerHub is the registry a reference names when it names none.
+const DockerHub = "docker.io"
+
+// Scratch is the empty base image, which no registry holds.
+const Scratch = "scratch"
+
 // Presence says whether the machine holds an image.
 type Presence string
 
@@ -45,6 +69,17 @@ const (
 	// Unasked means docker did not answer, so kho does not claim either way.
 	Unasked Presence = "unknown"
 )
+
+// Mark says whether docker holds the image, in one character.
+func (p Presence) Mark() string {
+	switch p {
+	case OnDisk:
+		return "●"
+	case NotPulled:
+		return "○"
+	}
+	return "?"
+}
 
 // Ref is one image reference, as a file writes it and as kho understands it.
 type Ref struct {
@@ -122,7 +157,7 @@ func splitRegistry(s string) (registry, repo string) {
 	if ok && (strings.ContainsAny(first, ".:") || first == "localhost") {
 		return first, rest
 	}
-	return "docker.io", s
+	return DockerHub, s
 }
 
 // Canonical is the reference with the registry and the library prefix
@@ -155,7 +190,7 @@ func (r Ref) CanonicalRepo() string {
 // RemoteRepo is the repository path a registry expects: an official Docker
 // Hub image lives under library/.
 func (r Ref) RemoteRepo() string {
-	if r.Registry == "docker.io" && !strings.Contains(r.Repo, "/") {
+	if r.Registry == DockerHub && !strings.Contains(r.Repo, "/") {
 		return "library/" + r.Repo
 	}
 	return r.Repo
@@ -165,7 +200,7 @@ func (r Ref) RemoteRepo() string {
 // official image: node:22-alpine rather than docker.io/library/node.
 func (r Ref) Name() string {
 	repo := r.Repo
-	if r.Registry == "docker.io" {
+	if r.Registry == DockerHub {
 		repo = strings.TrimPrefix(repo, "library/")
 	} else if r.Registry != "" {
 		repo = r.Registry + "/" + repo

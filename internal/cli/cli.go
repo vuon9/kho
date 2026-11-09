@@ -437,7 +437,7 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 		if depHit {
 			r.Summary.WithVulnerableDeps++
 		}
-		if a, ok := env.DB.Audits[p.Repo+"/"+p.Name]; ok && p.Source == "skills" && vuln.Verdict(a.Worst()) == "Fail" {
+		if a, ok := env.DB.Audits[vuln.AuditKey(p.Repo, p.Name)]; ok && p.Source == "skills" && vuln.Verdict(a.Worst()) == vuln.Fail {
 			r.RiskySkills = append(r.RiskySkills, RiskySkill{p.Name, p.Repo, a.Gen, a.Socket, a.Snyk, vuln.SkillPage(p.Repo, p.Name)})
 		}
 	}
@@ -770,7 +770,7 @@ func (env Env) printReport(r Report) {
 	if len(r.Images) > 0 {
 		fmt.Fprintf(w, "\n%d images · %d stale · %d past their line · %d gone\n", len(r.Images), r.Summary.ImagesStale, r.Summary.ImagesEOL, r.Summary.ImagesGone)
 		for _, img := range r.Images {
-			line := fmt.Sprintf("  %s %-34s %-13s", presenceMark(img), img.Image, stateWord(img))
+			line := fmt.Sprintf("  %s %-34s %-13s", img.Presence.Mark(), img.Image, stateWord(img))
 			if img.Upstream != "" {
 				line += " " + img.Upstream
 			}
@@ -816,17 +816,6 @@ func where(f Finding) string {
 		parts = append(parts, "via "+strings.Join(f.Via, " > "))
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
-}
-
-// presenceMark says whether docker holds the image, in one character.
-func presenceMark(r image.Ref) string {
-	switch r.Presence {
-	case image.OnDisk:
-		return "●"
-	case image.NotPulled:
-		return "○"
-	}
-	return "?"
 }
 
 // stateWord is what a person reads for an image state.
@@ -913,7 +902,7 @@ func (env Env) show(args []string) int {
 	if len(r.Vulnerable) > 0 {
 		d.Advisories, d.Fix = r.Vulnerable[0].Advisories, r.Vulnerable[0].Fix
 	}
-	if a, ok := env.DB.Audits[p.Repo+"/"+p.Name]; ok {
+	if a, ok := env.DB.Audits[vuln.AuditKey(p.Repo, p.Name)]; ok {
 		d.Audit = &RiskySkill{p.Name, p.Repo, a.Gen, a.Socket, a.Snyk, vuln.SkillPage(p.Repo, p.Name)}
 	}
 	if *asJSON {
@@ -1316,8 +1305,8 @@ func RunCommand(w io.Writer) func(*exec.Cmd) (string, error) {
 		pw.Close()
 		<-done
 		s := out.String()
-		if len(s) > 64<<10 {
-			s = s[len(s)-64<<10:]
+		if len(s) > history.MaxOutput {
+			s = s[len(s)-history.MaxOutput:]
 		}
 		return s, err
 	}

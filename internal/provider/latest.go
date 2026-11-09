@@ -12,22 +12,29 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
+// The package registries kho asks itself.
+const (
+	npmRegistry = "https://registry.npmjs.org"
+	pypiSite    = "https://pypi.org"
+	goProxy     = "https://proxy.golang.org"
+)
+
 // latestURL is where a package's registry says its newest version, by OSV
 // ecosystem, or "" when kho doesn't know one.
 func latestURL(p Package) string {
 	switch Ecosystem(p) {
-	case "npm":
-		return "https://registry.npmjs.org/-/package/" + segments(p.Name) + "/dist-tags"
-	case "PyPI":
-		return "https://pypi.org/pypi/" + url.PathEscape(NormalizePyPI(p.Name)) + "/json"
-	case "Go":
+	case vuln.NPM:
+		return npmRegistry + "/-/package/" + segments(p.Name) + "/dist-tags"
+	case vuln.PyPI:
+		return pypiSite + "/pypi/" + url.PathEscape(NormalizePyPI(p.Name)) + "/json"
+	case vuln.Go:
 		// Module paths have a fixed alphabet, and the proxy needs its "!".
 		if m := escapeModule(p.Origin); goModule.MatchString(m) && !strings.Contains("/"+m+"/", "/../") {
-			return "https://proxy.golang.org/" + m + "/@latest"
+			return goProxy + "/" + m + "/@latest"
 		}
-	case "crates.io":
+	case vuln.CratesIO:
 		return "https://crates.io/api/v1/crates/" + url.PathEscape(p.Name)
-	case "Packagist":
+	case vuln.Packagist:
 		return packagistURL(p.Name)
 	}
 	return ""
@@ -60,15 +67,15 @@ func RegistryLatest(ctx context.Context, p Package) (string, error) {
 		return "", fmt.Errorf("no registry for %s", p.Source)
 	}
 	switch Ecosystem(p) {
-	case "npm":
+	case vuln.NPM:
 		var tags struct{ Latest string }
 		err := getJSON(ctx, u, nil, &tags)
 		return tags.Latest, err
-	case "PyPI":
+	case vuln.PyPI:
 		return pypiLatest(ctx, NormalizePyPI(p.Name))
-	case "Go":
+	case vuln.Go:
 		return goProxyLatest(ctx, p.Origin)
-	case "crates.io":
+	case vuln.CratesIO:
 		// crates.io refuses requests that don't say who is asking.
 		var c struct {
 			Crate struct {
@@ -77,7 +84,7 @@ func RegistryLatest(ctx context.Context, p Package) (string, error) {
 		}
 		err := getJSON(ctx, u, http.Header{"User-Agent": {"kho (https://github.com/vuon9/kho)"}}, &c)
 		return c.Crate.MaxStableVersion, err
-	case "Packagist":
+	case vuln.Packagist:
 		var raw json.RawMessage
 		if err := getJSON(ctx, u, nil, &raw); err != nil {
 			return "", err
@@ -138,9 +145,9 @@ func RegistryVersions(ctx context.Context, p Package) ([]Release, error) {
 		return nil, fmt.Errorf("kho has no version list for %s packages yet", p.Source)
 	}
 	switch Ecosystem(p) {
-	case "npm":
+	case vuln.NPM:
 		var raw json.RawMessage
-		if err := getJSON(ctx, "https://registry.npmjs.org/"+segments(p.Name), nil, &raw); err != nil {
+		if err := getJSON(ctx, npmRegistry+"/"+segments(p.Name), nil, &raw); err != nil {
 			return nil, err
 		}
 		rels, repo, err := parseNpmView(p.Name, raw)
@@ -148,11 +155,11 @@ func RegistryVersions(ctx context.Context, p Package) ([]Release, error) {
 			return nil, err
 		}
 		return withNotes(ctx, repo, rels), nil
-	case "PyPI":
+	case vuln.PyPI:
 		return pypiVersions(ctx, NormalizePyPI(p.Name))
-	case "Go":
+	case vuln.Go:
 		return GoBin{}.Versions(ctx, p)
-	case "Packagist":
+	case vuln.Packagist:
 		return Composer{}.Versions(ctx, p)
 	}
 	return nil, fmt.Errorf("kho has no version list for %s packages yet", p.Source)

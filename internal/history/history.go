@@ -26,6 +26,10 @@ type Entry struct {
 	Output  string        `json:"output,omitempty"`
 }
 
+// MaxOutput is how much of a command's output an entry keeps, from the end,
+// enough to read why it failed without the file growing without end.
+const MaxOutput = 64 << 10
+
 // keep is how many entries survive in the file. Older ones are dropped when
 // the file grows past twice that.
 const keep = 500

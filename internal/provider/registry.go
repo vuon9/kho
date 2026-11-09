@@ -26,7 +26,7 @@ func fillLatest(ctx context.Context, pkgs []Package, lookup func(context.Context
 		g.Go(func() error {
 			v, err := lookup(ctx, pkgs[i])
 			if err != nil {
-				pkgs[i].Note = "latest unknown: " + err.Error()
+				pkgs[i].Note = noteLatestUnknown + ": " + err.Error()
 				return nil
 			}
 			pkgs[i].Latest = v
@@ -63,13 +63,13 @@ func pypiLatest(ctx context.Context, name string) (string, error) {
 			Version string `json:"version"`
 		} `json:"info"`
 	}
-	err := getJSON(ctx, "https://pypi.org/pypi/"+name+"/json", nil, &r)
+	err := getJSON(ctx, pypiSite+"/pypi/"+name+"/json", nil, &r)
 	return r.Info.Version, err
 }
 
 func goProxyLatest(ctx context.Context, module string) (string, error) {
 	var r struct{ Version string }
-	err := getJSON(ctx, "https://proxy.golang.org/"+escapeModule(module)+"/@latest", nil, &r)
+	err := getJSON(ctx, goProxy+"/"+escapeModule(module)+"/@latest", nil, &r)
 	return r.Version, err
 }
 

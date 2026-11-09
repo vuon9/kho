@@ -264,13 +264,13 @@ func (m model) badges(r railRow) string {
 		}
 		var badges []string
 		if eol > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("⚠%d", eol)))
+			badges = append(badges, red().Render(fmt.Sprintf("%s%d", image.EOL.Mark(), eol)))
 		}
 		if gone > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("✗%d", gone)))
+			badges = append(badges, red().Render(fmt.Sprintf("%s%d", image.Gone.Mark(), gone)))
 		}
 		if stale > 0 {
-			badges = append(badges, yellow().Render(fmt.Sprintf("↑%d", stale)))
+			badges = append(badges, yellow().Render(fmt.Sprintf("%s%d", image.Stale.Mark(), stale)))
 		}
 		return fmt.Sprintf("%4d", len(list)) + " " + strings.Join(badges, " ")
 	}

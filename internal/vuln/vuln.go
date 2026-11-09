@@ -21,6 +21,20 @@ import (
 
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
+const (
+	osvAPI   = "https://api.osv.dev/v1"
+	skillsSH = "https://www.skills.sh"
+)
+
+// The OSV ecosystems kho asks about, spelled the way OSV spells them.
+const (
+	NPM       = "npm"
+	PyPI      = "PyPI"
+	Go        = "Go"
+	CratesIO  = "crates.io"
+	Packagist = "Packagist"
+)
+
 // Query names one installed package version in an OSV ecosystem.
 type Query struct {
 	Ecosystem string `json:"ecosystem"`
@@ -233,7 +247,7 @@ func queryBatch(ctx context.Context, queries []Query) ([][]string, error) {
 			} `json:"vulns"`
 		} `json:"results"`
 	}
-	if err := post(ctx, "https://api.osv.dev/v1/querybatch", body, &resp); err != nil {
+	if err := post(ctx, osvAPI+"/querybatch", body, &resp); err != nil {
 		return nil, fmt.Errorf("osv: %w", err)
 	}
 	ids := make([][]string, len(queries))
@@ -268,7 +282,7 @@ type osvRecord struct {
 
 func fetchAdvisory(ctx context.Context, id string) (Advisory, error) {
 	var r osvRecord
-	if err := get(ctx, "https://api.osv.dev/v1/vulns/"+id, &r); err != nil {
+	if err := get(ctx, osvAPI+"/vulns/"+id, &r); err != nil {
 		return Advisory{}, fmt.Errorf("osv %s: %w", id, err)
 	}
 	return r.advisory(), nil
@@ -369,15 +383,22 @@ func riskRank(risk string) int {
 	return map[string]int{"safe": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}[risk]
 }
 
+// The verdicts skills.sh shows for an audit.
+const (
+	Pass = "Pass"
+	Warn = "Warn"
+	Fail = "Fail"
+)
+
 // Verdict turns a risk level into the Pass, Warn or Fail that skills.sh shows.
 func Verdict(risk string) string {
 	switch risk {
 	case "safe", "low":
-		return "Pass"
+		return Pass
 	case "medium":
-		return "Warn"
+		return Warn
 	case "high", "critical":
-		return "Fail"
+		return Fail
 	}
 	return "--"
 }
@@ -405,21 +426,22 @@ func SkillAudits(ctx context.Context, bySource map[string][]string) (map[string]
 			} `json:"snyk"`
 		}
 		q := url.Values{"source": {source}, "skills": {strings.Join(slugs, ",")}}
-		if err := get(ctx, "https://www.skills.sh/tele/audit?"+q.Encode(), &resp); err != nil {
+		if err := get(ctx, skillsSH+"/tele/audit?"+q.Encode(), &resp); err != nil {
 			return out, fmt.Errorf("skills.sh: %w", err)
 		}
 		for slug, r := range resp {
-			out[auditKey(source, slug)] = SkillAudit{Gen: r.Ath.Risk, Socket: r.Socket.Risk, SocketAlerts: r.Socket.Alerts, Snyk: r.Snyk.Risk, Analyzed: r.Ath.AnalyzedAt}
+			out[AuditKey(source, slug)] = SkillAudit{Gen: r.Ath.Risk, Socket: r.Socket.Risk, SocketAlerts: r.Socket.Alerts, Snyk: r.Snyk.Risk, Analyzed: r.Ath.AnalyzedAt}
 		}
 	}
 	return out, nil
 }
 
-func auditKey(source, slug string) string { return source + "/" + slug }
+// AuditKey is where DB.Audits keeps the audit of one skill.
+func AuditKey(source, slug string) string { return source + "/" + slug }
 
 // SkillPage is the skill's page on skills.sh, which shows the full audits.
 func SkillPage(source, slug string) string {
-	return "https://www.skills.sh/" + source + "/" + slug
+	return skillsSH + "/" + source + "/" + slug
 }
 
 // History lists every advisory OSV has for a package, whatever the version,
@@ -436,7 +458,7 @@ func History(ctx context.Context, ecosystem, name string) ([]Advisory, error) {
 			Vulns         []osvRecord `json:"vulns"`
 			NextPageToken string      `json:"next_page_token"`
 		}
-		if err := post(ctx, "https://api.osv.dev/v1/query", body, &resp); err != nil {
+		if err := post(ctx, osvAPI+"/query", body, &resp); err != nil {
 			return nil, fmt.Errorf("osv: %w", err)
 		}
 		for _, r := range resp.Vulns {
