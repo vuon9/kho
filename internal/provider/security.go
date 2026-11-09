@@ -12,15 +12,15 @@ import (
 func Ecosystem(p Package) string {
 	switch p.Source {
 	case "npm":
-		return "npm"
+		return vuln.NPM
 	case "pipx", "uv", "poetry", "pip":
-		return "PyPI"
+		return vuln.PyPI
 	case "go":
-		return "Go"
+		return vuln.Go
 	case "composer":
-		return "Packagist"
+		return vuln.Packagist
 	case "cargo":
-		return "crates.io"
+		return vuln.CratesIO
 	}
 	return ""
 }
@@ -29,9 +29,9 @@ func Ecosystem(p Package) string {
 // by their module path.
 func OSVName(p Package) string {
 	switch Ecosystem(p) {
-	case "Go":
+	case vuln.Go:
 		return p.Origin
-	case "PyPI":
+	case vuln.PyPI:
 		return NormalizePyPI(p.Name)
 	}
 	return p.Name
@@ -54,7 +54,7 @@ func Released(v string) bool {
 // Query is the OSV query for the installed version, if there is one to ask.
 func Query(p Package) (vuln.Query, bool) {
 	eco := Ecosystem(p)
-	if eco == "" || !Released(p.Version) || eco == "Packagist" && composerBranch(p.Version) {
+	if eco == "" || !Released(p.Version) || eco == vuln.Packagist && composerBranch(p.Version) {
 		return vuln.Query{}, false
 	}
 	return vuln.Query{Ecosystem: eco, Name: OSVName(p), Version: p.Version}, true

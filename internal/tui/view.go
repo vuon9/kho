@@ -250,7 +250,7 @@ func (m model) rowKeys() []string {
 	pairs = append(pairs, "tab", "panel", "[ ]", "tabs", "enter", m.enterLabel())
 	switch {
 	case isImageRow(m.curRow().kind):
-		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "state", "/", "filter", "w", "copy name", "x", "scan")
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "state", "/", "filter", "w", "copy name")
 	case m.inProjectPkg():
 		pairs = append(pairs, "s", "sort", "f", "status", "/", "filter", "w", "home")
 	case m.inProject():
@@ -535,11 +535,11 @@ func (m model) statusCell(p provider.Package) string {
 		return cyan().Render("⚑ pinned")
 	case p.Outdated:
 		return yellow().Render("↑ outdated")
-	case strings.HasPrefix(p.Note, "no lock"):
+	case p.NoLock():
 		return yellow().Render("◌ no lock")
-	case strings.HasPrefix(p.Note, "only in"):
+	case p.Unmanaged():
 		return faint().Render("◌ unmanaged")
-	case strings.HasPrefix(p.Note, "latest unknown"):
+	case p.LatestUnknown():
 		return faint().Render("?")
 	case p.Latest != "":
 		return green().Render("✓")

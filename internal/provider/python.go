@@ -142,7 +142,7 @@ func parsePipList(self string, data []byte) ([]Dep, error) {
 
 func pypiVersions(ctx context.Context, name string) ([]Release, error) {
 	var r pypiProject
-	if err := getJSON(ctx, "https://pypi.org/pypi/"+name+"/json", nil, &r); err != nil {
+	if err := getJSON(ctx, pypiSite+"/pypi/"+name+"/json", nil, &r); err != nil {
 		return nil, err
 	}
 	rels, repo := r.releases(name)
@@ -166,7 +166,7 @@ func (r pypiProject) releases(name string) ([]Release, string) {
 		if len(files) == 0 || files[0].Yanked {
 			continue
 		}
-		rels = append(rels, Release{Version: v, Date: files[0].UploadTime, URL: "https://pypi.org/project/" + name + "/" + v + "/"})
+		rels = append(rels, Release{Version: v, Date: files[0].UploadTime, URL: pypiSite + "/project/" + name + "/" + v + "/"})
 	}
 	newestFirst(rels)
 	urls := []string{r.Info.HomePage}

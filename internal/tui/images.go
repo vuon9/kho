@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/vuon9/kho/internal/image"
+	"github.com/vuon9/kho/internal/registry"
 	"github.com/vuon9/kho/internal/trivy"
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -369,8 +370,9 @@ const (
 )
 
 var (
-	imageStatusNames = []string{"All", "⚠ EOL", "⚠ gone", "↑ stale", "◎ tracked", "◌ untracked", "● on disk", "○ not pulled"}
-	imageStatusIcons = []string{"All", "⚠", "✗", "↑", "◎", "◌", "●", "○"}
+	imageStatusIcons = []string{"All", image.EOL.Mark(), image.Gone.Mark(), image.Stale.Mark(), "◎", "◌", image.OnDisk.Mark(), image.NotPulled.Mark()}
+	imageStatusNames = []string{"All", image.EOL.Mark() + " EOL", image.Gone.Mark() + " gone", image.Stale.Mark() + " stale",
+		"◎ tracked", "◌ untracked", image.OnDisk.Mark() + " on disk", image.NotPulled.Mark() + " not pulled"}
 )
 
 func (m model) imgStatus() int { return m.imgStatuses[m.curRow().key] }
@@ -568,15 +570,11 @@ func (m model) imageTitle() string {
 	return title
 }
 
-// presenceMark says whether docker holds the image, in one character.
 func presenceMark(r image.Ref) string {
-	switch r.Presence {
-	case image.OnDisk:
-		return cyan().Render("●")
-	case image.NotPulled:
-		return faint().Render("○")
+	if r.Presence == image.OnDisk {
+		return cyan().Render(r.Presence.Mark())
 	}
-	return faint().Render("?")
+	return faint().Render(r.Presence.Mark())
 }
 
 // imageState paints the state the way the package table paints a status. The
@@ -594,47 +592,49 @@ func imageState(r image.Ref) string {
 }
 
 func shortState(r image.Ref) string {
+	word := "build"
 	switch r.State {
 	case image.Fresh:
-		return "✓ fresh"
+		word = "fresh"
 	case image.Stale:
-		return "↑ stale"
+		word = "stale"
 	case image.EOL:
-		return "⚠ EOL"
+		word = "EOL"
 	case image.Gone:
-		return "✗ gone"
+		word = "gone"
 	case image.Pinned:
-		return "⚑ pinned"
+		word = "pinned"
 	case image.Local:
-		return "· local"
+		word = "local"
 	case image.None:
-		return "· n/a"
+		word = "n/a"
 	case image.Unknown:
-		return "· unverified"
+		word = "unverified"
 	}
-	return "· build"
+	return r.State.Mark() + " " + word
 }
 
 func stateWord(r image.Ref) string {
+	word := "build time"
 	switch r.State {
 	case image.Fresh:
-		return "✓ fresh"
+		word = "fresh"
 	case image.Stale:
-		return "⟳ stale"
+		word = "stale"
 	case image.EOL:
-		return "⚠ past line"
+		word = "past line"
 	case image.Gone:
-		return "⚠ tag gone"
+		word = "tag gone"
 	case image.Pinned:
-		return "· pinned"
+		word = "pinned"
 	case image.Local:
-		return "· local"
+		word = "local"
 	case image.None:
-		return "· nothing to ask"
+		word = "nothing to ask"
 	case image.Unknown:
-		return "· unverified"
+		word = "unverified"
 	}
-	return "· build time"
+	return r.State.Mark() + " " + word
 }
 
 // imageWhere names the line the reference was read from.
@@ -808,15 +808,15 @@ func (m model) imageStatusBar() string {
 	}
 	parts := []string{" " + pillOn(fmt.Sprintf("%d images", len(list)), th.subtle, th.selFg)}
 	if eol > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d EOL", eol), th.red, th.selFg))
+		parts = append(parts, pillOn(fmt.Sprintf("%s %d EOL", image.EOL.Mark(), eol), th.red, th.selFg))
 	}
 	if gone > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("✗ %d gone", gone), th.red, th.selFg))
+		parts = append(parts, pillOn(fmt.Sprintf("%s %d gone", image.Gone.Mark(), gone), th.red, th.selFg))
 	}
 	if stale > 0 {
-		parts = append(parts, pill(fmt.Sprintf("↑ %d stale", stale), th.yellow))
+		parts = append(parts, pill(fmt.Sprintf("%s %d stale", image.Stale.Mark(), stale), th.yellow))
 	}
-	parts = append(parts, pill(fmt.Sprintf("● %d on disk", disk), th.cyan), pill(fmt.Sprintf("○ %d not pulled", len(list)-disk), th.muted))
+	parts = append(parts, pill(fmt.Sprintf("%s %d on disk", image.OnDisk.Mark(), disk), th.cyan), pill(fmt.Sprintf("%s %d not pulled", image.NotPulled.Mark(), len(list)-disk), th.muted))
 	left := strings.Join(parts, " ")
 	right := m.activity() + faint().Render("🎨 "+th.name+" ")
 	return left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-ansi.StringWidth(right), 1)) + right
@@ -932,16 +932,22 @@ func (m model) imageTab() int {
 
 func (m model) imageTabs() string { return m.tabBar() }
 
-// autoScan starts the scan the first time an image's Security tab opens, so
-// the tab answers by itself instead of asking for a key press. A failed or
-// finished scan is not repeated; x runs it again.
+// autoScan starts the scan when an image's Security tab opens, so the tab
+// answers by itself. A finished scan is kept. A failed one waits on screen
+// and runs again the next time the tab opens.
 func (m *model) autoScan() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok || m.imageTab() != tabSecurity {
+		m.scanShown = ""
 		return nil
 	}
 	key := r.Canonical()
-	if m.imgScanning[key] || m.imgVulns[key] != nil || m.imgScanErr[key] != "" || !trivyAvailable() {
+	if m.scanShown != key {
+		m.scanShown = key
+		delete(m.imgScanErr, key)
+	}
+	_, done := m.imgVulns[key]
+	if m.imgScanning[key] || done || m.imgScanErr[key] != "" || !trivyAvailable() {
 		return nil
 	}
 	m.imgScanning[key] = true
@@ -997,8 +1003,8 @@ func (m model) sortedTags(r image.Ref) []image.Tag {
 // tagURL is where a person reads one tag, for the registries that publish a
 // page for it.
 func tagURL(r image.Ref, tag string) string {
-	if r.Registry == "docker.io" {
-		return "https://hub.docker.com/r/" + r.RemoteRepo() + "/tags?name=" + url.QueryEscape(tag)
+	if r.Registry == image.DockerHub {
+		return registry.HubURL + "/r/" + r.RemoteRepo() + "/tags?name=" + url.QueryEscape(tag)
 	}
 	return ""
 }
@@ -1028,7 +1034,7 @@ func (m model) imageTabStatus() string {
 	}
 	switch m.imageTab() {
 	case tabVersions:
-		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
+		if r.Registry == "" || r.Repo == image.Scratch || r.Unresolved {
 			return "no repository to ask"
 		}
 		if m.imgTagBusy[r.Canonical()] {
@@ -1093,14 +1099,16 @@ func (m model) imageLines(r image.Ref) []line {
 	add("upstream", r.Upstream, "")
 	add("base image", r.BaseImage(), "")
 	if p := r.Product(); p != "" {
-		text := "endoflife.date/" + p
+		u := registry.LifeURL + "/" + p
+		text := strings.TrimPrefix(u, "https://")
 		if c := r.Cycle(); c != "" {
 			text += " · " + c
 		}
-		add("line", text, "https://endoflife.date/"+p)
+		add("line", text, u)
 	}
-	if r.Registry == "docker.io" {
-		add("registry", "hub.docker.com/r/"+r.RemoteRepo(), "https://hub.docker.com/r/"+r.RemoteRepo())
+	if r.Registry == image.DockerHub {
+		u := registry.HubURL + "/r/" + r.RemoteRepo()
+		add("registry", strings.TrimPrefix(u, "https://"), u)
 	} else if r.Registry != "" && r.Repo != "" {
 		add("registry", r.Registry+"/"+r.Repo, "")
 	}
@@ -1198,7 +1206,7 @@ func (m model) imageVersionLines(r image.Ref) []line {
 	// The tag in use is always shown, so ask what the registry said before
 	// that: an empty answer must read as empty, not as one version.
 	if len(m.imgTags[r.Canonical()]) == 0 {
-		if r.Registry == "" || r.Repo == "scratch" || r.Unresolved {
+		if r.Registry == "" || r.Repo == image.Scratch || r.Unresolved {
 			return plain(faint().Render(" this image has no repository to ask"))
 		}
 		if m.imgTagBusy[r.Canonical()] {
@@ -1227,24 +1235,25 @@ func (m model) imageVersionLines(r image.Ref) []line {
 }
 
 // imageSecurityLines says what is known about an image's security. kho does
-// not read inside an image, so a package level CVE list needs a scanner: the
-// scan key runs trivy when it is installed.
+// not read inside an image, so a package level CVE list needs a scanner,
+// which runs when the tab opens and trivy is installed.
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 	key := r.Canonical()
 	if m.imgScanning[key] {
 		return plain(m.spin() + faint().Render(" scanning with trivy, this takes a moment"))
 	}
 	if err := m.imgScanErr[key]; err != "" {
-		return append(plain(red().Render(" "+err)), plain(faint().Render(" the rest of kho still works without a scan"))...)
+		return append(plain(red().Render(" "+err)), plain(faint().Render(" open this tab again to retry, the rest of kho works without it"))...)
 	}
-	vulns := m.imgVulns[key]
+	vulns, scanned := m.imgVulns[key]
 	if len(vulns) == 0 {
-		lines := plain(faint().Render(" kho does not read inside an image, so it cannot"),
-			faint().Render(" list the packages a CVE would be filed against."), "")
-		if trivyAvailable() {
-			lines = append(lines, plain(accent().Render(" x  scan this image with trivy"), "")...)
+		var lines []line
+		if scanned {
+			lines = plain(green().Render(" trivy found no known vulnerabilities"), "")
 		} else {
-			lines = append(lines, plain(faint().Render(" install trivy and press x to scan it"), "")...)
+			lines = plain(faint().Render(" kho does not read inside an image, so it cannot"),
+				faint().Render(" list the packages a CVE would be filed against."), "",
+				faint().Render(" install trivy, then open this tab again to scan it"), "")
 		}
 		if !r.EOL.IsZero() {
 			lines = append(lines, plain(faint().Render(" the line itself ended "+r.EOL.Format("2006-01-02"))+", which a rebuild cannot fix")...)

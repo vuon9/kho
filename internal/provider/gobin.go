@@ -40,7 +40,7 @@ func goBinDir() string {
 
 // majorProbe reports whether a module path serves a version. Tests swap it.
 var majorProbe = func(ctx context.Context, path, version string) bool {
-	url := "https://proxy.golang.org/" + escapeModule(path) + "/@v/" + escapeModule(version) + ".info"
+	url := goProxy + "/" + escapeModule(path) + "/@v/" + escapeModule(version) + ".info"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false
@@ -121,7 +121,7 @@ func (GoBin) Latest(ctx context.Context, pkgs []Package) ([]Package, error) {
 func (GoBin) Deps(_ context.Context, p Package) ([]Dep, error) { return p.Deps, nil }
 
 func (GoBin) Versions(ctx context.Context, p Package) ([]Release, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://proxy.golang.org/"+escapeModule(p.Origin)+"/@v/list", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, goProxy+"/"+escapeModule(p.Origin)+"/@v/list", nil)
 	if err != nil {
 		return nil, err
 	}

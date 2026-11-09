@@ -247,26 +247,29 @@ type model struct {
 	imgUsersErr  map[string]string
 	imgSort      int
 	imgScanErr   map[string]string
-	imgErr       error
-	imgBusy      bool
-	imgGen       int
-	imgAsk       image.Asker
-	imgStatuses  map[string]int
-	filtering    bool
-	showDeps     bool
-	help         bool
-	helpTop      int
-	confirm      *confirm
-	inst         *installing
-	depCursor    int
-	depPop       *depPopup
-	allAgents    bool
-	sel          *textSel
-	railW        int
-	sideW        int
-	split        int
-	resizing     int
-	grab         int
+	// scanShown is the image whose Security tab is on screen, so a failed
+	// scan is asked again when the tab opens, not on every redraw.
+	scanShown   string
+	imgErr      error
+	imgBusy     bool
+	imgGen      int
+	imgAsk      image.Asker
+	imgStatuses map[string]int
+	filtering   bool
+	showDeps    bool
+	help        bool
+	helpTop     int
+	confirm     *confirm
+	inst        *installing
+	depCursor   int
+	depPop      *depPopup
+	allAgents   bool
+	sel         *textSel
+	railW       int
+	sideW       int
+	split       int
+	resizing    int
+	grab        int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -394,7 +397,18 @@ func (m model) scan() tea.Cmd {
 
 func (m model) working() bool {
 	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() ||
-		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning)
+		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning) || m.anyOf(m.imgUsersBusy) || m.anyOf(m.advising) ||
+		loading(m.deps) || loading(m.versions) || loading(m.docs)
+}
+
+// loading says whether any sidebar load is still on its way.
+func loading[T any](set map[string]*lazy[T]) bool {
+	for _, l := range set {
+		if !l.done {
+			return true
+		}
+	}
+	return false
 }
 
 // anyOf says whether any entry of a per-image map is on.
@@ -757,7 +771,7 @@ func (m *model) reindex() {
 }
 
 func (m model) audit(p provider.Package) (vuln.SkillAudit, bool) {
-	a, ok := m.db.Audits[p.Repo+"/"+p.Name]
+	a, ok := m.db.Audits[vuln.AuditKey(p.Repo, p.Name)]
 	return a, ok
 }
 
@@ -999,21 +1013,6 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.scrollDetail(map[string]int{"J": 1, "ctrl+d": m.layout().bottomRows / 2}[key])
 	case "K", "ctrl+u":
 		m.scrollDetail(-map[string]int{"K": 1, "ctrl+u": m.layout().bottomRows / 2}[key])
-	case "x":
-		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
-			key := r.Canonical()
-			if m.imgScanning[key] {
-				return nil, false
-			}
-			m.imgScanning[key] = true
-			m.setTab(tabSecurity)
-			m.focus = focusSide
-			ref := r.Image
-			return func() tea.Msg {
-				vulns, err := scanImage(context.Background(), ref)
-				return imageScanMsg{key: key, vulns: vulns, err: err}
-			}, false
-		}
 	case "w":
 		if r, ok := m.currentImg(); ok && isImageRow(m.curRow().kind) {
 			return m.copy(r.Image), false
@@ -1226,16 +1225,20 @@ func homeURL(p provider.Package) string {
 	case p.Homepage != "":
 		return p.Homepage
 	case p.Repo != "":
-		return "https://github.com/" + p.Repo
-	case p.Source == "npm":
+		return repoURL(p.Repo)
+	}
+	switch provider.Ecosystem(p) {
+	case vuln.NPM:
 		return "https://www.npmjs.com/package/" + p.Name
-	case p.Source == "pipx", p.Source == "uv":
+	case vuln.PyPI:
 		return "https://pypi.org/project/" + p.Name + "/"
-	case p.Source == "go":
+	case vuln.Go:
 		return "https://pkg.go.dev/" + p.Origin
 	}
 	return ""
 }
+
+func repoURL(repo string) string { return "https://github.com/" + repo }
 
 // openReleasePage opens the selected version's page when kho has no notes
 // to show for it.

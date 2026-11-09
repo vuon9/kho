@@ -50,7 +50,7 @@ func ParseDockerfile(file string, src []byte) []Ref {
 				r.File, r.Line, r.Source, r.Stage = file, line.number, "dockerfile", stage
 				r.Raw, r.Via = ref, via
 			}
-			if r.Repo == "scratch" {
+			if r.Repo == Scratch {
 				r.Presence = NotPulled
 			}
 			refs = append(refs, r)

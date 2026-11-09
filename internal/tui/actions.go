@@ -489,13 +489,12 @@ func entry(kind string, command []string, took time.Duration, err error, output 
 	return e
 }
 
-// tail keeps the last 64KB written to it, enough to read why an install
-// failed without the history file growing without end.
+// tail keeps the last history.MaxOutput bytes written to it.
 type tail struct{ buf []byte }
 
 func (t *tail) Write(p []byte) (int, error) {
 	t.buf = append(t.buf, p...)
-	if over := len(t.buf) - 64<<10; over > 0 {
+	if over := len(t.buf) - history.MaxOutput; over > 0 {
 		t.buf = t.buf[over:]
 	}
 	return len(p), nil

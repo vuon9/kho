@@ -19,6 +19,19 @@ import (
 	"github.com/vuon9/kho/internal/image"
 )
 
+const (
+	// HubURL is Docker Hub's site. Its web API lists tags with their digests
+	// and push dates, which the distribution API leaves out.
+	HubURL = "https://hub.docker.com"
+	// LifeURL is endoflife.date, which knows when a release line closes.
+	LifeURL = "https://endoflife.date"
+	// dockerHubAPI is the host that serves Docker Hub's distribution API.
+	dockerHubAPI = "registry-1.docker.io"
+	userAgent    = "kho"
+	// cacheFor is how long a registry's answer is reused.
+	cacheFor = 6 * time.Hour
+)
+
 // Client is an anonymous registry reader. Private images answer 401 and are
 // reported as such, never guessed at.
 type Client struct {
@@ -57,7 +70,7 @@ func New(cachePath string) *Client {
 	transport.MaxIdleConnsPerHost = 16
 	return &Client{
 		HTTP:    &http.Client{Timeout: 15 * time.Second, Transport: transport},
-		Cache:   Open(cachePath, 6*time.Hour),
+		Cache:   Open(cachePath, cacheFor),
 		tokens:  map[string]string{},
 		demands: map[string]string{},
 	}
@@ -70,7 +83,7 @@ const manifestAccept = "application/vnd.oci.image.index.v1+json,application/vnd.
 // itself. A tag the registry does not publish comes back Gone, not as an
 // error, because that is a fact worth showing.
 func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) {
-	if r.Repo == "scratch" || r.Registry == "" || r.Repo == "" {
+	if r.Repo == image.Scratch || r.Registry == "" || r.Repo == "" {
 		return image.Remote{}, nil
 	}
 	key := r.Canonical()
@@ -102,13 +115,13 @@ type source struct {
 // anonymous pulls hard enough to fail a whole project; every other registry is
 // asked directly, since a mirror only carries Docker Hub's images.
 func sources(r image.Ref) []source {
-	if r.Registry != "docker.io" {
+	if r.Registry != image.DockerHub {
 		return []source{{host: r.Registry}}
 	}
 	return []source{
 		{host: "mirror.gcr.io"},
 		{host: "public.ecr.aws", prefix: "docker/"},
-		{host: "registry-1.docker.io"},
+		{host: dockerHubAPI},
 	}
 }
 
@@ -393,7 +406,7 @@ func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media 
 		return nil, "", 0, "", err
 	}
 	req.Header.Set("Accept", manifestAccept)
-	req.Header.Set("User-Agent", "kho")
+	req.Header.Set("User-Agent", userAgent)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

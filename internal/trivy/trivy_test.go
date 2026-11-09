@@ -46,7 +46,7 @@ func TestClean(t *testing.T) {
 	if strings.HasPrefix(got, "FATAL") || strings.Contains(got, "\n") {
 		t.Errorf("clean should drop the report prefix: %q", got)
 	}
-	if got != "trivy is busy with another scan, press x to try again" {
+	if got != "trivy is busy with another scan, open the tab again to retry" {
 		t.Errorf("a held cache lock should say what to do, got %q", got)
 	}
 	other := clean("2026-11-07T21:55:35+07:00 FATAL Fatal error run error: image scan error: unable to initialize a scan service: unable to initialize artifact: manifest unknown")

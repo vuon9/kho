@@ -304,7 +304,7 @@ func TestImageSecurityTab(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = press(t, m, "a")
 	got := screen(m)
-	for _, want := range []string{"does not read inside an image", "scan this image with trivy"} {
+	for _, want := range []string{"trivy found no known vulnerabilities"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the security tab should say %q:\n%s", want, got)
 		}
@@ -400,6 +400,39 @@ func TestImageAutoScan(t *testing.T) {
 	}
 	if got := screen(m); !strings.Contains(got, "CVE-2025-1") {
 		t.Errorf("the scan result should show without pressing anything else:\n%s", got)
+	}
+}
+
+// The scan is lazy: opening Security runs it, and nothing else does. A clean
+// result is kept, and a failed one is asked again only when the tab opens
+// again, never on every redraw.
+func TestImageScanIsLazy(t *testing.T) {
+	tests := []struct {
+		id    string
+		err   error
+		keys  []string
+		scans int
+	}{
+		{"a clean image is scanned once", nil, []string{"a", "J", "K", "J"}, 1},
+		{"a failed scan waits on screen", errors.New("trivy failed"), []string{"a", "J", "K", "J"}, 1},
+		{"a failed scan runs again when the tab reopens", errors.New("trivy failed"), []string{"a", "i", "a"}, 2},
+		{"another tab never scans", nil, []string{"i", "J"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := onImages(t, withImages(t, sampleImages()...))
+			scans := 0
+			scanImage = func(context.Context, string) ([]trivy.Vuln, error) {
+				scans++
+				return nil, tt.err
+			}
+			for _, k := range tt.keys {
+				m = press(t, m, k)
+			}
+			if scans != tt.scans {
+				t.Errorf("scanned %d times, want %d", scans, tt.scans)
+			}
+		})
 	}
 }
 
@@ -892,4 +925,30 @@ func linesText(lines []line) []string {
 		out = append(out, l.text)
 	}
 	return out
+}
+
+// A state has one mark in the table and the sidebar, the one a package with
+// the same problem has: stale is ↑ like outdated, pinned is ⚑ like pinned.
+func TestImageStateMarks(t *testing.T) {
+	tests := []struct {
+		state       image.State
+		table, side string
+	}{
+		{image.Stale, "↑ stale", "↑ stale"},
+		{image.Gone, "✗ gone", "✗ tag gone"},
+		{image.Pinned, "⚑ pinned", "⚑ pinned"},
+		{image.EOL, "⚠ EOL", "⚠ past line"},
+		{image.Fresh, "✓ fresh", "✓ fresh"},
+		{image.Local, "· local", "· local"},
+		{image.None, "· n/a", "· nothing to ask"},
+		{image.Unknown, "· unverified", "· unverified"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			r := image.Ref{State: tt.state}
+			if got, want := [2]string{shortState(r), stateWord(r)}, [2]string{tt.table, tt.side}; got != want {
+				t.Errorf("table and sidebar say %q, want %q", got, want)
+			}
+		})
+	}
 }

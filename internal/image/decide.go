@@ -101,7 +101,7 @@ func Decide(r Ref, remote Remote, life Life, now time.Time) Ref {
 	if r.Unresolved {
 		return r
 	}
-	if r.Repo == "scratch" {
+	if r.Repo == Scratch {
 		r.State = None
 		return r
 	}

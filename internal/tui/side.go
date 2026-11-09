@@ -367,8 +367,8 @@ func (m model) infoLines(p provider.Package) []line {
 	if home := homeURL(p); home != "" {
 		add("home", home, home)
 	}
-	if p.Repo != "" && "https://github.com/"+p.Repo != homeURL(p) {
-		add("repo", "github.com/"+p.Repo, "https://github.com/"+p.Repo)
+	if u := repoURL(p.Repo); p.Repo != "" && u != homeURL(p) {
+		add("repo", strings.TrimPrefix(u, "https://"), u)
 	}
 	switch {
 	case p.Source == "skills":
@@ -800,7 +800,7 @@ func (m model) readmeLines(p provider.Package, inner int) []line {
 	case d.val.Readme == "":
 		lines := plain("", faint().Render(" 📭 This skill has no README.md."))
 		if p.Repo != "" {
-			u := "https://github.com/" + p.Repo
+			u := repoURL(p.Repo)
 			lines = append(lines, line{text: faint().Render(" The repo may have one: ") + link(u).Render(u), url: u})
 		}
 		return lines

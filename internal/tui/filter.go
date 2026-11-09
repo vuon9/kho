@@ -68,7 +68,7 @@ func (m model) isStatus(p provider.Package, s int) bool {
 	case statusPinned:
 		return p.Pinned
 	case statusUntracked:
-		return strings.HasPrefix(p.Note, "no lock") || strings.HasPrefix(p.Note, "only in")
+		return p.NoLock() || p.Unmanaged()
 	case statusOK:
 		return m.statusRank(p) == rankOK
 	}

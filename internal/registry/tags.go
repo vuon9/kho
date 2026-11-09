@@ -19,10 +19,10 @@ import (
 // with dates and digests; every other registry answers with names, which are
 // ordered by version so the newest line comes first.
 func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
-	if r.Registry == "" || r.Repo == "" || r.Repo == "scratch" {
+	if r.Registry == "" || r.Repo == "" || r.Repo == image.Scratch {
 		return nil, nil
 	}
-	if r.Registry == "docker.io" {
+	if r.Registry == image.DockerHub {
 		tags, err := c.hubTags(ctx, r)
 		if err == nil && len(tags) > 0 {
 			return tags, nil
@@ -146,7 +146,7 @@ func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]i
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "kho")
+	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -175,8 +175,8 @@ func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]i
 // registryTags asks the OCI distribution API, which returns names only.
 func (c *Client) registryTags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 	host := r.Registry
-	if host == "docker.io" {
-		host = "registry-1.docker.io"
+	if host == image.DockerHub {
+		host = dockerHubAPI
 	}
 	// The distribution API lists tags in lexical order, so a plain page holds
 	// the alphabetically first tags, not the newest: for a repository with
@@ -242,7 +242,7 @@ func (c *Client) hubBase() string {
 	if c.HubBase != "" {
 		return c.HubBase
 	}
-	return "https://hub.docker.com"
+	return HubURL
 }
 
 // parseStamp reads the timestamps the Docker Hub API writes.
