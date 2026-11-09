@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/vuon9/kho/compare/v0.1.12...v0.1.13) (2026-11-09)
+
+
+### Bug Fixes
+
+* name shared values, scan images lazily, and rewrite AGENTS.md ([#47](https://github.com/vuon9/kho/issues/47)) ([809731c](https://github.com/vuon9/kho/commit/809731c8eab175a6d763791b0aa258774600f42a))
+
 ## [0.1.12](https://github.com/vuon9/kho/compare/v0.1.11...v0.1.12) (2026-11-08)
 
 
