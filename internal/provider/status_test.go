@@ -1,6 +1,20 @@
 package provider
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+// A package past the lookup cap has no latest version, so it reads as
+// unverified like any other unknown latest, never as ok.
+func TestPastTheLookupCapIsUnverified(t *testing.T) {
+	defer func(n int) { MaxLatest = n }(MaxLatest)
+	MaxLatest = 0
+	got := FillLatest(context.Background(), []Package{{Source: "npm", Name: "lark", Version: "1.0.0"}})
+	if w := StatusWord(got[0]); w != "unverified" {
+		t.Errorf("StatusWord = %q (note %q), want unverified", w, got[0].Note)
+	}
+}
 
 // One word per row, the same one the table shows, so the JSON and the screen
 // do not disagree.

@@ -125,7 +125,7 @@ func FillLatest(ctx context.Context, pkgs []Package) []Package {
 			continue
 		}
 		if len(direct) == MaxLatest {
-			pkgs[i].Note = fmt.Sprintf("latest not looked up: kho asks about %d direct packages at most", MaxLatest)
+			pkgs[i].Note = fmt.Sprintf("%s: kho asks about %d direct packages at most", noteLatestUnknown, MaxLatest)
 			continue
 		}
 		direct, at = append(direct, p), append(at, i)

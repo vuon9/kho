@@ -34,7 +34,7 @@ kho gets opened on machines and folders nobody has vetted. Breaking one of these
 
 - **Never run a project.** Lockfiles are parsed by kho itself, because a project's own tools load its plugins and scripts. Project packages can't be installed or removed.
 - **Change the machine only on a yes.** Installing, removing, linking a skill, pulling or removing an image: the TUI asks in a dialog, the CLI needs `--yes`. Pinned packages are refused. Arguments go to `exec` directly, never through a shell.
-- **Never open an image.** kho reads references from files and metadata from registries, never a layer. Trivy is the only thing that reads inside an image, and only when a person asks.
+- **Never open an image.** kho reads references from files and metadata from registries, never a layer. Trivy is the only thing that reads inside an image, and it runs only when a person opens that image's Security tab.
 - **Remove an image the way docker does.** Name the containers still using it, and never force, stop or delete a container.
 - **Log every command.** Every read and every change kho runs goes into the history. A new way to touch the machine logs itself the same way.
 - **Shell out to package managers** for the machine. Run the real tool, prefer its JSON output, and keep parsing in pure functions that tests feed captured output.

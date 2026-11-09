@@ -932,16 +932,22 @@ func (m model) imageTab() int {
 
 func (m model) imageTabs() string { return m.tabBar() }
 
-// autoScan starts the scan the first time an image's Security tab opens, so
-// the tab answers by itself instead of asking for a key press. A failed or
-// finished scan is not repeated; x runs it again.
+// autoScan starts the scan when an image's Security tab opens, so the tab
+// answers by itself. A finished scan is kept. A failed one waits on screen
+// and runs again the next time the tab opens.
 func (m *model) autoScan() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok || m.imageTab() != tabSecurity {
+		m.scanShown = ""
 		return nil
 	}
 	key := r.Canonical()
-	if m.imgScanning[key] || m.imgVulns[key] != nil || m.imgScanErr[key] != "" || !trivyAvailable() {
+	if m.scanShown != key {
+		m.scanShown = key
+		delete(m.imgScanErr, key)
+	}
+	_, done := m.imgVulns[key]
+	if m.imgScanning[key] || done || m.imgScanErr[key] != "" || !trivyAvailable() {
 		return nil
 	}
 	m.imgScanning[key] = true
@@ -1229,24 +1235,25 @@ func (m model) imageVersionLines(r image.Ref) []line {
 }
 
 // imageSecurityLines says what is known about an image's security. kho does
-// not read inside an image, so a package level CVE list needs a scanner: the
-// scan key runs trivy when it is installed.
+// not read inside an image, so a package level CVE list needs a scanner,
+// which runs when the tab opens and trivy is installed.
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 	key := r.Canonical()
 	if m.imgScanning[key] {
 		return plain(m.spin() + faint().Render(" scanning with trivy, this takes a moment"))
 	}
 	if err := m.imgScanErr[key]; err != "" {
-		return append(plain(red().Render(" "+err)), plain(faint().Render(" the rest of kho still works without a scan"))...)
+		return append(plain(red().Render(" "+err)), plain(faint().Render(" open this tab again to retry, the rest of kho works without it"))...)
 	}
-	vulns := m.imgVulns[key]
+	vulns, scanned := m.imgVulns[key]
 	if len(vulns) == 0 {
-		lines := plain(faint().Render(" kho does not read inside an image, so it cannot"),
-			faint().Render(" list the packages a CVE would be filed against."), "")
-		if trivyAvailable() {
-			lines = append(lines, plain(accent().Render(" x  scan this image with trivy"), "")...)
+		var lines []line
+		if scanned {
+			lines = plain(green().Render(" trivy found no known vulnerabilities"), "")
 		} else {
-			lines = append(lines, plain(faint().Render(" install trivy and press x to scan it"), "")...)
+			lines = plain(faint().Render(" kho does not read inside an image, so it cannot"),
+				faint().Render(" list the packages a CVE would be filed against."), "",
+				faint().Render(" install trivy, then open this tab again to scan it"), "")
 		}
 		if !r.EOL.IsZero() {
 			lines = append(lines, plain(faint().Render(" the line itself ended "+r.EOL.Format("2006-01-02"))+", which a rebuild cannot fix")...)

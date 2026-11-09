@@ -122,7 +122,7 @@ func Parse(data []byte) ([]Vuln, error) {
 func clean(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if strings.Contains(s, "cache may be in use") {
-		return "trivy is busy with another scan, press x to try again"
+		return "trivy is busy with another scan, open the tab again to retry"
 	}
 	if strings.Contains(s, "manifest unknown") || strings.Contains(s, "MANIFEST_UNKNOWN") || strings.Contains(s, "not found") {
 		return "the registry does not have this image, so there is nothing to scan"

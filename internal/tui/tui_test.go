@@ -2554,6 +2554,33 @@ func TestProjectStaysInViewInAShortTerminal(t *testing.T) {
 	}
 }
 
+// Every load a spinner waits on counts as work, or the spinner's frame never
+// advances and it reads as a still picture.
+func TestWorkingCountsEveryLoad(t *testing.T) {
+	tests := []struct {
+		id   string
+		set  func(*model)
+		want bool
+	}{
+		{"a dependency list on its way", func(m *model) { m.deps["k"] = &lazy[[]provider.Dep]{} }, true},
+		{"a version list on its way", func(m *model) { m.versions["k"] = &lazy[[]provider.Release]{} }, true},
+		{"a skill's docs on their way", func(m *model) { m.docs["k"] = &lazy[provider.SkillDoc]{} }, true},
+		{"an image's containers on their way", func(m *model) { m.imgUsersBusy["k"] = true }, true},
+		{"an advisory history on its way", func(m *model) { m.advising["k"] = true }, true},
+		{"loads that finished", func(m *model) { m.deps["k"] = &lazy[[]provider.Dep]{done: true} }, false},
+		{"nothing at all", func(*model) {}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m := newModel(nil, "")
+			tt.set(&m)
+			if got := m.working(); got != tt.want {
+				t.Errorf("working() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // With no homepage or repo, w opens the package's page on its registry,
 // whichever tool put a Python package there.
 func TestHomeURL(t *testing.T) {
