@@ -64,6 +64,9 @@ or, with Go:
 go install github.com/vuon9/kho@latest
 ```
 
+<details>
+<summary>Verify a release archive</summary>
+
 To check that an archive from the [Releases page](https://github.com/vuon9/kho/releases) came from this repo's release workflow, verify its build provenance with the GitHub CLI (2.49 or later, signed in):
 
 ```bash
@@ -71,6 +74,18 @@ VERSION=0.1.8   # the release you downloaded
 gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
   --signer-workflow vuon9/kho/.github/workflows/release.yml
 ```
+
+</details>
+
+### Requirements
+
+macOS or Linux. Everything else is optional, and kho skips what it can't find:
+
+- **The package managers you use.** One that isn't installed shows as skipped, not as an error.
+- **docker**, to see which images are on disk, and to pull or remove one.
+- **[trivy](https://trivy.dev)**, to list the CVEs inside an image. It runs when you open an image's Security tab. Install it with `brew install trivy`.
+- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list can use up.
+- **Go 1.27 or later**, only to install with `go install`.
 
 ## Use it
 
@@ -127,7 +142,8 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 
 `kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
-### Uninstalling
+<details>
+<summary>Uninstalling with <code>kho remove</code></summary>
 
 `kho remove` runs the source's own uninstaller.
 
@@ -145,6 +161,8 @@ kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
 | `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
 | `--json` | print `{"package","version","command","ran","error","notes"}` instead of text |
 
+</details>
+
 ## For agents
 
 Give your agents the `use-kho` skill. `-g` installs it for your user, so it works in every project:
@@ -155,7 +173,10 @@ npx skills add vuon9/kho --skill use-kho -g
 
 Then ask it "/use-kho am I safe?" or "/use-kho fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and changes a package only after you say yes to that package.
 
-For a daily report, paste this into Claude Code, Hermes Agent, or any agent that can schedule tasks:
+<details>
+<summary>A daily report from your agent</summary>
+
+Paste this into Claude Code, Hermes Agent, or any agent that can schedule tasks:
 
 ```text
 With the use-kho skill, set up a task that runs kho check every morning at 9,
@@ -165,6 +186,8 @@ from the task; I'll approve updates in a conversation.
 
 `--require uv,npm` fails only when one of the named sources could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped, an OSV or skills.sh lookup included. `kho help` lists the rest.
 
+</details>
+
 `kho check --project [folder]` does the same for a project's lockfiles instead of the machine, so it works as a CI step that fails a pull request adding a vulnerable dependency. `--prod-only` leaves dev dependencies out of the verdict:
 
 ```bash
@@ -173,7 +196,12 @@ kho check --project . --prod-only --json
 
 ## What leaves your machine
 
-kho changes nothing until you confirm. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents.
+kho changes nothing until you confirm. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
+
+kho uses your GitHub token only for GitHub's API. It keeps the token in memory and never stores or prints it.
+
+<details>
+<summary>Every service kho asks, and what it learns</summary>
 
 | Where | What it learns | Asked by |
 |---|---|---|
@@ -189,24 +217,26 @@ kho changes nothing until you confirm. To check versions and security it asks th
 | Docker Hub API (`hub.docker.com`) | tag names, digests and push dates of an image's release line | kho |
 | Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or whichever registry the reference names) | which image a reference points to: its manifest and config, never a layer | kho |
 | endoflife.date | the product and release line of an image | kho |
+| trivy's sources | the image it scans, which it may download, and its own vulnerability database | trivy, when you open an image's Security tab |
 
-Homebrew answers from its local copy of its package list, so it is asked nothing.
+</details>
 
-kho uses your GitHub token (`GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`) only for GitHub's API, which allows 60 requests an hour without one. It keeps the token in memory and never stores or prints it.
-
-On disk, kho keeps:
+<details>
+<summary>What kho keeps on disk</summary>
 
 - a security cache, reused for 12 hours: `kho/security.json` in your user cache folder (`~/Library/Caches` on macOS)
 - an image cache, reused for 6 hours: `kho/images.json`, beside it
 - the last 500 commands it ran: `kho/history.jsonl` in `$XDG_STATE_HOME`, `~/.local/state` by default
 - your theme: `theme`, next to the history
 
+</details>
+
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first: it has the layout, the rules and the checks. In short:
+Read [AGENTS.md](AGENTS.md) first. It has a reading order for the code, the rules and the checks. In short:
 
 ```bash
-go vet ./... && go test -race ./...
+gofmt -l . && go vet ./... && go test -race ./...
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), which is how releases get their version and changelog.
