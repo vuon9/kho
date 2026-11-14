@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.14](https://github.com/vuon9/kho/compare/v0.1.13...v0.1.14) (2026-11-14)
+
+
+### Bug Fixes
+
+* **skills:** count installed harnesses and list linked agents first ([#54](https://github.com/vuon9/kho/issues/54)) ([6b764d3](https://github.com/vuon9/kho/commit/6b764d307bf9a08396422944fe5aba2562c0b2df))
+* **tui:** call the project's docker row docker ([#52](https://github.com/vuon9/kho/issues/52)) ([450285c](https://github.com/vuon9/kho/commit/450285c306657577270f9002252d003ba8cd0942))
+
+
+### Performance
+
+* read a folder level in parallel and skip the OS library ([#53](https://github.com/vuon9/kho/issues/53)) ([cbaa9d4](https://github.com/vuon9/kho/commit/cbaa9d426885fb4ee0457a9fffe299f53004a66c))
+
 ## [0.1.13](https://github.com/vuon9/kho/compare/v0.1.12...v0.1.13) (2026-11-09)
 
 
