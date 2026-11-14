@@ -2,8 +2,10 @@ package image
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -21,6 +23,7 @@ func TestFind(t *testing.T) {
 		"deploy/Dockerfile.prod":      "FROM scratch\n",
 		"docs/notes.md":               "FROM not-a-dockerfile:1\n",
 		"deep/a/b/c/d/Dockerfile":     "FROM too-deep:1\n",
+		"Library/pip/Dockerfile":      "FROM library:1\n",
 	}
 	for name, body := range files {
 		p := filepath.Join(root, filepath.FromSlash(name))
@@ -53,13 +56,72 @@ func TestFind(t *testing.T) {
 			t.Errorf("missing ref %q, have %v", w, got)
 		}
 	}
-	for _, unwanted := range []string{"node_modules/pkg/Dockerfile|ignored:1", ".hidden/Dockerfile|hidden:1", "deep/a/b/c/d/Dockerfile|too-deep:1"} {
+	for _, unwanted := range []string{"node_modules/pkg/Dockerfile|ignored:1", ".hidden/Dockerfile|hidden:1", "deep/a/b/c/d/Dockerfile|too-deep:1", "Library/pip/Dockerfile|library:1"} {
 		if _, ok := got[unwanted]; ok {
 			t.Errorf("found %q, which the walk should skip", unwanted)
 		}
 	}
 	if len(s.Files) != 6 {
 		t.Errorf("read %d files, want 6: %v", len(s.Files), s.Files)
+	}
+}
+
+// A level with many folders is read at once, and every folder is still read.
+func TestFindWideSiblings(t *testing.T) {
+	root := t.TempDir()
+	const n = 40
+	for i := 0; i < n; i++ {
+		dir := filepath.Join(root, fmt.Sprintf("app%02d", i))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(fmt.Sprintf("FROM svc%02d:1\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Find(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Refs) != n || len(s.Files) != n {
+		t.Fatalf("read %d refs from %d files, want %d of each", len(s.Refs), len(s.Files), n)
+	}
+	if s.Capped != "" {
+		t.Errorf("a level this small should not cap, got %q", s.Capped)
+	}
+	for i := 0; i < n; i++ {
+		want := fmt.Sprintf("app%02d/Dockerfile", i)
+		if !slices.Contains(s.Files, want) {
+			t.Errorf("the walk did not read %q", want)
+		}
+	}
+}
+
+// The walk stops at the file cap, keeps the files it read in order, and says
+// it stopped.
+func TestFindCaps(t *testing.T) {
+	old := MaxFiles
+	MaxFiles = 2
+	defer func() { MaxFiles = old }()
+	root := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name, "Dockerfile"), []byte("FROM alpine:3.20\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := Find(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a/Dockerfile", "b/Dockerfile"}
+	if !slices.Equal(s.Files, want) {
+		t.Errorf("read %v, want %v", s.Files, want)
+	}
+	if s.Capped != "stopped after 2 files" {
+		t.Errorf("capped %q, want the file cap named", s.Capped)
 	}
 }
 
