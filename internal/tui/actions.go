@@ -460,12 +460,16 @@ func (m *model) askLink() {
 		})}
 	case l.Kind == provider.LinkCopy:
 		m.confirm = &confirm{title: "Nothing to toggle", lines: []string{tilde(l.Path) + " is a folder, not a link.", "kho won't delete it."}}
-	case l.Kind == provider.LinkNoFolder && l.Shared:
+	case l.Kind == provider.LinkNoFolder && l.Shared && l.Installed:
 		nothing(name+" reads ~/.agents/skills directly,", "so it always sees "+p.Name+".")
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		nothing(name+" reads ~/.agents/skills directly once installed,", "so it will always see "+p.Name+".")
 	case l.Kind == provider.LinkNoFolder:
 		nothing(name+" reads only ~/.agents/skills,", "and "+p.Name+" isn't there.")
-	default:
+	case l.Installed:
 		nothing(name+" already sees "+p.Name+" through ~/.agents/skills,", "so a link of its own would load it twice.")
+	default:
+		nothing(name+" will see "+p.Name+" through ~/.agents/skills", "once installed, so a link would load it twice.")
 	}
 }
 

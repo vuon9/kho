@@ -852,11 +852,17 @@ func installed(links []provider.SkillLink) []provider.SkillLink {
 
 func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
 
+// linkLines draws the agents in the order they were read: installed harnesses
+// first, and within each group the ones holding the skill in their own folder
+// before the ones that read only ~/.agents/skills. A harness that isn't
+// installed is marked as such, so the reason it is lower is on screen. A link
+// in one of those is what the harness finds once it is installed, and enter
+// still removes it.
 func linkLines(links []provider.SkillLink) []line {
 	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
 	for _, l := range links {
 		state := linkState(l)
-		if !l.Installed && l.Kind == provider.LinkMissing {
+		if !l.Installed {
 			state = faint().Render("· not installed")
 		}
 		lines = append(lines, row("  "+pad(agentName(l), 16)+" "+pad(state, 15)+" "+faint().Render(tilde(l.Path))))
@@ -872,6 +878,9 @@ func (m model) linkDetail(p provider.Package) []line {
 	name := agentName(l)
 	lines := []line{field("path", tilde(l.Path), ""), field("skill", tilde(provider.RealPath(p)), ""), {}}
 	say := func(s string) { lines = append(lines, line{text: faint().Render(" " + s)}) }
+	if !l.Installed && !l.CanLink() {
+		say(name + " isn't installed yet.")
+	}
 	switch {
 	case l.CanLink():
 		if !l.Installed {
@@ -886,22 +895,32 @@ func (m model) linkDetail(p provider.Package) []line {
 		case !l.Own:
 			say("This link leads to no SKILL.md, so " + name + " doesn't load the skill from it.")
 			if l.Shared {
-				say(name + " still sees the skill through ~/.agents/skills.")
+				if l.Installed {
+					say(name + " still sees the skill through ~/.agents/skills.")
+				} else {
+					say(name + " sees the skill through ~/.agents/skills once installed.")
+				}
 			}
-		case l.Shared:
+		case l.Shared && l.Installed:
 			say(name + " also reads ~/.agents/skills, so it loads this skill twice.")
+		case l.Shared:
+			say(name + " also reads ~/.agents/skills, so once installed it would load this skill twice.")
 		}
 		lines = append(lines, line{text: " " + accent().Render("enter") + faint().Render(" removes this link. The skill's files stay where they are.")})
 	case l.Kind == provider.LinkCopy && l.Own:
 		say("A copied folder, not a link. kho won't delete it.")
 	case l.Kind == provider.LinkCopy:
 		say("A folder with no SKILL.md, so " + name + " doesn't load the skill from it. kho won't delete it.")
-	case l.Kind == provider.LinkNoFolder && l.Shared:
+	case l.Kind == provider.LinkNoFolder && l.Shared && l.Installed:
 		say(name + " reads ~/.agents/skills directly, so it always sees this skill.")
+	case l.Kind == provider.LinkNoFolder && l.Shared:
+		say(name + " reads ~/.agents/skills directly, so it sees this skill once installed.")
 	case l.Kind == provider.LinkNoFolder:
 		say(name + " reads only ~/.agents/skills, and this skill isn't there.")
-	default:
+	case l.Installed:
 		say(name + " already sees it through ~/.agents/skills, so there is nothing to link.")
+	default:
+		say(name + " will see it through ~/.agents/skills once installed, so there is nothing to link.")
 	}
 	return lines
 }
