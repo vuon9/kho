@@ -347,6 +347,65 @@ func TestAgentDir(t *testing.T) {
 	}
 }
 
+func TestAgentInstalled(t *testing.T) {
+	tests := []struct {
+		id    string
+		agent string
+		files []string
+		want  bool
+	}{
+		{id: "a file beside the skills folder is the agent's own", agent: "aider-desk", files: []string{".aider-desk/skills/", ".aider-desk/config.json"}, want: true},
+		{id: "a folder holding only the links folder the CLI made is not an install", agent: "aider-desk",
+			files: []string{".agents/skills/workflow/SKILL.md", ".aider-desk/skills/workflow -> ../../.agents/skills/workflow"}},
+		{id: "nor is a chain of folders on the way to that skills folder", agent: "astrbot", files: []string{".astrbot/data/skills/workflow/SKILL.md"}},
+		{id: "an empty folder is an install, since the CLI never leaves one behind", agent: "aider-desk", files: []string{".aider-desk/"}, want: true},
+		{id: "one installed folder among the agent's several is enough", agent: "openclaw", files: []string{".openclaw/skills/", ".clawdbot/config.json"}, want: true},
+		{id: "an agent with none of its folders is not installed", agent: "aider-desk"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			clearAgentEnv(t)
+			home := t.TempDir()
+			build(t, home, tt.files...)
+			i := slices.IndexFunc(skillAgents, func(a skillAgent) bool { return a.Name == tt.agent })
+			if got := skillAgents[i].installed(home); got != tt.want {
+				t.Errorf("installed %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLinksOnly(t *testing.T) {
+	tests := []struct {
+		id    string
+		files []string
+		// dir is what is asked about, ".x" when empty.
+		dir  string
+		want bool
+	}{
+		{id: "an empty folder is someone's, not the CLI's", files: []string{".x/"}},
+		{id: "a folder holding only a skills folder is the CLI's", files: []string{".x/skills/"}, want: true},
+		{id: "a chain of one folder each down to skills is too", files: []string{".x/a/b/skills/"}, want: true},
+		{id: "the skills folder itself is the CLI's too", files: []string{".x/skills/"}, dir: ".x/skills", want: true},
+		{id: "a second folder beside the chain is someone's", files: []string{".x/skills/", ".x/notes/"}},
+		{id: "a file where the chain would go is someone's", files: []string{".x/a"}},
+		{id: "a link named skills is the CLI's, wherever it points", files: []string{".real/skills/", ".x/skills -> ../.real/skills"}, want: true},
+		{id: "a chain through a linked folder is still the CLI's", files: []string{".real/skills/", ".x/data -> ../.real"}, want: true},
+		{id: "but a broken one named skills is not", files: []string{".x/skills -> ../nowhere"}},
+		{id: "a file named skills is not", files: []string{".x/skills"}},
+		{id: "a link where a folder would go is someone's", files: []string{".x/a -> ../b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			home := t.TempDir()
+			build(t, home, tt.files...)
+			if got := linksOnly(filepath.Join(home, cmp.Or(tt.dir, ".x"))); got != tt.want {
+				t.Errorf("linksOnly %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestScanSkills(t *testing.T) {
 	clearAgentEnv(t)
 	home := t.TempDir()
@@ -369,6 +428,11 @@ func TestScanSkills(t *testing.T) {
 		".cursor/skills/cursor-only", ".cursor/skills/agent-only", ".clawdbot/skills/claw-only",
 	)
 	mkdirs(".pi/agent", ".config/opencode")
+	// Files the agents wrote themselves, so kho reads their folders as
+	// installs and not as the folders `skills add` makes for its links.
+	for _, f := range []string{".claude/settings.json", ".cursor/notes.txt", ".clawdbot/config.json"} {
+		os.WriteFile(filepath.Join(home, f), nil, 0o644)
+	}
 	// Not skills: a link left behind after its skill was removed, and a
 	// category folder like the ones Hermes keeps its bundled skills in.
 	os.Symlink("../../.agents/skills/removed", filepath.Join(home, ".cursor/skills/removed"))
@@ -396,6 +460,23 @@ func TestScanSkills(t *testing.T) {
 		{Source: "skills", Name: "untracked", Version: "-", Path: filepath.Join(shared, "untracked"), Agents: []string{"claude-code", "cursor", "opencode", "pi"},
 			Note: "no lock entry, the skills CLI can't update it"},
 	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got  %+v\nwant %+v", got, want)
+	}
+}
+
+// A skill that sits only in the folder of a harness nobody installed is
+// loaded by nothing, so kho doesn't list it as a package.
+func TestScanSkillsSkipsStubAgentFolders(t *testing.T) {
+	clearAgentEnv(t)
+	home := t.TempDir()
+	build(t, home, ".agents/skills/shared/SKILL.md", ".vibe/skills/vibe-only/SKILL.md")
+	got, err := scanSkills(home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Package{{Source: "skills", Name: "shared", Version: "-", Path: filepath.Join(home, ".agents", "skills", "shared"),
+		Note: "no lock entry, the skills CLI can't update it"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
@@ -678,7 +759,9 @@ func tree(home string) []string {
 }
 
 func TestSkillLinks(t *testing.T) {
-	agents := []string{".codex/", ".pi/agent/", ".config/goose/", ".config/opencode/", ".cursor/"}
+	// The agents are installed when their folder holds something the agent
+	// wrote, not only the folder `skills add` linked into.
+	agents := []string{".claude/settings.json", ".codex/config.toml", ".pi/agent/settings.json", ".config/goose/config.yml", ".config/opencode/opencode.json", ".cursor/notes.txt"}
 	tests := []struct {
 		id    string
 		env   map[string]string
@@ -725,7 +808,7 @@ func TestSkillLinks(t *testing.T) {
 		{
 			id:    "an agent whose folder an env setting moves to ~/.agents/skills reads the shared skills",
 			env:   map[string]string{"CLAUDE_CONFIG_DIR": "{home}/.agents"},
-			files: []string{".agents/skills/workflow/SKILL.md"},
+			files: []string{".agents/settings.json", ".agents/skills/workflow/SKILL.md"},
 			skill: ".agents/skills/workflow",
 			want: map[string]string{"claude-code": "no folder, sees", "codex": "no folder, sees", "cursor": "missing, sees",
 				"goose": "missing, can link", "opencode": "missing, sees", "pi": "no folder, sees"},
@@ -781,6 +864,72 @@ func TestSkillLinks(t *testing.T) {
 	}
 }
 
+func TestSkillLinksOrder(t *testing.T) {
+	clearAgentEnv(t)
+	home := t.TempDir()
+	build(t, home,
+		".agents/skills/workflow/SKILL.md",
+		".claude/settings.json",
+		".claude/skills/workflow -> ../../.agents/skills/workflow",
+		".codex/config.toml",
+		".config/opencode/opencode.json",
+		".config/goose/config.yml",
+	)
+	// claude-code holds the skill in its own folder, codex and opencode read
+	// it through ~/.agents/skills, goose sees it nowhere, and cursor isn't
+	// installed at all.
+	ours := []string{"claude-code", "codex", "opencode", "goose", "cursor"}
+	tests := []struct {
+		id   string
+		all  bool
+		want []string
+	}{
+		{"the installed agents come first, the one holding the skill itself on top", false,
+			[]string{"claude-code", "codex", "opencode", "goose"}},
+		{"and every agent follows those, the ones nobody installed last", true,
+			[]string{"claude-code", "codex", "opencode", "goose", "cursor"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var got []string
+			for _, l := range skillLinks(home, Package{Name: "workflow"}, tt.all) {
+				if slices.Contains(ours, l.Agent) {
+					got = append(got, l.Agent)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScanSkillsOrdersAgentsOwnFirst(t *testing.T) {
+	clearAgentEnv(t)
+	home := t.TempDir()
+	build(t, home,
+		".agents/skills/workflow/SKILL.md",
+		".claude/settings.json",
+		".claude/skills/workflow -> ../../.agents/skills/workflow",
+		".config/amp/",
+		".config/opencode/opencode.json",
+	)
+	pkgs, err := scanSkills(home, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(pkgs, func(p Package) bool { return p.Name == "workflow" })
+	if i < 0 {
+		t.Fatal("workflow is not listed")
+	}
+	// amp reads ~/.agents/skills and its page comes before claude-code's, but
+	// claude-code holds the skill itself, so it comes first.
+	want := []string{"claude-code", "amp", "opencode"}
+	if got := pkgs[i].Agents; !slices.Equal(got, want) {
+		t.Errorf("agents %q, want %q", got, want)
+	}
+}
+
 func TestSkillLinksAll(t *testing.T) {
 	// Agents found through a system path like /Applications vary by machine,
 	// so both sides leave them out.
@@ -788,23 +937,24 @@ func TestSkillLinksAll(t *testing.T) {
 		i := slices.IndexFunc(skillAgents, func(a skillAgent) bool { return a.Name == name })
 		return slices.ContainsFunc(skillAgents[i].Detect, func(p string) bool { return strings.HasPrefix(p, "/") })
 	}
-	var every []string
+	var installed, rest []string
 	for _, a := range skillAgents {
-		switch {
-		case machine(a.Name):
-		case a.Name == "goose":
-			every = append(every, "Goose, installed")
-		default:
-			every = append(every, a.Display)
+		if machine(a.Name) {
+			continue
 		}
+		if a.Name == "goose" {
+			installed = append(installed, a.Display+", installed")
+			continue
+		}
+		rest = append(rest, a.Display)
 	}
 	tests := []struct {
 		id   string
 		all  bool
 		want []string
 	}{
-		{"by default only the installed agents come back", false, []string{"Goose, installed"}},
-		{"with all set, every agent the skills CLI supports does, in its order", true, every},
+		{"by default only the installed agents come back", false, installed},
+		{"with all set, every agent the skills CLI supports does, the installed ones first", true, append(installed, rest...)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -889,7 +1039,10 @@ func TestLinkSkill(t *testing.T) {
 }
 
 func TestUnlinkSkill(t *testing.T) {
-	base := []string{".agents/skills/workflow/SKILL.md", ".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md"}
+	// .claude/settings.json and .cursor/notes.txt are what each agent wrote in
+	// its folder, so kho reads both as installed.
+	base := []string{".agents/skills/workflow/SKILL.md", ".claude/settings.json",
+		".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md", ".cursor/notes.txt"}
 	tests := []struct {
 		id, agent string
 		// files is the home, base if empty.
@@ -900,8 +1053,9 @@ func TestUnlinkSkill(t *testing.T) {
 		err     string
 	}{
 		{id: "the shared entry survives an agent whose folder is a link to ~/.agents/skills", agent: "claude-code",
-			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".claude/skills -> ../.agents/skills"},
-			err:   "claude-code has no skills folder of its own, so kho won't remove ~/.agents/skills/workflow"},
+			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".claude/settings.json",
+				".claude/skills -> ../.agents/skills"},
+			err: "claude-code has no skills folder of its own, so kho won't remove ~/.agents/skills/workflow"},
 		{id: "a link is removed", agent: "claude-code", removed: []string{".claude/skills/workflow -> ../../.agents/skills/workflow"}},
 		{id: "a link replaced by an empty folder since kho read it stays", agent: "claude-code", since: []string{".claude/skills/workflow/"},
 			err: "~/.claude/skills/workflow is not a symlink, so kho won't remove it"},

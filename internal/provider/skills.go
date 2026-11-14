@@ -36,10 +36,11 @@ func (Skills) Missing() string {
 //go:generate go run ./genagents v1.7.6
 
 // skillAgent is one agent the skills CLI supports. Its global skills folder
-// is the first of Dirs whose parent folder exists, or else the first, and any
-// Detect path existing means it is installed. A universal agent reads
-// ~/.agents/skills as well as its own folder. Paths start with ~/, a
-// ${VAR:-default} the agent's own env setting overrides, or /.
+// is the first of Dirs whose parent folder exists, or else the first, and one
+// of Detect existing is the CLI's idea of an install; installed narrows that
+// down. A universal agent reads ~/.agents/skills as well as its own folder.
+// Paths start with ~/, a ${VAR:-default} the agent's own env setting
+// overrides, or /.
 type skillAgent struct {
 	Name, Display string
 	Dirs, Detect  []string
@@ -78,15 +79,23 @@ type placed struct {
 	installed bool
 }
 
-// place lists the installed agents, or every agent when all is set.
+// place lists the installed agents, or every agent when all is set, with the
+// installed ones first.
 func place(home string, all bool) []placed {
-	var out []placed
+	var installed, rest []placed
 	for _, a := range skillAgents {
-		if installed := a.installed(home); installed || all {
-			out = append(out, placed{a, a.dir(home), installed})
+		on := a.installed(home)
+		if !on && !all {
+			continue
+		}
+		p := placed{a, a.dir(home), on}
+		if on {
+			installed = append(installed, p)
+		} else {
+			rest = append(rest, p)
 		}
 	}
-	return out
+	return append(installed, rest...)
 }
 
 // shared says whether the agent sees a skill through ~/.agents/skills, given
@@ -118,10 +127,43 @@ func (a placed) link(home, name string, inShared bool) SkillLink {
 	return l
 }
 
+// installed says whether the agent itself is installed, not just whether one
+// of its folders exists. `skills add` makes a folder for every agent it links
+// into, so an agent nobody installed still gets one, holding nothing but the
+// chain of folders down to its skills folder. Anything else in a Detect
+// folder, like the config or state the agent wrote, means the agent is
+// installed.
 func (a skillAgent) installed(home string) bool {
 	for _, p := range a.Detect {
-		if _, err := os.Stat(expandPath(home, p)); err == nil {
+		d := expandPath(home, p)
+		info, err := os.Stat(d)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() || !linksOnly(d) {
 			return true
+		}
+	}
+	return false
+}
+
+// linksOnly says whether dir holds only the folders the skills CLI made for a
+// link: one folder, one folder inside it, and so on down to the skills folder.
+// An empty folder is not linksOnly, because the CLI never leaves one behind,
+// so a person or the agent made it. The cap stops a chain of links that would
+// otherwise lead back into itself.
+func linksOnly(dir string) bool {
+	for range 32 {
+		if filepath.Base(dir) == "skills" {
+			return true
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 1 {
+			return false
+		}
+		dir = filepath.Join(dir, entries[0].Name())
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return false
 		}
 	}
 	return false
@@ -226,15 +268,27 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 		}
 	}
 	// Each agent's folder is read once above. Own comes from the same
-	// SKILL.md test link makes, and Sees decides, as on the Links tab.
+	// SKILL.md test link makes, and Sees decides, as on the Links tab. The
+	// agents that hold the skill in their own folder come first, then those
+	// that read it only through ~/.agents/skills, as the Links tab lists them.
 	seenBy := func(name string) []string {
-		var as []string
+		type seen struct {
+			agent string
+			rank  int
+		}
+		var as []seen
 		for i, a := range agents {
-			if (SkillLink{Shared: a.shared(canonical[name]), Own: own[i][name]}).Sees() {
-				as = append(as, a.Name)
+			l := SkillLink{Installed: true, Shared: a.shared(canonical[name]), Own: own[i][name]}
+			if l.Sees() {
+				as = append(as, seen{a.Name, rank(l)})
 			}
 		}
-		return as
+		slices.SortStableFunc(as, func(a, b seen) int { return cmp.Compare(a.rank, b.rank) })
+		var names []string
+		for _, s := range as {
+			names = append(names, s.agent)
+		}
+		return names
 	}
 
 	var pkgs []Package
@@ -467,6 +521,21 @@ func (l SkillLink) Sees() bool {
 	return l.Shared || l.Own
 }
 
+// rank orders the agents a skill is listed under: one that holds the skill in
+// its own folder first, then one that reads it only through ~/.agents/skills,
+// then one that doesn't hold it, with installed agents before the rest.
+func rank(l SkillLink) int {
+	switch {
+	case l.Installed && l.Own:
+		return 0
+	case l.Installed && l.Shared:
+		return 1
+	case l.Installed:
+		return 2
+	}
+	return 3
+}
+
 // CanLink says whether a link of the agent's own would add the skill: its
 // folder has nothing by that name, and it doesn't see the skill already, so
 // the link can't load it twice.
@@ -483,7 +552,9 @@ func RealPath(p Package) string {
 }
 
 // SkillLinks says how each installed agent sees the skill, or every agent
-// the skills CLI supports when all is set.
+// the skills CLI supports when all is set, in the order rank gives: the ones
+// with the skill in their own folder, then the ones reading ~/.agents/skills,
+// then the rest.
 func SkillLinks(p Package, all bool) []SkillLink {
 	return skillLinks(homeDir(), p, all)
 }
@@ -494,6 +565,7 @@ func skillLinks(home string, p Package, all bool) []SkillLink {
 	for _, a := range place(home, all) {
 		links = append(links, a.link(home, p.Name, inShared))
 	}
+	slices.SortStableFunc(links, func(a, b SkillLink) int { return cmp.Compare(rank(a), rank(b)) })
 	return links
 }
 
