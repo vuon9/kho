@@ -144,7 +144,7 @@ func TestImagesRailRow(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	line := ""
 	for _, l := range strings.Split(screen(m), "\n") {
-		if strings.Contains(l, "🐳 images") {
+		if strings.Contains(l, "🐳 docker") {
 			line = l
 		}
 	}
@@ -156,7 +156,7 @@ func TestImagesRailRow(t *testing.T) {
 func TestImagesTable(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	got := screen(m)
-	for _, want := range []string{"· images · 3", "1 unverified hidden", "python:3.9-slim", "postgres:13",
+	for _, want := range []string{"· docker · 3", "1 unverified hidden", "python:3.9-slim", "postgres:13",
 		"node:22-alpine", "Dockerfile:3", "compose.yaml:3", "22.23.4", "EOL", "stale"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("screen does not show %q:\n%s", want, got)

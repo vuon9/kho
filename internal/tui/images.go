@@ -553,7 +553,7 @@ func (m model) currentImg() (image.Ref, bool) {
 
 // imageTitle is the table's header: the project, the filter, and the count.
 func (m model) imageTitle() string {
-	title := icon("project") + " " + m.projName() + " · images"
+	title := icon("project") + " " + m.projName() + " · docker"
 	if m.curRow().kind == rowMachineImages {
 		title = icon("docker") + " docker"
 	}
