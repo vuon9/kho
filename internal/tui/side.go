@@ -140,6 +140,11 @@ func (m model) hasBottom() bool {
 	if !ok {
 		return false
 	}
+	if m.isCandidate(p) {
+		// A candidate has no dependencies to read, so its Info tab is one
+		// piece; Versions and Security still have a detail worth reading.
+		return m.activeTab() != tabInfo
+	}
 	switch m.activeTab() {
 	case tabReadme:
 		return false
@@ -331,6 +336,9 @@ func (m model) bottomLines(inner int) []line {
 }
 
 func (m model) infoLines(p provider.Package) []line {
+	if m.isCandidate(p) {
+		return m.candidateInfoLines(p)
+	}
 	lines := plain(" "+icon(provider.ProviderOf(p))+" "+accent().Render(p.Name)+faint().Render(" · "+p.Source), "")
 	add := func(label, value, url string) {
 		if value == "" {
@@ -446,7 +454,7 @@ func fixFor(advs []vuln.Advisory, version string) string {
 // depList is the dependencies the Info tab lists for ↑↓ to pick from.
 func (m model) depList() []provider.Dep {
 	p, ok := m.current()
-	if !ok || p.Source == "skills" || m.activeTab() != tabInfo {
+	if !ok || p.Source == "skills" || m.isCandidate(p) || m.activeTab() != tabInfo {
 		return nil
 	}
 	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
@@ -598,13 +606,13 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		switch {
 		case affected > 0:
 			tags = append(tags, red().Render(fmt.Sprintf("⚠ %d", affected)))
-		case history && vuln.Compare(r.Version, p.Version) > 0:
+		case history && p.Version != "" && vuln.Compare(r.Version, p.Version) > 0:
 			tags = append(tags, green().Render("✓ safe"))
 		}
 		if provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
 			tags = append(tags, pill("installed", th.green))
 		}
-		lines = append(lines, row("  "+pad(r.Version, verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
+		lines = append(lines, row("  "+pad(printable(r.Version), verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
 	}
 	return lines
 }
@@ -651,6 +659,18 @@ func (m model) securityEntries() []securityEntry {
 	if !ok {
 		return nil
 	}
+	if m.isCandidate(p) {
+		// A package without an installation has no version of its own, so the
+		// tab lists what affects the newest version the registry knows.
+		version := p.Latest
+		var es []securityEntry
+		for _, a := range m.db.Known(provider.Ecosystem(p), provider.OSVName(p)) {
+			if version == "" || a.Affects(version) {
+				es = append(es, securityEntry{adv: a})
+			}
+		}
+		return es
+	}
 	var es []securityEntry
 	for _, a := range m.vulns[pkgKey(p)] {
 		es = append(es, securityEntry{adv: a})
@@ -662,6 +682,9 @@ func (m model) securityEntries() []securityEntry {
 }
 
 func (m model) securityLines(p provider.Package, inner int) []line {
+	if m.isCandidate(p) {
+		return m.candidateSecurityLines(p, inner)
+	}
 	q, ok := provider.Query(p)
 	if !ok {
 		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
@@ -692,12 +715,50 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+// candidateSecurityLines is the Security tab for a package the machine does
+// not have: the advisories that affect the newest version, with the same
+// detail panel an installed package has.
+func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
+	eco, name := provider.Ecosystem(p), provider.OSVName(p)
+	version := p.Latest
+	if eco == "" {
+		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
+	}
+	hkey := eco + "/" + name
+	if !m.db.HistoryFresh(eco, name, now()) {
+		if m.advising[hkey] || m.scanning > 0 {
+			return plain(" " + m.spin() + faint().Render(" checking advisories…"))
+		}
+		return m.unchecked(p.Name)
+	}
+	es := m.securityEntries()
+	if len(es) == 0 {
+		label := version
+		if label == "" {
+			label = "the newest version"
+		}
+		return plain("", green().Render(" ✓ No known advisories for "+label), faint().Render(" checked "+ago(m.db.HistoryAt[hkey])+" on osv.dev"))
+	}
+	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
+	for _, e := range es {
+		fix := red().Render("no fix yet")
+		if f := e.adv.FixedAfter(version); f != "" {
+			fix = green().Render("≥ " + f)
+		}
+		lines = append(lines, row("  "+severityPill(e.adv.Severity)+" "+pad(e.adv.ID, 20)+" "+fix))
+	}
+	return lines
+}
+
 func (m model) advisoryLines(p provider.Package, inner int) []line {
 	e, ok := at(m.securityEntries(), m.sideCursor)
 	if !ok {
 		return nil
 	}
 	version, latest := p.Version, p.Latest
+	if m.isCandidate(p) {
+		version = p.Latest
+	}
 	if e.dep != "" {
 		_, version, _ = strings.Cut(e.dep, "@")
 		latest = ""

@@ -256,20 +256,23 @@ type model struct {
 	imgAsk      image.Asker
 	imgStatuses map[string]int
 	filtering   bool
-	showDeps    bool
-	help        bool
-	helpTop     int
-	confirm     *confirm
-	inst        *installing
-	depCursor   int
-	depPop      *depPopup
-	allAgents   bool
-	sel         *textSel
-	railW       int
-	sideW       int
-	split       int
-	resizing    int
-	grab        int
+	// search is the selected machine panel's transient search: nil in the
+	// installed mode, the prompt or results otherwise. It never joins pkgs.
+	search    *searchState
+	showDeps  bool
+	help      bool
+	helpTop   int
+	confirm   *confirm
+	inst      *installing
+	depCursor int
+	depPop    *depPopup
+	allAgents bool
+	sel       *textSel
+	railW     int
+	sideW     int
+	split     int
+	resizing  int
+	grab      int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -396,7 +399,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() ||
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() || m.searchWorking() ||
 		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning) || m.anyOf(m.imgUsersBusy) || m.anyOf(m.advising) ||
 		loading(m.deps) || loading(m.versions) || loading(m.docs)
 }
@@ -589,6 +592,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deps[msg.key] = &lazy[[]provider.Dep]{msg.deps, msg.err, true}
 	case versionsMsg:
 		m.versions[msg.key] = &lazy[[]provider.Release]{msg.rels, msg.err, true}
+	case searchMsg:
+		m.gotSearch(msg)
+	case findMsg:
+		m.gotFind(msg)
 	case docMsg:
 		m.docs[msg.key] = &lazy[provider.SkillDoc]{msg.doc, msg.err, true}
 	case scanMsg:
@@ -632,6 +639,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
+		if msg.err == nil && !msg.removed {
+			// A results row installed from its candidate sidebar becomes an
+			// installed hit at once, before the relist brings the package.
+			m.gotInstalled(msg)
+		}
 		cmds = append(cmds, m.relist(msg.provider))
 		if msg.provider == "docker" {
 			m.imgGen++
@@ -650,9 +662,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "could not open " + msg.url + ": " + msg.err.Error()
 		}
 	case tea.PasteMsg:
-		if m.filtering {
+		switch {
+		case m.filtering:
 			m.setFilter(m.filter() + strings.TrimSpace(msg.Content))
 			m.cursor, m.offset = 0, 0
+		case m.search != nil && (m.search.mode == modePrompt || m.search.editing):
+			m.search.draft += printablePaste(msg.Content)
 		}
 	case tea.KeyPressMsg:
 		cmd, quit := m.press(msg)
@@ -782,6 +797,16 @@ func (m *model) load() tea.Cmd {
 	if !ok {
 		return nil
 	}
+	if m.inResults() {
+		// A result reads nothing until enter opens it: not the row under the
+		// cursor, and not the installed package it may turn out to be.
+		if !m.search.opened {
+			return nil
+		}
+		if m.isCandidate(p) {
+			return m.loadCandidate(p)
+		}
+	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if p.Lockfile != "" {
 		m.deps[key] = &lazy[[]provider.Dep]{val: m.pulledIn(p), done: true}
@@ -902,6 +927,9 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, false
 		}
 	}
+	if m.search != nil {
+		return m.pressSearch(key, msg)
+	}
 	tabs := m.tabs()
 	switch key {
 	case "q":
@@ -928,6 +956,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.focus = min(m.focus+1, focusSide)
 	case "/":
 		m.filtering = true
+	case "n":
+		m.openSearch()
 	case "esc":
 		if m.focus == focusSide && m.sidePart == 1 {
 			m.sidePart = 0
@@ -1259,6 +1289,10 @@ func (m *model) openReleasePage() tea.Cmd {
 func (m *model) clamp() {
 	m.clampHistory()
 	m.keepRail()
+	// Search belongs to the rail row it was opened on: a row switch drops it.
+	if m.search != nil && m.search.scope != m.curRow().key {
+		m.search = nil
+	}
 	m.cursor = max(min(m.cursor, m.rowLen()-1), 0)
 	l := m.layout()
 	m.railTop = m.railTopFor(l.bodyH - 2)
@@ -1322,6 +1356,11 @@ func (m model) current() (provider.Package, bool) {
 }
 
 func (m model) tabs() []int {
+	if p, ok := m.current(); ok && m.isCandidate(p) {
+		// A package that is not installed has nothing to show on Skill,
+		// Readme or Links: those come from an installed skill's files.
+		return []int{tabInfo, tabVersions, tabSecurity}
+	}
 	if p, ok := m.current(); ok && p.Source == "skills" {
 		return []int{tabInfo, tabVersions, tabSkill, tabReadme, tabLinks, tabSecurity}
 	}
@@ -1367,6 +1406,9 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 }
 
 func (m model) rows() []provider.Package {
+	if m.inResults() {
+		return m.searchRows()
+	}
 	rows := m.visible(m.rowPkgs(m.curRow()))
 	m.sort(rows)
 	return rows

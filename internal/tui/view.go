@@ -161,6 +161,9 @@ func (m model) titleBar() string {
 
 // statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
+	if m.inResults() {
+		return m.searchStatusBar()
+	}
 	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
 		return m.imageStatusBar()
 	}
@@ -256,7 +259,7 @@ func (m model) rowKeys() []string {
 	case m.inProject():
 		pairs = append(pairs, "s", "sort", "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home")
 	default:
-		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home")
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home", "n", "new package")
 	}
 	switch m.activeTab() {
 	case tabVersions:
@@ -345,6 +348,20 @@ func (m model) footer() string {
 		line = keys("y", "yes", "n", "no")
 	case pop == popConfirm:
 		line = keys("esc", "close")
+	case m.search != nil && m.search.mode == modePrompt:
+		line = keys("type", "a name", "enter", "search", "esc", "cancel")
+	case m.search != nil && m.search.editing:
+		line = keys("type", "to search", "enter", "run", "esc", "cancel")
+	case m.search != nil:
+		switch m.focus {
+		case focusSide:
+			line = fitKeys(max(m.width-2-reserve, 24), []string{"↑↓", "select", "enter", m.enterLabel(),
+				"i v a", "tabs", "J K", "scroll", "/", "edit", "esc", "back", "?", "help"})
+		case focusRail:
+			line = keys("↑↓", "source", "tab", "panel", "esc", "back", "?", "help")
+		default:
+			line = keys("/", "edit", "↑↓", "select", "enter", "details", "w", "home", "?", "help", "esc", "back")
+		}
 	case m.filtering:
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")
 	case m.showHistory:
@@ -370,6 +387,9 @@ func (m model) footer() string {
 }
 
 func (m model) tableTitle() string {
+	if m.inResults() {
+		return m.searchTitle()
+	}
 	r := m.curRow()
 	if r.kind == rowImages || r.kind == rowMachineImages {
 		return m.imageTitle()
@@ -422,6 +442,9 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
+	if m.inResults() {
+		return m.searchLines()
+	}
 	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
 		return m.imageTableLines()
 	}
@@ -488,7 +511,12 @@ func (m model) tableLines() []string {
 	}
 	if len(rows) == 0 && len(m.busy) == 0 {
 		empty := "  nothing matches"
-		if m.status() != statusAll && m.filter() == "" {
+		switch {
+		case m.filter() != "" && (m.curRow().kind == rowAll || m.curRow().kind == rowProvider):
+			// The bridge to search: the installed filter has nothing, so say
+			// where the registry search is.
+			empty = fmt.Sprintf("  no installed package matches %q · n searches the registry", m.filter())
+		case m.status() != statusAll && m.filter() == "":
 			empty = "  ✨ all clear here"
 		}
 		lines = append(lines, "", faint().Render(empty))
@@ -496,7 +524,11 @@ func (m model) tableLines() []string {
 	for len(lines) < m.layout().rows+1 {
 		lines = append(lines, "")
 	}
-	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+	bar := m.filterBar()
+	if m.inPrompt() {
+		bar = m.searchBar()
+	}
+	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), bar)
 }
 
 // nameTag follows a project package's name: dev, and the direct package

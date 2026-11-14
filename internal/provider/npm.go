@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,3 +121,86 @@ func parseNpmView(name string, data []byte) ([]Release, string, error) {
 	}
 	return rels, repo, nil
 }
+
+// Search finds packages by keyword through the npm CLI, which reads the
+// registry's search endpoint.
+func (Npm) Search(ctx context.Context, query string, limit int) ([]Package, error) {
+	limit = searchLimit(limit)
+	out, err := run(ctx, "npm", "search", "--json", "--searchlimit="+itoa(limit), query)
+	if err != nil {
+		return nil, err
+	}
+	return parseNpmSearch(out, limit)
+}
+
+func parseNpmSearch(data []byte, limit int) ([]Package, error) {
+	var rows []struct {
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		Links       struct {
+			Homepage   string `json:"homepage"`
+			Repository string `json:"repository"`
+		} `json:"links"`
+	}
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, fmt.Errorf("npm search: %w", err)
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	var pkgs []Package
+	for _, r := range rows {
+		pkgs = append(pkgs, Package{Source: "npm", Name: r.Name, Latest: r.Version, Desc: r.Description,
+			Homepage: r.Links.Homepage, Repo: githubRepo(r.Links.Repository), Origin: "npmjs.com"})
+	}
+	return pkgs, nil
+}
+
+// Find looks one package up in the npm registry, which works for a package the
+// machine does not have.
+func (Npm) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "npm" {
+		return Package{}, fmt.Errorf("npm doesn't serve the %s source", source)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Package{}, fmt.Errorf("no npm package name given")
+	}
+	var doc struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Homepage    string `json:"homepage"`
+		Repository  any    `json:"repository"`
+		DistTags    struct {
+			Latest string `json:"latest"`
+		} `json:"dist-tags"`
+	}
+	if err := getJSON(ctx, npmRegistry+"/"+segments(name), nil, &doc); err != nil {
+		return Package{}, fmt.Errorf("no npm package named %s", name)
+	}
+	if doc.DistTags.Latest == "" {
+		return Package{}, fmt.Errorf("npm has no published version of %s", name)
+	}
+	if doc.Name == "" {
+		doc.Name = name
+	}
+	return Package{Source: "npm", Name: doc.Name, Latest: doc.DistTags.Latest, Desc: doc.Description,
+		Homepage: doc.Homepage, Repo: githubRepo(repositoryURL(doc.Repository)), Origin: "npmjs.com"}, nil
+}
+
+// repositoryURL reads npm's repository field, which is a URL or an object with
+// a url, and drops the git+ prefix.
+func repositoryURL(v any) string {
+	switch r := v.(type) {
+	case string:
+		return strings.TrimPrefix(r, "git+")
+	case map[string]any:
+		u, _ := r["url"].(string)
+		return strings.TrimPrefix(u, "git+")
+	}
+	return ""
+}
+
+// itoa is local because npm's JSON flags take a bare number.
+func itoa(n int) string { return strconv.Itoa(n) }

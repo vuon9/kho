@@ -14,11 +14,14 @@ import (
 	"maps"
 	"os/exec"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/vuon9/kho/internal/history"
 	"github.com/vuon9/kho/internal/image"
@@ -82,10 +85,15 @@ usage:
                                        is this project safe? reads its lockfiles
                                        and its images, not the machine;
                                        --prod-only leaves out dev dependencies
+  kho search <query...> [--source brew,npm] [--limit N] [--json]
+                                       find packages this machine does not have;
+                                       --source narrows it, --limit caps each
+                                       source
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
-                                       upgrade or downgrade; without --yes it only
-                                       says what it would run
+                                       install, upgrade or downgrade to that
+                                       version; without --yes it only says what
+                                       it would run
   kho remove <source>/<name> [--yes] [--force] [--json]
                                        uninstall it; without --yes it only says
                                        what it would run; --force overrides
@@ -113,6 +121,8 @@ func Main(env Env, args []string) int {
 		return env.check(args)
 	case "show":
 		return env.show(args)
+	case "search":
+		return env.search(args)
 	case "install":
 		return env.install(args)
 	case "remove":
@@ -132,7 +142,7 @@ func Main(env Env, args []string) int {
 // IsCommand says whether name is one of Main's commands, so a folder with
 // the same name never shadows it.
 func IsCommand(name string) bool {
-	return slices.Contains([]string{"version", "check", "show", "install", "remove", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
+	return slices.Contains([]string{"version", "check", "show", "search", "install", "remove", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
 }
 
 func (env Env) flags(name string) *flag.FlagSet {
@@ -919,6 +929,380 @@ func (env Env) show(args []string) int {
 	return ExitOK
 }
 
+// searchTimeout bounds a search, so one slow registry cannot hold the command
+// open. A registry answers in a second or two; twenty is generous.
+const searchTimeout = 20 * time.Second
+
+// noProvider is the report's reason for a requested manager that is neither
+// ready nor listed as skipped. That is an inconsistent Env, but the report says
+// something instead of dropping the source silently.
+const noProvider = "not on this machine"
+
+// SearchReport is what `kho search --json` prints. Version is empty in every
+// result, because search lists what the machine does not have. Latest is the
+// newest version the registry gave, or empty when it gave none.
+type SearchReport struct {
+	Query       string             `json:"query"`
+	Results     []provider.Package `json:"results"`
+	NotSearched []string           `json:"notSearched"`
+	Skipped     map[string]string  `json:"skipped"`
+	Errors      map[string]string  `json:"errors"`
+}
+
+// searchTask is one source a search asks, and what it may answer for.
+type searchTask struct {
+	manager  string
+	labels   []string
+	find     bool
+	label    string
+	provider provider.Provider
+	fail     error
+}
+
+// searchAnswer is one source's answer: its packages, or why it failed.
+type searchAnswer struct {
+	pkgs []provider.Package
+	err  error
+}
+
+// search finds packages the machine does not have. One source that fails never
+// hides the ones that answered: its error goes to stderr and into the JSON, and
+// the exit is 1 only when nothing answered.
+func (env Env) search(args []string) int {
+	fs := env.flags("search")
+	asJSON := fs.Bool("json", false, "print the report as JSON")
+	source := fs.String("source", "", "comma separated sources to search, like brew,npm")
+	limit := fs.Int("limit", provider.DefaultSearchLimit, "how many results to ask each source for")
+	rest, err := parse(fs, args)
+	if err != nil {
+		return ExitUsage
+	}
+	query := strings.TrimSpace(strings.Join(rest, " "))
+	if query == "" {
+		fmt.Fprintln(env.Err, "usage: kho search <query...> [--source brew,npm] [--limit N] [--json]")
+		return ExitUsage
+	}
+	// One character is too broad to be a search; registries would answer with
+	// hundreds of names nobody asked for.
+	if utf8.RuneCountInString(query) < 2 {
+		fmt.Fprintln(env.Err, "search needs at least 2 characters")
+		return ExitUsage
+	}
+	if *limit < 1 {
+		fmt.Fprintln(env.Err, "--limit must be at least 1")
+		return ExitUsage
+	}
+	labels, ok := env.searchLabels(*source)
+	if !ok {
+		return ExitUsage
+	}
+	ones, skipped := env.searchPlan(labels)
+	start := env.Now()
+	answers := runSearch(ones, query, *limit)
+	report := SearchReport{Query: query, Results: []provider.Package{}, NotSearched: []string{}, Skipped: skipped, Errors: map[string]string{}}
+	var searched []string
+	answered := 0
+	for i, one := range ones {
+		if answers[i].err != nil {
+			report.Errors[one.manager] = answers[i].err.Error()
+			continue
+		}
+		answered++
+		searched = append(searched, one.labels...)
+		report.Results = append(report.Results, answers[i].pkgs...)
+	}
+	if labels == nil {
+		// A manager with only an exact-name lookup is still useful, so name it
+		// rather than dropping it silently.
+		for _, p := range provider.Finders(env.Providers) {
+			if _, ok := p.(provider.Searcher); ok {
+				continue
+			}
+			report.NotSearched = append(report.NotSearched, p.Name())
+		}
+	}
+	if *asJSON {
+		env.printJSON(report)
+	} else {
+		env.printSearch(report, searched, env.Now().Sub(start))
+	}
+	for _, manager := range slices.Sorted(maps.Keys(report.Errors)) {
+		fmt.Fprintf(env.Err, "%s could not search: %s\n", manager, report.Errors[manager])
+	}
+	if labels != nil {
+		env.printNotOnMachine(labels, report.Skipped)
+	}
+	switch {
+	case answered > 0:
+		return ExitOK
+	case len(ones) == 0 && labels == nil:
+		fmt.Fprintln(env.Err, "no package manager on this machine can search by keyword")
+	default:
+		fmt.Fprintln(env.Err, "could not search any package manager")
+	}
+	return ExitError
+}
+
+// searchLabels reads --source as source labels and says whether each one can be
+// searched. An empty list means no narrowing, so every ready source is asked.
+func (env Env) searchLabels(list string) ([]string, bool) {
+	if strings.TrimSpace(list) == "" {
+		return nil, true
+	}
+	var labels, unknown, deferred []string
+	for _, raw := range strings.Split(list, ",") {
+		label := strings.TrimSpace(raw)
+		if label == "" {
+			continue
+		}
+		if !provider.IsSource(label) {
+			if !slices.Contains(unknown, label) {
+				unknown = append(unknown, label)
+			}
+			continue
+		}
+		// The label is a source kho knows. A deferred manager is a usage
+		// error; anything else is accepted and the plan says whether it can
+		// search, resolve an exact name, or is skipped on this machine.
+		manager := provider.ProviderOf(provider.Package{Source: label})
+		if provider.DeferredSource(manager) {
+			if !slices.Contains(deferred, label) {
+				deferred = append(deferred, label)
+			}
+			continue
+		}
+		if !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(env.Err, "unknown source in --source: %s\n", strings.Join(unknown, ", "))
+		return nil, false
+	}
+	if len(deferred) > 0 {
+		fmt.Fprintf(env.Err, "--source %s is not supported yet\n", strings.Join(deferred, ", "))
+		return nil, false
+	}
+	if len(labels) == 0 {
+		fmt.Fprintln(env.Err, "no source named in --source")
+		return nil, false
+	}
+	return labels, true
+}
+
+// searchPlan says what one search will ask. No --source asks every ready
+// searcher. A --source narrows to the managers it names, and a name-only
+// manager resolves the query as an exact name instead of searching for words.
+func (env Env) searchPlan(labels []string) ([]searchTask, map[string]string) {
+	skipped := map[string]string{}
+	if labels == nil {
+		for name, why := range env.Skipped {
+			skipped[name] = why
+		}
+		var ones []searchTask
+		for _, p := range provider.Searchers(env.Providers) {
+			ones = append(ones, searchTask{manager: p.Name(), labels: sourceLabels(p.Name()), provider: p})
+		}
+		return ones, skipped
+	}
+	var ones []searchTask
+	seen := map[string]bool{}
+	for _, label := range labels {
+		manager := provider.ProviderOf(provider.Package{Source: label})
+		if seen[manager] {
+			continue
+		}
+		seen[manager] = true
+		var group []string
+		for _, other := range labels {
+			if provider.ProviderOf(provider.Package{Source: other}) == manager {
+				group = append(group, other)
+			}
+		}
+		p := provider.ProviderNamed(env.Providers, manager)
+		if p == nil {
+			// Not in Providers means this machine is not set up for it.
+			if why, ok := env.Skipped[manager]; ok {
+				skipped[manager] = why
+			} else {
+				skipped[manager] = noProvider
+			}
+			continue
+		}
+		one := searchTask{manager: manager, labels: group, provider: p}
+		if _, ok := p.(provider.Searcher); ok {
+			// keyword search
+		} else if _, ok := p.(provider.Finder); ok {
+			one.find, one.label = true, group[0]
+		} else {
+			one.fail = fmt.Errorf("%s cannot search yet", manager)
+		}
+		ones = append(ones, one)
+	}
+	return ones, skipped
+}
+
+// runSearch asks every source at once under one deadline, so a single slow
+// manager cannot hold the command open. Answers keep the plan's order.
+func runSearch(ones []searchTask, query string, limit int) []searchAnswer {
+	ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+	defer cancel()
+	answers := make([]searchAnswer, len(ones))
+	var wg sync.WaitGroup
+	for i, one := range ones {
+		if one.fail != nil {
+			answers[i] = searchAnswer{err: one.fail}
+			continue
+		}
+		wg.Go(func() {
+			answers[i] = askSource(ctx, one, query, limit)
+		})
+	}
+	wg.Wait()
+	return answers
+}
+
+// askSource asks one manager. A keyword manager may return packages for more
+// than one label, as brew does for formulae and casks, so its answer is
+// narrowed to the labels this search asked for.
+func askSource(ctx context.Context, one searchTask, query string, limit int) searchAnswer {
+	if one.find {
+		f, ok := one.provider.(provider.Finder)
+		if !ok {
+			return searchAnswer{err: fmt.Errorf("%s cannot resolve an exact name yet", one.manager)}
+		}
+		p, err := f.Find(ctx, one.label, query)
+		if err != nil || p.Name == "" {
+			// A name-only manager either resolves the name or does not; a miss
+			// is no match, as the panel shows, not a failed source.
+			return searchAnswer{}
+		}
+		return searchAnswer{pkgs: []provider.Package{p}}
+	}
+	s, ok := one.provider.(provider.Searcher)
+	if !ok {
+		return searchAnswer{err: fmt.Errorf("%s cannot search by keyword yet", one.manager)}
+	}
+	pkgs, err := s.Search(ctx, query, limit)
+	if err != nil {
+		return searchAnswer{err: err}
+	}
+	out := make([]provider.Package, 0, len(pkgs))
+	for _, p := range pkgs {
+		if slices.Contains(one.labels, p.Source) {
+			out = append(out, p)
+		}
+	}
+	return searchAnswer{pkgs: out}
+}
+
+// sourceLabels names every label a manager answers for, so a full search says
+// brew and cask when brew answered.
+func sourceLabels(manager string) []string {
+	if manager == "brew" {
+		return []string{"brew", "cask"}
+	}
+	return []string{manager}
+}
+
+// printSearch is the text form: one copyable source/name row, then what was
+// searched, then the managers that can only install by exact name.
+func (env Env) printSearch(r SearchReport, searched []string, took time.Duration) {
+	if len(searched) > 0 {
+		if len(r.Results) > 0 {
+			env.printSearchRows(r.Results)
+			fmt.Fprintln(env.Out)
+		} else {
+			fmt.Fprintf(env.Out, "no packages match %q\n", r.Query)
+		}
+		fmt.Fprintf(env.Out, "searched %s in %s\n", strings.Join(searched, ", "), secs(took))
+	}
+	if len(r.NotSearched) > 0 {
+		fmt.Fprintf(env.Out, "%s cannot search by keyword; install one by exact name, like kho install %s/ruff@latest\n",
+			joinWords(r.NotSearched), r.NotSearched[0])
+	}
+}
+
+func (env Env) printSearchRows(pkgs []provider.Package) {
+	refs, versions, descs := make([]string, len(pkgs)), make([]string, len(pkgs)), make([]string, len(pkgs))
+	refW, verW := 0, 0
+	for i, p := range pkgs {
+		refs[i] = oneLine(p.Source + "/" + p.Name)
+		versions[i] = cmp.Or(oneLine(p.Latest), "?")
+		descs[i] = oneLine(p.Desc)
+		refW = max(refW, utf8.RuneCountInString(refs[i]))
+		verW = max(verW, utf8.RuneCountInString(versions[i]))
+	}
+	for i := range pkgs {
+		line := fmt.Sprintf("%-*s  %-*s", refW, refs[i], verW, versions[i])
+		if descs[i] != "" {
+			line += "  " + descs[i]
+		}
+		fmt.Fprintln(env.Out, strings.TrimRight(line, " "))
+	}
+}
+
+// printNotOnMachine names the named sources this machine does not have, so a
+// narrowed search that could not ask says why instead of only failing.
+func (env Env) printNotOnMachine(labels []string, skipped map[string]string) {
+	seen := map[string]bool{}
+	for _, label := range labels {
+		manager := provider.ProviderOf(provider.Package{Source: label})
+		if seen[manager] {
+			continue
+		}
+		seen[manager] = true
+		why, ok := skipped[manager]
+		if !ok {
+			continue
+		}
+		if why == noProvider {
+			fmt.Fprintf(env.Err, "%s is not on this machine\n", manager)
+			continue
+		}
+		fmt.Fprintf(env.Err, "%s is not on this machine (%s)\n", manager, why)
+	}
+}
+
+// secs is a duration the way a person reads a wait: one decimal and a unit.
+func secs(d time.Duration) string {
+	return strconv.FormatFloat(d.Seconds(), 'f', 1, 64) + "s"
+}
+
+// joinWords joins names the way a sentence does: "a, b and c".
+func joinWords(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// ansiEscape matches the terminal escape sequences a registry can slip into a
+// name or a description: colour codes, cursor moves and title settings.
+var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b\\][^\x07]*\x07|\x1b.")
+
+// oneLine strips terminal escapes and control characters and folds text from a
+// registry to one line, so a description can never move the cursor or redraw
+// the terminal.
+func oneLine(s string) string {
+	s = ansiEscape.ReplaceAllString(s, "")
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			// drop it
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
 type InstallResult struct {
 	Package string   `json:"package"`
 	From    string   `json:"from"`
@@ -926,6 +1310,9 @@ type InstallResult struct {
 	Command []string `json:"command"`
 	Ran     bool     `json:"ran"`
 	Error   string   `json:"error,omitempty"`
+	// New is true when kho installs a package the machine did not have, so
+	// From is empty and the command came from InstallNewCmd.
+	New bool `json:"new,omitempty"`
 }
 
 // install moves an installed package to a published version. It checks the
@@ -952,27 +1339,34 @@ func (env Env) install(args []string) int {
 		return ExitUsage
 	}
 	ctx := context.Background()
-	pkgs, _ := env.inventory(ctx)
-	p, err := find(pkgs, ref)
-	if err != nil {
-		fmt.Fprintln(env.Err, err)
-		return ExitError
-	}
-	if version == "latest" {
-		version = p.Latest
-	}
-	cmd, err := provider.InstallCmd(p, version)
-	if err != nil {
-		fmt.Fprintln(env.Err, err)
-		return ExitError
-	}
-	if p.Source != "brew" && p.Source != "cask" && p.Source != "skills" {
-		if err := env.published(ctx, p, version); err != nil {
+	pkgs, errs := env.inventory(ctx)
+	var res InstallResult
+	var cmd *exec.Cmd
+	if p, err := find(pkgs, ref); err == nil {
+		if version == "latest" {
+			version = p.Latest
+		}
+		cmd, err = provider.InstallCmd(p, version)
+		if err != nil {
 			fmt.Fprintln(env.Err, err)
 			return ExitError
 		}
+		if p.Source != "brew" && p.Source != "cask" && p.Source != "skills" {
+			if err := env.published(ctx, p, version); err != nil {
+				fmt.Fprintln(env.Err, err)
+				return ExitError
+			}
+		}
+		res = InstallResult{Package: ref, From: p.Version, To: version, Command: cmd.Args}
+	} else {
+		// Not installed: this is a new package, resolved through its registry
+		// rather than through the machine's inventory.
+		var code int
+		res, cmd, code = env.installNew(ctx, ref, version, errs)
+		if code != ExitOK {
+			return code
+		}
 	}
-	res := InstallResult{Package: ref, From: p.Version, To: version, Command: cmd.Args}
 	if *yes {
 		start := env.Now()
 		out, err := env.Run(cmd)
@@ -995,6 +1389,82 @@ func (env Env) install(args []string) int {
 		return ExitError
 	}
 	return ExitOK
+}
+
+// installNew resolves a ref the machine does not have through its registry and
+// builds the command that installs it. The version is resolved and checked
+// before the command is printed, as for an installed package. It prints its own
+// reason and returns the exit code to use when the ref cannot be resolved.
+func (env Env) installNew(ctx context.Context, ref, version string, errs map[string]string) (InstallResult, *exec.Cmd, int) {
+	res := InstallResult{Package: ref, New: true}
+	source, name, ok := strings.Cut(ref, "/")
+	if !ok {
+		fmt.Fprintf(env.Err, "%q is not source/name, like pipx/ruff\n", ref)
+		return res, nil, ExitError
+	}
+	if !provider.IsSource(source) {
+		fmt.Fprintf(env.Err, "%q is not a source kho knows; try %s\n", source, provider.SourceList())
+		return res, nil, ExitError
+	}
+	manager := provider.ProviderOf(provider.Package{Source: source})
+	// A manager that failed to read may hold the package already, so this is
+	// not the moment to install over it.
+	if why := errs[manager]; why != "" {
+		fmt.Fprintf(env.Err, "%s could not be read: %s\n", source, why)
+		return res, nil, ExitError
+	}
+	if why, ok := env.Skipped[manager]; ok {
+		fmt.Fprintf(env.Err, "%s is not on this machine (%s)\n", source, why)
+		return res, nil, ExitError
+	}
+	p := provider.ProviderNamed(env.Providers, manager)
+	if p == nil {
+		fmt.Fprintf(env.Err, "%s is not on this machine\n", source)
+		return res, nil, ExitError
+	}
+	finder, ok := p.(provider.Finder)
+	if !ok {
+		fmt.Fprintf(env.Err, "kho can't install new %s packages yet\n", source)
+		return res, nil, ExitError
+	}
+	candidate, err := finder.Find(ctx, source, name)
+	if err != nil {
+		fmt.Fprintf(env.Err, "could not find %s in %s: %s\n", name, source, err)
+		return res, nil, ExitError
+	}
+	if candidate.Name == "" {
+		candidate.Name = name
+	}
+	if candidate.Source == "" {
+		candidate.Source = source
+	}
+	if version == "latest" {
+		if candidate.Latest == "" {
+			fmt.Fprintf(env.Err, "no latest version known for %s\n", name)
+			return res, nil, ExitError
+		}
+		version = candidate.Latest
+	}
+	cmd, err := provider.InstallNewCmd(candidate, version)
+	if err != nil {
+		fmt.Fprintln(env.Err, err)
+		return res, nil, ExitError
+	}
+	res.To = version
+	if candidate.Source != "brew" && candidate.Source != "cask" {
+		if err := env.published(ctx, candidate, version); err != nil {
+			if candidate.Source != "go" {
+				fmt.Fprintln(env.Err, err)
+				return res, nil, ExitError
+			}
+			// A Go package path is not a module path, so the proxy may not
+			// list the version kho asked for. go install changes nothing when
+			// that check fails, so the command is the final check.
+			fmt.Fprintf(env.Err, "note: %s; go install is the final check\n", err)
+		}
+	}
+	res.Command = cmd.Args
+	return res, cmd, ExitOK
 }
 
 type RemoveResult struct {

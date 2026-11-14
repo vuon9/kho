@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 ## What it does
 
 - **One list** of the machine's packages, the project's dependencies, and the images they name, with installed and latest versions.
+- **Find and install** a package the machine does not have yet, from the same package managers, without leaving the terminal.
 - **Advisory checks** from [OSV](https://osv.dev) and [skills.sh](https://skills.sh), plus the version that fixes each finding.
 - **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
 - **Explicit changes**: install, upgrade, remove, each showing its command first.
@@ -29,20 +30,22 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## Supported sources
 
-| Tool | Global | Project | What kho reads | Latest version from | Security |
-|---|---|---|---|---|---|
-| Homebrew | ✓ |  | `brew info --json=v2 --installed` | Homebrew | not covered yet |
-| npm | ✓ | ✓ | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
-| Composer | ✓ | ✓ | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
-| pipx | ✓ |  | `pipx list --json` | PyPI | OSV |
-| uv | ✓ | ✓ | `uv tool list`; `uv.lock` | PyPI | OSV |
-| pip |  | ✓ | `requirements*.txt` | PyPI | OSV |
-| Poetry |  | ✓ | `poetry.lock` | PyPI | OSV |
-| Go | ✓ | ✓ | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
-| Cargo |  | ✓ | `Cargo.lock` | crates.io | OSV |
-| mise | ✓ |  | `mise ls --json`, `mise outdated` | mise | not covered yet |
-| Agent skills | ✓ |  | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
-| Docker images | ✓ | ✓ | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
+| Tool | Global | Project | Search | What kho reads | Latest version from | Security |
+|---|---|---|---|---|---|---|
+| Homebrew | ✓ |  | keyword | `brew info --json=v2 --installed` | Homebrew | not covered yet |
+| npm | ✓ | ✓ | keyword | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
+| Composer | ✓ | ✓ | keyword | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
+| pipx | ✓ |  | exact name | `pipx list --json` | PyPI | OSV |
+| uv | ✓ | ✓ | exact name | `uv tool list`; `uv.lock` | PyPI | OSV |
+| pip |  | ✓ |  | `requirements*.txt` | PyPI | OSV |
+| Poetry |  | ✓ |  | `poetry.lock` | PyPI | OSV |
+| Go | ✓ | ✓ | exact path | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
+| Cargo |  | ✓ |  | `Cargo.lock` | crates.io | OSV |
+| mise | ✓ |  | not yet | `mise ls --json`, `mise outdated` | mise | not covered yet |
+| Agent skills | ✓ |  | not yet | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
+| Docker images | ✓ | ✓ |  | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
+
+Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm and Composer search by keyword; pipx and uv resolve an exact name through PyPI, and Go resolves an exact module path. mise and skills are not searchable yet.
 
 kho reads all three, and changes only what is on the machine:
 
@@ -89,7 +92,7 @@ macOS or Linux. Everything else is optional, and kho skips what it can't find:
 
 ## Use it
 
-Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes.
+Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes. On a package manager's panel, `n` opens a quiet search for a package the machine does not have; nothing is asked of a registry until you press `enter`.
 
 <details>
 <summary>Every status, and what it means</summary>
@@ -131,16 +134,17 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 |---|---|
 | `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and known advisories |
 | `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
+| `kho search <query...> [--source brew,npm] [--limit N] [--json]` | find packages this machine does not have |
 | `kho show <source>/<name> [--json]` | one package, with every advisory |
-| `kho install <source>/<name>@<version\|latest> [--yes] [--json]` | upgrade or downgrade one package |
+| `kho install <source>/<name>@<version\|latest> [--yes] [--json]` | install a new package, or upgrade or downgrade one |
 | `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
 | `kho history [--json] [--changes] [-n N]` | the commands kho ran, newest first |
 | `kho list` | every package as JSON |
 | `kho version`, `kho help` | the version, and every command |
 
-`<source>` is where kho read the package on the machine: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them.
+`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm` and `composer` answer keywords, and `pipx`, `uv` and `go` answer an exact name or path.
 
-`kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
+`kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
 <details>
 <summary>Uninstalling with <code>kho remove</code></summary>
@@ -196,7 +200,7 @@ kho check --project . --prod-only --json
 
 ## What leaves your machine
 
-kho changes nothing until you confirm. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
+kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
 
 kho uses your GitHub token only for GitHub's API. It keeps the token in memory and never stores or prints it.
 
@@ -206,11 +210,11 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 | Where | What it learns | Asked by |
 |---|---|---|
 | OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles | kho |
-| PyPI (`pypi.org`) | names of pipx and uv packages, and of a project's direct Python dependencies | kho |
+| PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name searches, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
 | GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes | kho |
 | skills.sh | skill names and their repositories | kho |
-| npm registry | names of global npm packages, and of a project's direct npm dependencies | `npm outdated`, `npm view`, and kho for projects |
+| npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho for projects and search |
 | Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |
 | crates.io | names of a project's direct Rust crates | kho |
 | mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |

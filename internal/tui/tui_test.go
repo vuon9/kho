@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg:
+		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -1995,9 +1995,9 @@ func TestFooter(t *testing.T) {
 		keys []string
 		want string
 	}{
-		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ select  tab panel  [ ] tabs  enter its advisories  D remove  i v a tabs  s sort  f status  / filter  w home  ? help"},
-		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A all agents  ? help"},
-		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A installed only  ? help"},
+		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ select  tab panel  [ ] tabs  enter its advisories  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  ? help"},
+		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  A all agents  ? help"},
+		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  A installed only  ? help"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
