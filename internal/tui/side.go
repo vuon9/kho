@@ -614,6 +614,9 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		}
 		lines = append(lines, row("  "+pad(printable(r.Version), verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
 	}
+	if m.isCandidate(p) && (p.Source == "brew" || p.Source == "cask") && len(v.val) > 1 && p.Latest != "" {
+		lines = append(lines, line{text: faint().Render(" Homebrew installs only " + printable(p.Latest) + "; older rows are its source repo's releases.")})
+	}
 	return lines
 }
 

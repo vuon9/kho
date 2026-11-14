@@ -480,8 +480,9 @@ func TestCandidateSidebar(t *testing.T) {
 			shows: []string{"status    installed as brew/focus 1.1.1"}},
 		{id: "Versions lists the releases to choose from", rail: "npm", query: "yaml", keys: []string{"v"},
 			shows: []string{"VERSION", "DATE", "SECURITY", "2.8.1", "2.7.0"}},
-		{id: "a formula shows only the version Homebrew can install", rail: "brew", query: "yq", keys: []string{"v"},
-			shows: []string{"0.2.94"}, lacks: []string{"0.2.89"}},
+		{id: "a formula lists its source releases and says Homebrew installs only one",
+			rail: "brew", query: "yq", keys: []string{"v"},
+			shows: []string{"0.2.94", "0.2.89", "Homebrew installs only"}},
 		{id: "Security lists what affects the newest version", rail: "npm", query: "yaml", keys: []string{"a"},
 			setup: func() {
 				fetchHistory = func(_ context.Context, _, name string) ([]vuln.Advisory, error) {
@@ -542,6 +543,8 @@ func TestCandidateConfirm(t *testing.T) {
 		{id: "the newest version of a formula", rail: "brew", query: "yq", keys: []string{"v", "enter"},
 			title: "＋ Install yq?", shows: []string{"yq  not installed → 0.2.94", "brew formula · homebrew/core",
 				"runs  brew install --formula yq", "y run it   n cancel"}, lacks: []string{"not the newest"}},
+		{id: "Homebrew refuses anything but the newest", rail: "brew", query: "yq", keys: []string{"v", "j", "enter"},
+			title: "Can't install yq", shows: []string{"Homebrew can only install the newest version, 0.2.94"}, lacks: []string{"y run it"}},
 		{id: "an older npm version is allowed, with a nudge", rail: "npm", query: "yaml", keys: []string{"v", "j", "enter"},
 			title: "＋ Install yaml?", shows: []string{"not the newest, latest is 2.8.1", "npm global",
 				"runs  npm install -g yaml@2.7.0"}},

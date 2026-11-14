@@ -1113,23 +1113,11 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	prov, key := m.provider(providerOfSource(p.Source)), cacheKey(p)
 	var cmds []tea.Cmd
 	if prov != nil && m.activeTab() == tabVersions && m.versions[key] == nil {
-		if p.Source == "brew" || p.Source == "cask" {
-			// Homebrew can only install the newest version its formula or cask
-			// names. Its source repo's releases are another project's version
-			// numbers, so listing them would offer versions the install
-			// refuses.
-			var rels []provider.Release
-			if p.Latest != "" {
-				rels = []provider.Release{{Version: p.Latest, URL: p.Homepage}}
-			}
-			m.versions[key] = &lazy[[]provider.Release]{val: rels, done: true}
-		} else {
-			m.versions[key] = &lazy[[]provider.Release]{}
-			cmds = append(cmds, func() tea.Msg {
-				rels, err := prov.Versions(context.Background(), p)
-				return versionsMsg{key, rels, err}
-			})
-		}
+		m.versions[key] = &lazy[[]provider.Release]{}
+		cmds = append(cmds, func() tea.Msg {
+			rels, err := prov.Versions(context.Background(), p)
+			return versionsMsg{key, rels, err}
+		})
 	}
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	hkey := eco + "/" + name

@@ -375,8 +375,9 @@ Candidate Info tab, with the installation-only parts switched off:
 Versions: the published versions, newest first, with the same SECURITY column
 the installed package's Versions tab has. `enter` on a version opens the install
 confirm, so the version is chosen here. For a Homebrew formula or cask the list
-is just the newest installable version, because Homebrew cannot install anything
-else and its source repo's releases are a different project's version numbers.
+is its source repo's releases, with a note that Homebrew installs only the
+newest: older rows still open their changelog, and installing one shows the
+existing Homebrew refusal.
 
 Security: the advisories that affect the newest version, with the same detail
 panel an installed package has. The per-version view is the SECURITY column in
@@ -670,10 +671,10 @@ Small choices made while building, none of which changes the shape:
   rather than a tag at the end, so a narrow panel never loses which manager a
   row belongs to. A cask in the brew panel reads `cask/firefox`; every row in
   All carries one.
-- A Homebrew formula or cask candidate lists only the newest installable version
-  in Versions. Its GitHub releases are another project's version numbers, and
-  Homebrew refuses anything but the newest, so listing them offered versions
-  that could not be installed.
+- A Homebrew formula or cask candidate lists its source repo's releases, as an
+  installed formula does, with a note that Homebrew installs only the newest.
+  That keeps the version history and changelog readable; picking an older row
+  still shows the existing Homebrew refusal.
 - `notSearched` in the CLI names the ready managers that resolve an exact name
   only (pipx, uv, go). mise and skills are deferred rather than unsearchable, so
   they are not named there; asking for one with `--source` is a usage error.
