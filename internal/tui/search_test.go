@@ -972,3 +972,23 @@ func ansiLines(lines []string) []string {
 	}
 	return out
 }
+
+// The title and the status bar carry the spinner while a search runs, and the
+// status bar names the lookup when opening a result resolves its version.
+func TestSearchShowsItsSpinner(t *testing.T) {
+	m, _ := searchable(t)
+	m = searchRail(t, m, "brew")
+	m.search = &searchState{mode: modeResults, scope: m.curRow().key, busy: true,
+		asks: []string{"brew"}, answered: map[string]bool{}, errs: map[string]string{}}
+	spin := ansi.Strip(m.spin())
+	if got := ansi.Strip(m.searchTitle()); !strings.Contains(got, "searching") || !strings.Contains(got, spin) {
+		t.Errorf("title %q lacks the spinner %q", got, spin)
+	}
+	if got := ansi.Strip(m.searchStatusBar()); !strings.Contains(got, "searching brew") || !strings.Contains(got, spin) {
+		t.Errorf("status %q lacks the spinner %q", got, spin)
+	}
+	m.search.busy, m.search.finding = false, true
+	if got := ansi.Strip(m.searchStatusBar()); !strings.Contains(got, "resolving the newest version") {
+		t.Errorf("resolving status %q", got)
+	}
+}

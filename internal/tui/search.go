@@ -430,11 +430,11 @@ func (m model) searchTitle() string {
 	title := icon(r.icon) + " " + r.name + " · search · "
 	switch {
 	case st.busy && len(st.rows) == 0:
-		return title + "searching…"
+		return title + m.spin() + " searching…"
 	case st.busy && r.kind == rowAll:
-		return fmt.Sprintf("%s%d of %d sources answered", title, m.searchAnswers(), len(st.asks))
+		return fmt.Sprintf("%s%s %d of %d sources answered", title, m.spin(), m.searchAnswers(), len(st.asks))
 	case st.busy:
-		return title + "searching…"
+		return title + m.spin() + " searching…"
 	}
 	return fmt.Sprintf("%s%d results", title, len(st.rows))
 }
@@ -448,6 +448,10 @@ func (m model) searchStatusBar() string {
 	switch {
 	case st.busy:
 		right = append(right, m.spin()+faint().Render(" searching "+strings.Join(m.searchPending(), ", ")+" "))
+	case st.finding:
+		// Opening a result reads its newest version when the search did not
+		// carry one; the title still says the result count.
+		right = append(right, m.spin()+faint().Render(" resolving the newest version "))
 	case len(st.errs) > 0:
 		for _, name := range sortedErrKeys(st.errs) {
 			right = append(right, red().Render("⚠ "+name+": ")+faint().Render(shortReason(st.errs[name]))+" ")

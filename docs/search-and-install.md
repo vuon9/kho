@@ -409,8 +409,9 @@ side carries the spinner and any short source error.
 **Prompt, one character.** Enter does not fetch. The bar adds
 `type one more character`.
 
-**Results, searching.** The title reads `🍺 brew · search · searching…`, and
-rows appear when the source answers. A first search shows `searching brew…` in
+**Results, searching.** The title reads `🍺 brew · search · ⡿ searching…`,
+with the spinner in the status bar beside it, and rows appear when the source
+answers. A first search shows `searching brew…` in
 the body; refining an existing query keeps the old rows until the new answer
 replaces them. The status bar's right side shows the spinner with the source
 name. The query stays in the bottom bar. On All, the title counts the sources
