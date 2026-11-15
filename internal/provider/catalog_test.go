@@ -218,7 +218,7 @@ func TestSearchCapabilities(t *testing.T) {
 		}
 		return out
 	}
-	if got, want := names(Searchers(All())), []string{"brew", "npm", "composer", "go", "skills"}; !reflect.DeepEqual(got, want) {
+	if got, want := names(Searchers(All())), []string{"brew", "npm", "composer", "pipx", "uv", "go", "skills"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("searchers %v, want %v", got, want)
 	}
 	if got, want := names(Finders(All())), []string{"brew", "npm", "composer", "pipx", "uv", "go", "skills"}; !reflect.DeepEqual(got, want) {

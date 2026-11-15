@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1118,6 +1120,9 @@ func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
 func TestSkillsSearchAndInstall(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "skills", "pdf")
+	docDir := t.TempDir()
+	os.WriteFile(filepath.Join(docDir, "SKILL.md"), []byte("---\nname: pdf\n---\n# PDF\nUse it for documents.\n"), 0o644)
+	m.search.rows[0].Path = docDir
 	if sc := screen(m); !strings.Contains(sc, "skills/pdf") {
 		t.Fatalf("the skill did not come back:\n%s", sc)
 	}

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,7 +153,11 @@ func resolveGoModule(ctx context.Context, target string) (module, version, repoU
 // searchGitHubRepos asks GitHub for Go repositories matching query, most
 // starred first.
 func searchGitHubRepos(ctx context.Context, query string, n int) ([]githubRepository, error) {
-	q := url.QueryEscape(query + " language:go")
+	return searchGitHubReposLang(ctx, query, "go", n)
+}
+
+func searchGitHubReposLang(ctx context.Context, query, language string, n int) ([]githubRepository, error) {
+	q := url.QueryEscape(query + " language:" + language)
 	var raw json.RawMessage
 	path := "search/repositories?q=" + q + "&sort=stars&order=desc&per_page=" + strconv.Itoa(n)
 	if err := githubGet(ctx, path, &raw); err != nil {
@@ -202,10 +207,14 @@ func lookupGoModule(ctx context.Context, module string) (goModuleInfo, error) {
 	return goModuleInfo{Version: r.Version, RepoURL: r.Origin.URL}, nil
 }
 
-// fetchGoModFile reads a repository's module path from its root go.mod. A
-// repository without one is skipped with no error.
-func fetchGoModFile(ctx context.Context, repo string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://raw.githubusercontent.com/"+repo+"/HEAD/go.mod", nil)
+// errRepoFileNotFound says a repository has no such file, which is not an
+// error for a best-effort search.
+var errRepoFileNotFound = errors.New("no such repo file")
+
+// fetchRepoFile reads one file from a repository's default branch.
+func fetchRepoFile(ctx context.Context, repo, file string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://raw.githubusercontent.com/"+repo+"/HEAD/"+file, nil)
 	if err != nil {
 		return "", err
 	}
@@ -217,16 +226,29 @@ func fetchGoModFile(ctx context.Context, repo string) (string, error) {
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return "", nil
+		return "", errRepoFileNotFound
 	case http.StatusOK:
 	default:
 		return "", githubRateHint(fmt.Errorf("github raw: %s", resp.Status))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", err
 	}
-	return parseGoModModule(string(body)), nil
+	return string(body), nil
+}
+
+// fetchGoModFile reads a repository's module path from its root go.mod. A
+// repository without one is skipped with no error.
+func fetchGoModFile(ctx context.Context, repo string) (string, error) {
+	data, err := fetchRepoFile(ctx, repo, "go.mod")
+	if errors.Is(err, errRepoFileNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return parseGoModModule(data), nil
 }
 
 func parseGoModModule(data string) string {

@@ -835,7 +835,7 @@ func (m *model) load() tea.Cmd {
 			return versionsMsg{key, rels, err}
 		})
 	}
-	if (tab == tabSkill || tab == tabReadme) && m.docs[key] == nil {
+	if (tab == tabSkill || tab == tabReadme || (tab == tabInfo && p.Source == "skills")) && m.docs[key] == nil {
 		m.docs[key] = &lazy[provider.SkillDoc]{}
 		cmds = append(cmds, func() tea.Msg {
 			doc, err := provider.ReadSkill(p)

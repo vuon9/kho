@@ -507,6 +507,72 @@ type SkillDoc struct {
 	Files  []string
 }
 
+// The reads a candidate skill makes: its repo tree and one file. Tests feed
+// both.
+var (
+	skillRepoTree = fetchGitTreePaths
+	skillRepoFile = fetchRepoFile
+)
+
+// ReadRemoteSkill reads a candidate skill's SKILL.md from its GitHub repo. It
+// finds the file whose folder is the skill's slug, so a repo with several
+// skills loads the one the row names.
+func ReadRemoteSkill(ctx context.Context, p Package) (SkillDoc, error) {
+	if p.Path != "" {
+		return ReadSkill(p)
+	}
+	if p.Repo == "" {
+		return SkillDoc{}, errors.New("this skill has no repository to read from")
+	}
+	paths, err := skillRepoTree(ctx, p.Repo)
+	if err != nil {
+		return SkillDoc{}, err
+	}
+	file := skillDocPath(paths, p.Entry)
+	if file == "" {
+		return SkillDoc{}, fmt.Errorf("no SKILL.md for %s in %s", p.Name, p.Repo)
+	}
+	data, err := skillRepoFile(ctx, p.Repo, file)
+	if err != nil {
+		return SkillDoc{}, err
+	}
+	var doc SkillDoc
+	doc.Meta, doc.Body = frontMatter(data)
+	return doc, nil
+}
+
+// skillDocPath picks the SKILL.md whose folder name is the skill slug, or the
+// only SKILL.md in the repo when there is one.
+func skillDocPath(paths []string, slug string) string {
+	var root, match, only string
+	count := 0
+	for _, p := range paths {
+		if p != "SKILL.md" && !strings.HasSuffix(p, "/SKILL.md") {
+			continue
+		}
+		count++
+		if p == "SKILL.md" {
+			root = p
+			continue
+		}
+		dir := path.Base(path.Dir(p))
+		if slug != "" && strings.EqualFold(dir, slug) {
+			match = p
+			continue
+		}
+		only = p
+	}
+	switch {
+	case root != "":
+		return root
+	case match != "":
+		return match
+	case count == 1:
+		return only
+	}
+	return ""
+}
+
 func ReadSkill(p Package) (SkillDoc, error) {
 	var doc SkillDoc
 	if p.Path == "" {

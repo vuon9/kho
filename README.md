@@ -35,8 +35,8 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | Homebrew | ✓ |  | keyword | `brew info --json=v2 --installed` | Homebrew | not covered yet |
 | npm | ✓ | ✓ | keyword | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
 | Composer | ✓ | ✓ | keyword | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
-| pipx | ✓ |  | exact name | `pipx list --json` | PyPI | OSV |
-| uv | ✓ | ✓ | exact name | `uv tool list`; `uv.lock` | PyPI | OSV |
+| pipx | ✓ |  | keyword, or exact name | `pipx list --json` | PyPI | OSV |
+| uv | ✓ | ✓ | keyword, or exact name | `uv tool list`; `uv.lock` | PyPI | OSV |
 | pip |  | ✓ |  | `requirements*.txt` | PyPI | OSV |
 | Poetry |  | ✓ |  | `poetry.lock` | PyPI | OSV |
 | Go | ✓ | ✓ | keyword, or exact path | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
@@ -45,7 +45,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | Agent skills | ✓ |  | keyword | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
 | Docker images | ✓ | ✓ |  | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
 
-Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm, Composer, Go and agent skills search by keyword. Go does it through GitHub's repository search, so it is best effort and wants a GitHub token; skills use the skills.sh endpoint the skills CLI's own find calls. pipx and uv resolve an exact name through PyPI, and a Go search also accepts a module or package path, including a pasted pkg.go.dev URL. mise is not searchable yet.
+Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm, Composer, Go, pipx, uv and agent skills search by keyword. Go and Python use GitHub's repository search, so they are best effort and want a GitHub token; Python then keeps the repositories PyPI actually publishes. Skills use the skills.sh endpoint the skills CLI's own find calls. A Go search also accepts a module or package path, including a pasted pkg.go.dev URL, and a Python search accepts a pypi.org project page. mise is not searchable yet. A skill's Info tab also loads its SKILL.md.
 
 kho reads all three, and changes only what is on the machine:
 
@@ -87,7 +87,7 @@ macOS or Linux. Everything else is optional, and kho skips what it can't find:
 - **The package managers you use.** One that isn't installed shows as skipped, not as an error.
 - **docker**, to see which images are on disk, and to pull or remove one.
 - **[trivy](https://trivy.dev)**, to list the CVEs inside an image. It runs when you open an image's Security tab. Install it with `brew install trivy`.
-- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go keyword searches can use up. Go search uses GitHub's repository search, so a token keeps it reliable.
+- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go or Python keyword searches can use up. Both searches use GitHub's repository search, so a token keeps them reliable.
 - **Go 1.27 or later**, only to install with `go install`.
 
 ## Use it
@@ -142,7 +142,7 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 | `kho list` | every package as JSON |
 | `kho version`, `kho help` | the version, and every command |
 
-`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer`, `go` and `skills` answer keywords, and `pipx` and `uv` answer an exact name; a Go query can also be a package or module path.
+`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer`, `go`, `pipx`, `uv` and `skills` answer keywords; a Go query can also be a package or module path, and a Python query can be a pypi.org project page.
 
 `kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
@@ -210,10 +210,10 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 | Where | What it learns | Asked by |
 |---|---|---|
 | OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles | kho |
-| PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name searches, and of a project's direct Python dependencies | kho |
+| PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name lookups, of the Python keyword searches that GitHub finds, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
-| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes; repositories matching a Go keyword search, and their file trees | kho |
-| raw.githubusercontent.com | the `go.mod` of GitHub repositories matching a Go keyword search, for their module paths | kho |
+| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes; repositories matching a Go or Python keyword search, their file trees, and a new skill's SKILL.md | kho |
+| raw.githubusercontent.com | the `go.mod`, `pyproject.toml` or `setup.cfg`/`setup.py` of repos matching a keyword search, and a new skill's SKILL.md | kho |
 | skills.sh | skill names and their repositories; the words you search for | kho |
 | npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho for projects and search |
 | Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |

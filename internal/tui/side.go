@@ -271,7 +271,7 @@ func (m model) topLines(inner int) []line {
 	case tabLinks:
 		return linkLines(m.links)
 	}
-	return m.infoLines(p)
+	return m.infoLines(p, inner)
 }
 
 func (m model) bottomTitle() string {
@@ -335,9 +335,9 @@ func (m model) bottomLines(inner int) []line {
 	return m.depLines(p, inner)
 }
 
-func (m model) infoLines(p provider.Package) []line {
+func (m model) infoLines(p provider.Package, inner int) []line {
 	if m.isCandidate(p) {
-		return m.candidateInfoLines(p)
+		return m.candidateInfoLines(p, inner)
 	}
 	lines := plain(" "+icon(provider.ProviderOf(p))+" "+accent().Render(p.Name)+faint().Render(" · "+p.Source), "")
 	add := func(label, value, url string) {
@@ -390,6 +390,9 @@ func (m model) infoLines(p provider.Package) []line {
 		add("path", p.Path, "")
 	}
 	if p.Source == "skills" {
+		// The SKILL.md is the useful part, so it comes before the long agent
+		// list rather than after it.
+		lines = append(lines, m.skillDocLines(p, inner)...)
 		add("agents", strings.Join(p.Agents, ", "), "")
 	}
 	add("note", p.Note, "")
@@ -855,6 +858,22 @@ func (m model) skillMetaLines(p provider.Package) []line {
 		}
 	}
 	return append(lines, field("files", strings.Join(d.val.Files, "  "), ""))
+}
+
+// skillDocLines draws SKILL.md under a skill's fields, for an installed skill
+// read from its folder or a candidate read from its repo.
+func (m model) skillDocLines(p provider.Package, inner int) []line {
+	lines := []line{{}, {text: " " + accent().Render("📄 SKILL.md")}, {}}
+	d := m.docs[cacheKey(p)]
+	switch {
+	case d == nil || !d.done:
+		return append(lines, plain(m.spin()+faint().Render(" loading…"))...)
+	case d.err != nil:
+		return append(lines, plain(red().Render(" "+d.err.Error()))...)
+	case strings.TrimSpace(d.val.Body) == "":
+		return append(lines, plain(faint().Render(" this SKILL.md has no body"))...)
+	}
+	return append(lines, plain(m.md.render(d.val.Body, inner)...)...)
 }
 
 func (m model) readmeLines(p provider.Package, inner int) []line {

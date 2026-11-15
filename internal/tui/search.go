@@ -931,7 +931,7 @@ func dropLastRune(s string) string {
 // what it is, where it comes from, what would run, and whether the machine
 // already has it another way. Nothing here is read; the fields came with the
 // search or the lookup that opened it.
-func (m model) candidateInfoLines(p provider.Package) []line {
+func (m model) candidateInfoLines(p provider.Package, inner int) []line {
 	lines := plain(" "+icon(providerOfSource(p.Source))+" "+accent().Render(printable(p.Name))+faint().Render(" · "+printable(p.Source)), "")
 	add := func(label, value string) {
 		if value == "" {
@@ -969,6 +969,9 @@ func (m model) candidateInfoLines(p provider.Package) []line {
 	}
 	if runs := m.candidateRuns(p); runs != "" {
 		lines = append(lines, field("runs", runs, ""))
+	}
+	if p.Source == "skills" {
+		lines = append(lines, m.skillDocLines(p, inner)...)
 	}
 	return lines
 }
@@ -1121,6 +1124,13 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	prov, key := m.provider(providerOfSource(p.Source)), cacheKey(p)
 	tab := m.activeTab()
 	var cmds []tea.Cmd
+	if p.Source == "skills" && m.focus == focusSide && m.docs[key] == nil {
+		m.docs[key] = &lazy[provider.SkillDoc]{}
+		cmds = append(cmds, func() tea.Msg {
+			doc, err := provider.ReadRemoteSkill(context.Background(), p)
+			return docMsg{key, doc, err}
+		})
+	}
 	if prov != nil && tab == tabVersions && m.versions[key] == nil {
 		m.versions[key] = &lazy[[]provider.Release]{}
 		cmds = append(cmds, func() tea.Msg {

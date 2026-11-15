@@ -326,6 +326,7 @@ func TestView(t *testing.T) {
 		{id: "n cancels", keys: []string{"l", "v", "enter", "n"}, lacks: []string{"⬆ Upgrade anvil?"}},
 		{id: "links list every agent", keys: []string{"G", "5"}, want: []string{"AGENT", "claude", "🔗 linked", "cursor", "· none", "codex", "≈ shared"}},
 		{id: "skill info shows who sees it", keys: []string{"G"}, want: []string{"🔗 Seen by 2 agents"}},
+		{id: "a skill's SKILL.md loads below its info", keys: []string{"G"}, want: []string{"📄 SKILL.md", "Split the work into tickets."}},
 		{id: "and lists installed agents only, even after A on the Links tab", keys: []string{"G", "5", "A", "i"}, want: []string{"🔗 Seen by 2 agents", "claude", "codex"},
 			lacks: []string{"Goose", "Cline", "not installed"}},
 		{id: "enter on a link asks to remove it", keys: []string{"G", "5", "l", "enter"}, want: []string{"✂ Unlink pathmaker from claude?", "removes  /h/.claude/skills/pathmaker"}},

@@ -52,8 +52,8 @@ Files that matter:
 | brew / cask | `brew search --formula` / `--cask`, text only, no JSON | `brew info --json=v2` works for names that are not installed; desc, homepage, stable version | `brew install [--cask] name`, newest only |
 | npm | `npm search --json --searchlimit=N` | name, description, latest version, homepage/repo, downloads | `npm install -g name@version`, any version |
 | composer | do not shell out: `composer search` loads the project's plugins. Use `packagist.org/search.json?q=` directly | name, description, url, downloads; no version | `composer global require vendor/name:version` |
-| pipx | none. PyPI has no search API, and the HTML search page is not to be scraped | PyPI JSON by exact name, already used by kho | `pipx install name==version` |
-| uv | none | same PyPI JSON | `uv tool install name==version` |
+| pipx | GitHub repository search by keyword, then the project name from `pyproject.toml` or the setup files; keep only what PyPI publishes. Best effort, and rate limited without a token | PyPI JSON for the version, summary and homepage | `pipx install name==version` |
+| uv | same GitHub search, shared with pipx for one query | same PyPI JSON | `uv tool install name==version` |
 | go | GitHub repository search by keyword, then the root `go.mod` for the module path and the tree for main packages. Best effort, and rate limited without a token. pkg.go.dev's `/search?*` is disallowed by its robots.txt, so it is not scraped | module proxy; a package path is resolved by walking its parents to the module | `go install path@version` |
 | mise | `mise search`, text table, no JSON | tool name and description only | `mise install name@v`, but the tool is not on PATH until a config names it; `mise use` writes config |
 | skills | the skills.sh `/api/search` endpoint the skills CLI's find uses (undocumented), JSON | source repo, skill name and slug, install count; no description or version | newest commit only: `npx skills add owner/repo --skill slug -g -y` |
@@ -65,8 +65,12 @@ Notes:
 - npm publishes no rate limit for its search endpoint. Treat 429 as possible.
 - Packagist asks for a `User-Agent` with a contact address and at most 10
   concurrent requests.
-- pipx and uv are exact-name only. There is no official keyword discovery for
-  either of them.
+- PyPI has no search API, and its `/search` page is disabled and disallowed by
+  its robots.txt, as is `/simple/`. A Python keyword search therefore goes
+  through GitHub like Go: find Python repositories, read the package name from
+  `pyproject.toml` or `setup.cfg`/`setup.py`, fall back to the repo name, then
+  keep the ones PyPI publishes. It is best effort, and pipx and uv share one
+  search because they read the same index.
 - Go has no keyword API. A keyword search goes through GitHub's repository
   search, reads each repository's `go.mod` and file tree, and keeps only
   repositories the module proxy serves. A package path inside a module resolves
@@ -83,9 +87,9 @@ Notes:
 
 | # | Question | Decision | State |
 |---|---|---|---|
-| P1 | Which sources in v1 | Discovery for npm, brew/cask, composer, Go (best effort through GitHub) and skills (through skills.sh). Exact-name install for pipx and uv. Defer mise. | decided; Go and skills keyword added in v1.1 |
+| P1 | Which sources in v1 | Discovery for npm, brew/cask, composer, Go (best effort through GitHub), pipx/uv (best effort through GitHub then PyPI) and skills (through skills.sh). Exact-name install for pipx and uv. Defer mise. | decided; Go, Python and skills keyword added in v1.1 |
 | P2 | Command surface | Add `kho search`, extend `kho install` to not-installed refs. Keep `@version` required, `latest` accepted. | decided |
-| P3 | Search scope | Search every ready source by default, `--source` narrows it, the report names what could not be searched, and an explicitly named name-only manager gets an exact-name lookup. Go search accepts a keyword, a module path or a package path; a skill search accepts a keyword or an `owner/repo/skill` path. | decided |
+| P3 | Search scope | Search every ready source by default, `--source` narrows it, and the report names what could not be searched. Go search accepts a keyword, a module path or a package path; Python accepts a keyword or a pypi.org project page; a skill search accepts a keyword or an `owner/repo/skill` path. | decided |
 | P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. A skill's latest is the word `newest`. | decided |
 | P5 | Search JSON | Object `{query, results, notSearched, skipped, errors}`. Exit 0 when a source answered, 1 when all failed, 2 on usage. | decided |
 | P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. A Go package path resolves through its module, so it can be validated before the yes. Skills have no version to choose, so a skill candidate has Info only and `enter` there installs the newest commit. | decided |
@@ -441,9 +445,8 @@ that have answered so far.
   searched brew in 0.4s
 ```
 
-On All, the second line names every manager searched, and a faint third line
-says `pipx and uv install by exact name only`. On an exact-name manager:
-`no package named "zzzz" on PyPI`.
+On All, the second line names every manager searched. A manager with no result
+just contributes none; there are no exact-name-only managers left.
 
 **Results, a source failed.** Rows that came back stay. The status bar's right
 side shows `⚠ brew: <short reason>`. With no rows, the body lists the failure
@@ -573,8 +576,7 @@ $ kho search yaml
 brew/yq        0.2.94  A lightweight and portable command-line YAML processor
 npm/yaml       2.8.1   JavaScript parser and stringifier for YAML
 
-searched brew, cask, npm, composer, go in 0.6s
-pipx and uv cannot search by keyword; install one by exact name, like kho install uv/ruff@latest
+searched brew, cask, npm, composer, pipx, uv, go, skills in 0.6s
 ```
 
 - One row per result, `source/name` first, so the next command can be copied.
@@ -587,10 +589,10 @@ pipx and uv cannot search by keyword; install one by exact name, like kho instal
   same words `kho check` uses.
 - Usage: no query, or a query under 2 characters, exit 2.
 
-Exact names. pipx and uv have no keyword search. With `--source uv` or
-`--source pipx`, the query is treated as an exact name: zero or one row comes
-back. Without `--source`, those managers are listed under `notSearched`. A Go
-query can be a keyword, a module path, a package path, or a pkg.go.dev URL.
+Python. `--source pipx` or `--source uv` asks the shared GitHub and PyPI
+search. A pasted pypi.org project page resolves exactly instead:
+`kho search --source pipx https://pypi.org/project/black/`. A Go query can be a
+keyword, a module path, a package path, or a pkg.go.dev URL.
 
 `kho install` for a package that is not installed:
 
@@ -625,14 +627,14 @@ Search JSON:
       "repo": "mikefarah/yq"
     }
   ],
-  "notSearched": ["pipx", "uv", "go"],
+  "notSearched": [],
   "skipped": {"uv": "uv not on PATH"},
   "errors": {}
 }
 ```
 
-`version` is empty because nothing is installed. `notSearched` names the ready
-managers that cannot search by keyword. `skipped` names the managers this
+`version` is empty because nothing is installed. `notSearched` is empty now
+that every ready manager can search; mise is deferred, not named here. `skipped` names the managers this
 machine does not have, as `check` does. `errors` is keyed by manager.
 
 ## 6. Decision log
@@ -677,8 +679,8 @@ Every UX decision is settled, and every product decision is decided.
 - Hints and no-match text live in the table body; source errors in the status
   bar.
 - CLI: `kho search` for discovery and `kho install` for a new package, with
-  `--json`, the same exit codes as the rest of kho, and `--source` exact-name
-  lookups for the managers that cannot search by keyword.
+  `--json`, the same exit codes as the rest of kho, and `--source` to narrow
+  the search to a manager. Every ready manager can search by keyword now.
 
 ### 6.2 What shipped differently
 
@@ -692,24 +694,31 @@ Small choices made while building, none of which changes the shape:
   installed formula does, with a note that Homebrew installs only the newest.
   That keeps the version history and changelog readable; picking an older row
   still shows the existing Homebrew refusal.
-- `notSearched` in the CLI names the ready managers that resolve an exact name
-  only (pipx, uv). mise is deferred rather than unsearchable, so it is not named
-  there; asking for it with `--source` is a usage error.
+- `notSearched` is empty now that pipx and uv search too; mise is deferred
+  rather than unsearchable, so it is not named there, and asking for it with
+  `--source` is a usage error.
 - A skill candidate is Info only, because skills have no versions: `enter` in
   Info asks to install the newest commit, and the command uses the skill slug
   from the registry. The security line says skills.sh audits come after install.
-- Go keyword search is the one best effort source: GitHub's repository search
-  supplies repositories, then kho reads each root `go.mod` and file tree and
-  keeps the `cmd/<tool>` or root main packages the module proxy can serve. It
-  also normalises a pasted pkg.go.dev URL and walks a package path up to its
-  module, so subpackage tools install. Without a GitHub token it shares the
-  anonymous rate limit, and a rate limited source shows the usual failure line.
+- Info also carries SKILL.md now: an installed skill reads it from its folder,
+  and a new skill reads it from its repo once the row is opened. It sits before
+  the agent list so it is visible without scrolling past every agent.
+- Go keyword search is best effort: GitHub's repository search supplies
+  repositories, then kho reads each root `go.mod` and file tree and keeps the
+  `cmd/<tool>` or root main packages the module proxy can serve. It also
+  normalises a pasted pkg.go.dev URL and walks a package path up to its module,
+  so subpackage tools install. Without a GitHub token it shares the anonymous
+  rate limit, and a rate limited source shows the usual failure line.
+- Python keyword search is best effort in the same way: GitHub repositories
+  supply the candidates, the packaging files supply the PyPI name, and PyPI
+  supplies the version. It also normalises a pasted pypi.org project page.
 - A deferred manager's panel answers `n` with `<manager> can't search yet` and
   stays on the installed list.
 - A name-only lookup that finds nothing (CLI or TUI) is a no-match, not a
   failed source: `kho search --source uv zzzz` exits 0 with no rows.
-- Exact-name errors cannot be told apart from network errors yet, so both read
-  as no match for pipx and uv.
+- Python keyword search depends on GitHub and on a repo naming its PyPI project
+  in its packaging files; a package that does neither is not found. It is best
+  effort, and a missing result is not proof the package does not exist.
 - The search bar says only `search`. Its glyph, cursor and the rule above it use
   the theme's second accent, so the mode reads without naming the manager. The
   installed filter keeps the first accent.
@@ -721,9 +730,9 @@ Small choices made while building, none of which changes the shape:
 ## 7. Build order
 
 1. Provider catalog: `Search` and `Find` for npm, brew/cask and composer, `Find`
-   for pipx, uv and go. Go keyword search through GitHub was added later on top:
-   repository search, root `go.mod`, main-package tree, proxy version. Pure
-   parse tests over captured output.
+   for pipx, uv and go. Keyword search for Go, Python (pipx/uv), and skills was
+   added later on top: repository search, packaging file, registry version, or
+   the skills.sh endpoint. Pure parse tests over captured output.
 2. CLI: `kho search`, install for not-installed refs, the exact-name `--source`
    path. `Usage`, README, `skills/use-kho/SKILL.md`, and the docs test.
 3. TUI: the three panel modes, the candidate sidebar, the confirm, the install

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -201,9 +200,8 @@ func pypiFind(ctx context.Context, source, name string) (Package, error) {
 	if name == "" {
 		return Package{}, fmt.Errorf("no package name given")
 	}
-	var r pypiProject
-	u := pypiSite + "/pypi/" + url.PathEscape(NormalizePyPI(name)) + "/json"
-	if err := getJSON(ctx, u, nil, &r); err != nil {
+	r, err := pyPIProjectDoc(ctx, name)
+	if err != nil {
 		return Package{}, fmt.Errorf("no PyPI package named %s", name)
 	}
 	if r.Info.Version == "" {

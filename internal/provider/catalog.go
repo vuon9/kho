@@ -75,6 +75,8 @@ var (
 	_ Searcher = Npm{}
 	_ Searcher = Composer{}
 	_ Searcher = GoBin{}
+	_ Searcher = Pipx{}
+	_ Searcher = Uv{}
 	_ Searcher = Skills{}
 	_ Finder   = Skills{}
 
