@@ -51,6 +51,9 @@ type Env struct {
 	Scan      func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error)
 	Audits    func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error)
 	History   func(context.Context, string, string) ([]vuln.Advisory, error)
+	// BrewScan runs Homebrew's own vulnerability scan over the installed
+	// formulae. main fills it.
+	BrewScan func(context.Context) (vuln.BrewResult, error)
 	// Run runs an install. It gets the command as built by the provider and
 	// returns its combined output.
 	Run func(*exec.Cmd) (string, error)
@@ -212,7 +215,8 @@ func (env Env) gather(ctx context.Context, latest bool) ([]provider.Package, map
 }
 
 // secure brings the security cache up to date for pkgs: OSV for packages and
-// their known dependencies, skills.sh for skills. refresh ignores the cache.
+// their known dependencies, Homebrew for formulae, skills.sh for skills.
+// refresh ignores the cache.
 func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool) error {
 	var queries []vuln.Query
 	bySource := map[string][]string{}
@@ -249,10 +253,35 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 			errs = append(errs, err)
 		}
 	}
+	if err := env.brew(ctx, pkgs, refresh); err != nil {
+		errs = append(errs, err)
+	}
 	if env.DBPath != "" {
 		env.DB.Save(env.DBPath)
 	}
 	return errors.Join(errs...)
+}
+
+// brew scans the installed formulae with Homebrew's own scanner. A brew too
+// old for `brew vulns` is recorded as a coverage gap, not as an error.
+func (env Env) brew(ctx context.Context, pkgs []provider.Package, refresh bool) error {
+	queries := provider.BrewQueries(pkgs)
+	if len(queries) == 0 || env.BrewScan == nil {
+		return nil
+	}
+	if !refresh && len(env.DB.Stale(queries, env.Now())) == 0 {
+		return nil
+	}
+	result, err := env.BrewScan(ctx)
+	switch {
+	case errors.Is(err, provider.ErrBrewVulnsUnsupported):
+		env.DB.SetBrewUnsupported(err.Error(), env.Now())
+		return nil
+	case err != nil:
+		return fmt.Errorf("brew vulns: %w", err)
+	}
+	env.DB.MergeBrew(result, queries, env.Now())
+	return nil
 }
 
 type Advisory struct {
@@ -405,6 +434,11 @@ func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
 				clear = false
 			}
 		}
+		// Homebrew reports a finding without the ranges OSV uses, so a
+		// finding with no released fix cannot say the newest formula is clear.
+		if p.Source == "brew" && f.FixedIn == "" {
+			clear = false
+		}
 		f.LatestIsClear = &clear
 		if clear && !p.Pinned {
 			f.Fix = fmt.Sprintf("kho install %s/%s@%s --yes", p.Source, p.Name, p.Latest)
@@ -417,6 +451,12 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 	r := Report{Kho: env.Version, CheckedAt: env.Now(), Errors: errs, Skipped: env.Skipped,
 		Vulnerable: []Finding{}, VulnerableDeps: []Finding{}, RiskySkills: []RiskySkill{}, Outdated: []Outdated{}, NotCovered: []string{}}
 	covered := map[string]bool{}
+	brewSeen := false
+	notCovered := func(what string) {
+		if !slices.Contains(r.NotCovered, what) {
+			r.NotCovered = append(r.NotCovered, what)
+		}
+	}
 	for _, p := range pkgs {
 		r.Summary.Packages++
 		if p.Pinned {
@@ -426,13 +466,27 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 			r.Summary.Outdated++
 			r.Outdated = append(r.Outdated, Outdated{p.Source, p.Name, p.Version, p.Latest, p.Pinned})
 		}
-		if q, ok := provider.Query(p); ok {
+		q, osv := provider.Query(p)
+		bq, brew := provider.BrewQuery(p)
+		switch {
+		case osv:
 			covered[p.Source] = true
 			if advs := env.DB.For(q); len(advs) > 0 {
 				r.Vulnerable = append(r.Vulnerable, env.finding(p, advs))
 			}
-		} else if p.Source != "skills" && !slices.Contains(r.NotCovered, p.Source) {
-			r.NotCovered = append(r.NotCovered, p.Source)
+		case brew:
+			brewSeen = true
+			if advs := env.DB.For(bq); len(advs) > 0 && env.coverage(p) == "" {
+				r.Vulnerable = append(r.Vulnerable, env.finding(p, advs))
+			}
+		case p.Source == "skills":
+			// skills.sh answers for skills, not OSV.
+		default:
+			if why := provider.Coverage(p); why != "" {
+				notCovered(p.Source + " (" + why + ")")
+			} else {
+				notCovered(p.Source)
+			}
 		}
 		depHit := false
 		for _, d := range p.Deps {
@@ -451,13 +505,42 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 			r.RiskySkills = append(r.RiskySkills, RiskySkill{p.Name, p.Repo, a.Gen, a.Socket, a.Snyk, vuln.SkillPage(p.Repo, p.Name)})
 		}
 	}
+	if brewSeen {
+		switch note := env.DB.BrewNote(); {
+		case note != "":
+			notCovered("brew (" + note + ")")
+		case !env.DB.BrewScanned():
+			notCovered("brew")
+		default:
+			for _, p := range pkgs {
+				if p.Source != "brew" {
+					continue
+				}
+				if why := env.DB.BrewSkip(p.Name); why != "" {
+					notCovered("brew/" + p.Name + " (" + why + ")")
+				}
+			}
+		}
+	}
 	r.NotCovered = slices.DeleteFunc(r.NotCovered, func(s string) bool { return covered[s] })
 	r.Summary.Vulnerable, r.Summary.RiskySkills = len(r.Vulnerable), len(r.RiskySkills)
 	r.Safe = len(r.Vulnerable) == 0 && len(r.RiskySkills) == 0
-	// Complete is false when a manager was skipped or a source failed, so a
-	// script can tell a full scan from one that only read part of the machine.
-	r.Complete = len(r.Skipped) == 0 && len(r.Errors) == 0
+	// Complete is false when a manager was skipped, a source failed, or
+	// Homebrew could not check every installed formula, so a script can tell a
+	// full scan from one that only read part of the machine.
+	r.Complete = len(r.Skipped) == 0 && len(r.Errors) == 0 && (!brewSeen || env.DB.BrewComplete())
 	return r
+}
+
+// coverage says why kho has no advisories for p, or "" when it asked.
+func (env Env) coverage(p provider.Package) string {
+	if p.Source != "brew" {
+		return provider.Coverage(p)
+	}
+	if note := env.DB.BrewNote(); note != "" {
+		return note
+	}
+	return env.DB.BrewSkip(p.Name)
 }
 
 func (env Env) printJSON(v any) {
@@ -469,7 +552,7 @@ func (env Env) printJSON(v any) {
 func (env Env) check(args []string) int {
 	fs := env.flags("check")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
-	refresh := fs.Bool("refresh", false, "ask OSV and skills.sh again, skipping the cache")
+	refresh := fs.Bool("refresh", false, "ask OSV, Homebrew and skills.sh again, skipping the cache")
 	inProject := fs.Bool("project", false, "check a project's lockfiles, in the folder given or the current one, instead of the machine")
 	prodOnly := fs.Bool("prod-only", false, "with --project, leave out dev dependencies")
 	// A script that branches on the exit code cannot tell a clean scan from a
@@ -724,6 +807,23 @@ func whyIncomplete(r Report) string {
 		reasons = append(reasons, src+" failed: "+r.Errors[src])
 	}
 	if len(reasons) == 0 {
+		reasons = append(reasons, r.NotCovered...)
+	} else {
+		// A skipped manager should not hide the formulae Homebrew could not
+		// check, so name the coverage gaps too, with the formulae counted.
+		brew := 0
+		for _, n := range r.NotCovered {
+			if strings.HasPrefix(n, "brew/") {
+				brew++
+				continue
+			}
+			reasons = append(reasons, n)
+		}
+		if brew > 0 {
+			reasons = append(reasons, fmt.Sprintf("brew (%s not covered)", plural(brew, "formula")))
+		}
+	}
+	if len(reasons) == 0 {
 		return "nothing to read"
 	}
 	return strings.Join(reasons, ", ")
@@ -797,7 +897,7 @@ func (env Env) printReport(r Report) {
 		}
 	}
 	if len(r.NotCovered) > 0 {
-		fmt.Fprintf(w, "\nnot covered by OSV: %s\n", strings.Join(r.NotCovered, ", "))
+		fmt.Fprintf(w, "\nnot covered: %s\n", strings.Join(r.NotCovered, ", "))
 	}
 	if len(r.Skipped) > 0 {
 		var skipped []string
@@ -922,6 +1022,11 @@ func (env Env) show(args []string) int {
 	fmt.Fprintf(env.Out, "%s/%s %s (latest %s)\n%s\n", p.Source, p.Name, p.Version, cmp.Or(p.Latest, "unknown"), p.Desc)
 	for _, a := range d.Advisories {
 		fmt.Fprintf(env.Out, "  %-8s %s  %s (fixed in %s)\n  %s\n", cmp.Or(a.Severity, "UNKNOWN"), a.ID, a.Summary, cmp.Or(a.FixedIn, "no fix yet"), a.URL)
+	}
+	if len(d.Advisories) == 0 {
+		if why := env.coverage(p); why != "" {
+			fmt.Fprintf(env.Out, "not covered: %s\n", why)
+		}
 	}
 	if d.Fix != "" {
 		fmt.Fprintf(env.Out, "fix: %s\n", d.Fix)

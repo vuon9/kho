@@ -20,6 +20,8 @@ type DB struct {
 	// History maps "ecosystem/name" to every advisory the package ever had.
 	History   map[string][]string  `json:"history"`
 	HistoryAt map[string]time.Time `json:"historyAt"`
+	// Brew is the last machine-wide Homebrew scan and what it could not check.
+	Brew Brew `json:"brew"`
 }
 
 // MaxAge is how long a result stays fresh. New advisories appear daily, so
@@ -28,7 +30,7 @@ const MaxAge = 12 * time.Hour
 
 // format changes whenever what kho stores changes, so a cache from an older
 // build is dropped instead of misread.
-const format = 3
+const format = 4
 
 // stored is the shape format holds: each JSON path with the type its value
 // decodes to. formats keeps a checksum of stored for every format, so stored
@@ -52,6 +54,10 @@ var stored = []string{
 	"audits.*.snyk string",
 	"audits.*.socket string",
 	"audits.*.socketAlerts float64",
+	"brew.at string",
+	"brew.complete bool",
+	"brew.note string",
+	"brew.skipped.* string",
 	"checked.* string",
 	"format float64",
 	"history.*[] string",
@@ -61,6 +67,7 @@ var stored = []string{
 
 var formats = map[int]string{
 	3: "21601456804166155faf4d9de5de86a90d6f46b0ca8f263fe6a214cf176ee11c",
+	4: "ea4648fa7adbecb99299174bafb87274fbf1088eda90509b8c7fd62cab810df8",
 }
 
 func NewDB() *DB {

@@ -72,6 +72,7 @@ func main() {
 		Now:         time.Now,
 		Scan:        vuln.Scan,
 		Audits:      vuln.SkillAudits,
+		BrewScan:    provider.ScanBrewVulns,
 		History:     vuln.History,
 		Major:       provider.MajorModule,
 		FindProject: project.Find,
