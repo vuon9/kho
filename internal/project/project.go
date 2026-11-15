@@ -120,6 +120,9 @@ func aboveHome(dir, home string) bool {
 var skipped = map[string]bool{
 	"node_modules": true, "vendor": true, ".venv": true, "venv": true, "target": true,
 	"dist": true, "build": true, "testdata": true, "fixtures": true,
+	// The OS keeps its own data here: caches, app support, containers, never a
+	// project. Reading it costs more than the rest of a home folder together.
+	"Library": true,
 }
 
 type folder struct {

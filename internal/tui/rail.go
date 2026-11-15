@@ -47,7 +47,7 @@ func (m model) railRows() []railRow {
 			rows = append(rows, m.projParts()...)
 		}
 		if len(m.images) > 0 || m.imgBusy {
-			rows = append(rows, railRow{kind: rowImages, name: "images", icon: "docker", key: "project:images"})
+			rows = append(rows, railRow{kind: rowImages, name: "docker", icon: "docker", key: "project:images"})
 		}
 	}
 	return rows

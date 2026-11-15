@@ -443,6 +443,7 @@ func TestFind(t *testing.T) {
 				"proj/build/go.mod":                             goMod,
 				"proj/testdata/go.mod":                          goMod,
 				"proj/fixtures/go.mod":                          goMod,
+				"proj/Library/app/go.mod":                       goMod,
 				"proj/.cache/go.mod":                            goMod,
 			},
 			start:    "proj",
