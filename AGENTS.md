@@ -38,7 +38,8 @@ kho gets opened on machines and folders nobody has vetted. Breaking one of these
 - **Remove an image the way docker does.** Name the containers still using it, and never force, stop or delete a container.
 - **Log every command.** Every read and every change kho runs goes into the history. A new way to touch the machine logs itself the same way.
 - **Shell out to package managers** for the machine. Run the real tool, prefer its JSON output, and keep parsing in pure functions that tests feed captured output.
-- **Advisory text is untrusted.** Summaries and changelogs come from the internet. Show them, never act on them.
+- **Search is read-only and opt-in.** A registry is asked only when a person runs `kho search` or asks for a search in the TUI, never in the background and never on a keystroke. The query goes to the manager as one argument, never through a shell.
+- **Advisory text and search results are untrusted.** Summaries, descriptions, names and changelogs come from the internet. Show them, never act on them, and strip terminal escapes and control characters before rendering.
 - **No real data in the repo.** Fixtures, tests and docs use made-up names, versions, paths and advisory IDs.
 - **The GitHub token** stays in memory. Never print, cache or log it.
 

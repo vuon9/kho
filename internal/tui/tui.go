@@ -146,6 +146,20 @@ type docMsg struct {
 	err error
 }
 
+// skillDocDueMsg says a selected skill has been quiet long enough to read its
+// remote SKILL.md.
+type skillDocDueMsg struct {
+	gen int
+	key string
+}
+
+// skillDocTick is tea.Tick, shortened in tests.
+var skillDocTick = tea.Tick
+
+// skillDocDelay is how long a selected skill waits before its SKILL.md is
+// read, so arrowing through results does not ask GitHub for each row.
+const skillDocDelay = 300 * time.Millisecond
+
 type scanMsg struct {
 	hits       map[string][]string
 	advisories map[string]vuln.Advisory
@@ -224,6 +238,10 @@ type model struct {
 	sideCursor int
 	sideOffset int
 	bodyOffset int
+	// skillDocFor is the skill candidate whose SKILL.md waits for a quiet
+	// moment; skillDocGen drops the timer of a selection that moved on.
+	skillDocFor string
+	skillDocGen int
 
 	sortCol  int
 	sortDesc bool
@@ -256,20 +274,23 @@ type model struct {
 	imgAsk      image.Asker
 	imgStatuses map[string]int
 	filtering   bool
-	showDeps    bool
-	help        bool
-	helpTop     int
-	confirm     *confirm
-	inst        *installing
-	depCursor   int
-	depPop      *depPopup
-	allAgents   bool
-	sel         *textSel
-	railW       int
-	sideW       int
-	split       int
-	resizing    int
-	grab        int
+	// search is the selected machine panel's transient search: nil in the
+	// installed mode, the prompt or results otherwise. It never joins pkgs.
+	search    *searchState
+	showDeps  bool
+	help      bool
+	helpTop   int
+	confirm   *confirm
+	inst      *installing
+	depCursor int
+	depPop    *depPopup
+	allAgents bool
+	sel       *textSel
+	railW     int
+	sideW     int
+	split     int
+	resizing  int
+	grab      int
 
 	version string
 	// dir is the folder kho was opened on, whose project it reads. proj is
@@ -396,7 +417,7 @@ func (m model) scan() tea.Cmd {
 }
 
 func (m model) working() bool {
-	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() ||
+	return len(m.busy) > 0 || m.scanning > 0 || m.projBusy != "" || m.inst.running() || m.searchWorking() ||
 		m.imgBusy || m.anyOf(m.imgTagBusy) || m.anyOf(m.imgScanning) || m.anyOf(m.imgUsersBusy) || m.anyOf(m.advising) ||
 		loading(m.deps) || loading(m.versions) || loading(m.docs)
 }
@@ -589,8 +610,26 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deps[msg.key] = &lazy[[]provider.Dep]{msg.deps, msg.err, true}
 	case versionsMsg:
 		m.versions[msg.key] = &lazy[[]provider.Release]{msg.rels, msg.err, true}
+	case searchMsg:
+		m.gotSearch(msg)
+	case findMsg:
+		m.gotFind(msg)
 	case docMsg:
 		m.docs[msg.key] = &lazy[provider.SkillDoc]{msg.doc, msg.err, true}
+	case skillDocDueMsg:
+		p, ok := m.current()
+		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "skills" ||
+			msg.gen != m.skillDocGen || msg.key != cacheKey(p) {
+			break
+		}
+		if m.docs[msg.key] != nil {
+			break
+		}
+		m.docs[msg.key] = &lazy[provider.SkillDoc]{}
+		cmds = append(cmds, func() tea.Msg {
+			doc, err := provider.ReadRemoteSkill(context.Background(), p)
+			return docMsg{msg.key, doc, err}
+		})
 	case scanMsg:
 		m.scanning--
 		m.secErr = msg.err
@@ -629,8 +668,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
 		case msg.removed:
 			m.notice = msg.name + " is removed"
+		case msg.provider == "skills" && msg.version == provider.SkillNewest:
+			m.notice = msg.name + " is installed"
 		default:
 			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
+		}
+		if msg.err == nil && !msg.removed {
+			// A results row installed from its candidate sidebar becomes an
+			// installed hit at once, before the relist brings the package.
+			m.gotInstalled(msg)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 		if msg.provider == "docker" {
@@ -650,9 +696,12 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "could not open " + msg.url + ": " + msg.err.Error()
 		}
 	case tea.PasteMsg:
-		if m.filtering {
+		switch {
+		case m.filtering:
 			m.setFilter(m.filter() + strings.TrimSpace(msg.Content))
 			m.cursor, m.offset = 0, 0
+		case m.search != nil && (m.search.mode == modePrompt || m.search.editing):
+			m.search.draft += printablePaste(msg.Content)
 		}
 	case tea.KeyPressMsg:
 		cmd, quit := m.press(msg)
@@ -782,6 +831,14 @@ func (m *model) load() tea.Cmd {
 	if !ok {
 		return nil
 	}
+	if !(m.inResults() && m.isCandidate(p) && p.Source == "skills") {
+		m.skillDocFor = ""
+	}
+	if m.inResults() && m.isCandidate(p) {
+		// A candidate reads only what its visible tab needs, like an installed
+		// package; Info stays quiet until the row is opened.
+		return m.loadCandidate(p)
+	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if p.Lockfile != "" {
 		m.deps[key] = &lazy[[]provider.Dep]{val: m.pulledIn(p), done: true}
@@ -813,7 +870,7 @@ func (m *model) load() tea.Cmd {
 			return versionsMsg{key, rels, err}
 		})
 	}
-	if (tab == tabSkill || tab == tabReadme) && m.docs[key] == nil {
+	if (tab == tabSkill || tab == tabReadme || (tab == tabInfo && p.Source == "skills")) && m.docs[key] == nil {
 		m.docs[key] = &lazy[provider.SkillDoc]{}
 		cmds = append(cmds, func() tea.Msg {
 			doc, err := provider.ReadSkill(p)
@@ -902,6 +959,9 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, false
 		}
 	}
+	if m.search != nil {
+		return m.pressSearch(key, msg)
+	}
 	tabs := m.tabs()
 	switch key {
 	case "q":
@@ -928,6 +988,8 @@ func (m *model) press(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		m.focus = min(m.focus+1, focusSide)
 	case "/":
 		m.filtering = true
+	case "n":
+		m.openSearch()
 	case "esc":
 		if m.focus == focusSide && m.sidePart == 1 {
 			m.sidePart = 0
@@ -1133,6 +1195,14 @@ func (m *model) moveSide(key string, step int) {
 		m.moveImageSide(key, step)
 		return
 	}
+	// A skill candidate has only Info, and its install is the newest commit,
+	// so enter there asks the install instead of opening a list.
+	if key == "enter" && m.sidePart == 0 && m.inResults() {
+		if p, ok := m.current(); ok && m.isCandidate(p) && p.Source == "skills" && m.activeTab() == tabInfo {
+			m.askInstall()
+			return
+		}
+	}
 	list := m.sideListLen() >= 0
 	switch {
 	case key == "enter" && list && m.sidePart == 0:
@@ -1259,6 +1329,10 @@ func (m *model) openReleasePage() tea.Cmd {
 func (m *model) clamp() {
 	m.clampHistory()
 	m.keepRail()
+	// Search belongs to the rail row it was opened on: a row switch drops it.
+	if m.search != nil && m.search.scope != m.curRow().key {
+		m.search = nil
+	}
 	m.cursor = max(min(m.cursor, m.rowLen()-1), 0)
 	l := m.layout()
 	m.railTop = m.railTopFor(l.bodyH - 2)
@@ -1322,6 +1396,15 @@ func (m model) current() (provider.Package, bool) {
 }
 
 func (m model) tabs() []int {
+	if p, ok := m.current(); ok && m.isCandidate(p) {
+		// A package that is not installed has nothing to show on Skill,
+		// Readme or Links: those come from an installed skill's files. A skill
+		// has no versions either, so Info is all there is to show.
+		if p.Source == "skills" {
+			return []int{tabInfo}
+		}
+		return []int{tabInfo, tabVersions, tabSecurity}
+	}
 	if p, ok := m.current(); ok && p.Source == "skills" {
 		return []int{tabInfo, tabVersions, tabSkill, tabReadme, tabLinks, tabSecurity}
 	}
@@ -1367,6 +1450,9 @@ func (m model) visible(pkgs []provider.Package) []provider.Package {
 }
 
 func (m model) rows() []provider.Package {
+	if m.inResults() {
+		return m.searchRows()
+	}
 	rows := m.visible(m.rowPkgs(m.curRow()))
 	m.sort(rows)
 	return rows

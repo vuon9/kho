@@ -145,3 +145,45 @@ func (GoBin) Versions(ctx context.Context, p Package) ([]Release, error) {
 	}
 	return withNotes(ctx, p.Repo, rels), nil
 }
+
+// Find resolves an exact Go package path through the module proxy. The proxy
+// knows module paths, so a path inside a module can still fail here; the
+// install command is the final check for those.
+func (GoBin) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "go" {
+		return Package{}, fmt.Errorf("go doesn't serve the %s source", source)
+	}
+	target, ok := goPathQuery(name)
+	if !ok {
+		return Package{}, fmt.Errorf("a Go install needs a package or module path")
+	}
+	module, version, repoURL, err := resolveGoModule(ctx, target)
+	if err != nil {
+		return Package{}, err
+	}
+	return Package{Source: "go", Name: goBinName(target), Latest: version, Origin: module, Entry: target,
+		Repo: githubRepo(repoURL, module)}, nil
+}
+
+// goBinName is the last path segment, or the one before a major version suffix:
+// example.com/tool/v2 installs a binary named tool.
+func goBinName(path string) string {
+	parts := strings.Split(path, "/")
+	base := parts[len(parts)-1]
+	if isMajorSegment(base) && len(parts) > 1 {
+		base = parts[len(parts)-2]
+	}
+	return base
+}
+
+func isMajorSegment(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

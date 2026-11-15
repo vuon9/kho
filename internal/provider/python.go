@@ -151,6 +151,9 @@ func pypiVersions(ctx context.Context, name string) ([]Release, error) {
 
 type pypiProject struct {
 	Info struct {
+		Name        string            `json:"name"`
+		Version     string            `json:"version"`
+		Summary     string            `json:"summary"`
 		ProjectURLs map[string]string `json:"project_urls"`
 		HomePage    string            `json:"home_page"`
 	} `json:"info"`
@@ -174,4 +177,58 @@ func (r pypiProject) releases(name string) ([]Release, string) {
 		urls = append(urls, r.Info.ProjectURLs[k])
 	}
 	return rels, githubRepo(urls...)
+}
+
+// Find looks a Python tool up on PyPI by its exact name. pipx and uv share the
+// index; only the source label differs.
+func (Pipx) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "pipx" {
+		return Package{}, fmt.Errorf("pipx doesn't serve the %s source", source)
+	}
+	return pypiFind(ctx, "pipx", name)
+}
+
+func (Uv) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "uv" {
+		return Package{}, fmt.Errorf("uv doesn't serve the %s source", source)
+	}
+	return pypiFind(ctx, "uv", name)
+}
+
+func pypiFind(ctx context.Context, source, name string) (Package, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Package{}, fmt.Errorf("no package name given")
+	}
+	r, err := pyPIProjectDoc(ctx, name)
+	if err != nil {
+		return Package{}, fmt.Errorf("no PyPI package named %s", name)
+	}
+	if r.Info.Version == "" {
+		return Package{}, fmt.Errorf("PyPI has no published version of %s", name)
+	}
+	return pypiCandidate(r, source, name), nil
+}
+
+// pypiCandidate builds a candidate from a PyPI project document.
+func pypiCandidate(r pypiProject, source, fallback string) Package {
+	display := r.Info.Name
+	if display == "" {
+		display = NormalizePyPI(fallback)
+	}
+	urls := []string{r.Info.HomePage}
+	for _, k := range slices.Sorted(maps.Keys(r.Info.ProjectURLs)) {
+		urls = append(urls, r.Info.ProjectURLs[k])
+	}
+	home := r.Info.HomePage
+	if home == "" {
+		for _, u := range urls {
+			if strings.HasPrefix(u, "http") {
+				home = u
+				break
+			}
+		}
+	}
+	return Package{Source: source, Name: display, Latest: r.Info.Version, Desc: r.Info.Summary,
+		Homepage: home, Repo: githubRepo(urls...), Origin: "pypi.org"}
 }

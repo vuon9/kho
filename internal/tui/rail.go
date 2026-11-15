@@ -81,6 +81,9 @@ func (m *model) setRail(i int) {
 	i = max(min(i, len(rows)-1), 0)
 	if i != m.rail {
 		m.rail, m.cursor, m.offset = i, 0, 0
+		// Search is transient and never carries a query into a panel the
+		// person did not ask about.
+		m.search = nil
 	}
 	m.railKey = rows[i].key
 }

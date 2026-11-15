@@ -161,6 +161,9 @@ func (m model) titleBar() string {
 
 // statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
+	if m.inResults() {
+		return m.searchStatusBar()
+	}
 	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
 		return m.imageStatusBar()
 	}
@@ -256,7 +259,7 @@ func (m model) rowKeys() []string {
 	case m.inProject():
 		pairs = append(pairs, "s", "sort", "f", "status", "d", "deps", "p", "dev", "/", "filter", "w", "home")
 	default:
-		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home")
+		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "status", "/", "filter", "w", "home", "n", "new package")
 	}
 	switch m.activeTab() {
 	case tabVersions:
@@ -279,9 +282,12 @@ func (m model) rowKeys() []string {
 // enterLabel is what enter does where the cursor is: the panel decides, and the
 // footer says so instead of promising one thing for both.
 func (m model) enterLabel() string {
+	p, _ := m.current()
 	switch {
 	case m.focus == focusTable:
 		return "details"
+	case m.inResults() && m.isCandidate(p) && p.Source == "skills" && m.focus == focusSide:
+		return "install it"
 	case m.activeTab() == tabVersions && !m.inProjectPkg():
 		return "install it"
 	case m.activeTab() == tabLinks:
@@ -345,6 +351,20 @@ func (m model) footer() string {
 		line = keys("y", "yes", "n", "no")
 	case pop == popConfirm:
 		line = keys("esc", "close")
+	case m.search != nil && m.search.mode == modePrompt:
+		line = keys("type", "a name", "enter", "search", "esc", "cancel")
+	case m.search != nil && m.search.editing:
+		line = keys("type", "to search", "enter", "run", "esc", "cancel")
+	case m.search != nil:
+		switch m.focus {
+		case focusSide:
+			line = fitKeys(max(m.width-2-reserve, 24), []string{"↑↓", "select", "enter", m.enterLabel(),
+				"i v a", "tabs", "J K", "scroll", "/", "edit", "esc", "back", "?", "help"})
+		case focusRail:
+			line = keys("↑↓", "source", "tab", "panel", "esc", "back", "?", "help")
+		default:
+			line = keys("/", "edit", "↑↓", "select", "enter", "details", "w", "home", "?", "help", "esc", "back")
+		}
 	case m.filtering:
 		line = keys("type", "to filter", "enter", "keep", "esc", "clear")
 	case m.showHistory:
@@ -370,6 +390,9 @@ func (m model) footer() string {
 }
 
 func (m model) tableTitle() string {
+	if m.inResults() {
+		return m.searchTitle()
+	}
 	r := m.curRow()
 	if r.kind == rowImages || r.kind == rowMachineImages {
 		return m.imageTitle()
@@ -405,6 +428,12 @@ type column struct {
 func (m model) tableColumns() []column {
 	inner := m.layout().tableW - 4
 	cols := []column{{colName, 0}, {colSource, 8}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
+	if m.skillScope() {
+		// A skill's versions are short commit hashes, so the repo gets the
+		// room the generic VERSION and LATEST columns do not need.
+		fromW := min(max(inner-10-9-9-11-4, 12), 28)
+		cols = []column{{colName, 0}, {colSource, fromW}, {colVersion, 9}, {colLatest, 9}, {colStatus, 11}}
+	}
 	if inner < 10+9+14+14+12 {
 		cols = []column{{colName, 0}, {colVersion, 10}, {colLatest, 10}, {colStatus, 11}}
 	}
@@ -422,9 +451,13 @@ func (m model) tableColumns() []column {
 }
 
 func (m model) tableLines() []string {
+	if m.inResults() {
+		return m.searchLines()
+	}
 	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
 		return m.imageTableLines()
 	}
+	inner := m.layout().tableW - 2
 	if r := m.curRow(); r.kind == rowPart && len(m.rowPkgs(r)) == 0 {
 		lines := []string{""}
 		for _, lf := range m.partLockfiles(r) {
@@ -436,20 +469,19 @@ func (m model) tableLines() []string {
 			}
 		}
 		if len(lines) > 1 {
-			return lines
+			return append(m.fitBody(lines), m.barRule(inner), m.filterBar())
 		}
 	}
 	if r := m.curRow(); r.kind == rowProvider {
 		name := r.name
 		if err := m.errs[name]; err != nil && len(m.pkgs[name]) == 0 {
-			return []string{"", red().Render(" " + err.Error())}
+			return append(m.fitBody([]string{"", red().Render(" " + err.Error())}), m.barRule(inner), m.filterBar())
 		}
 		if m.busy[name] == "listing" {
-			return []string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}
+			return append(m.fitBody([]string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}), m.barRule(inner), m.filterBar())
 		}
 	}
 	cols := m.tableColumns()
-	inner := m.layout().tableW - 2
 	row := func(cells [5]string) string {
 		var parts []string
 		for _, c := range cols {
@@ -462,6 +494,9 @@ func (m model) tableLines() []string {
 	arrow := "▲"
 	if m.sortDesc {
 		arrow = "▼"
+	}
+	if m.skillScope() {
+		head[colSource] = "FROM"
 	}
 	head[m.sortCol] += arrow
 	lines := []string{"  " + faint().Bold(true).Render(row(head))}
@@ -480,23 +515,79 @@ func (m model) tableLines() []string {
 		if tag := nameTag(p); tag != "" {
 			name += faint().Render(tag)
 		}
-		line := "  " + row([5]string{name, p.Source, ver, p.Latest, m.statusCell(p)})
+		source := p.Source
+		if m.skillScope() {
+			source = skillFrom(p)
+		}
+		line := "  " + row([5]string{name, source, ver, p.Latest, m.statusCell(p)})
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
 		}
 		lines = append(lines, line)
 	}
 	if len(rows) == 0 && len(m.busy) == 0 {
-		empty := "  nothing matches"
-		if m.status() != statusAll && m.filter() == "" {
-			empty = "  ✨ all clear here"
+		switch {
+		case m.filter() != "" && (m.curRow().kind == rowAll || m.curRow().kind == rowProvider):
+			// The installed filter found nothing, so the bridge to the registry
+			// search takes the middle of the table.
+			lines = append(lines, m.searchBridge(inner)...)
+		case m.status() != statusAll && m.filter() == "":
+			lines = append(lines, "", faint().Render("  ✨ all clear here"))
+		default:
+			lines = append(lines, "", faint().Render("  nothing matches"))
 		}
-		lines = append(lines, "", faint().Render(empty))
 	}
-	for len(lines) < m.layout().rows+1 {
+	bar := m.filterBar()
+	if m.inPrompt() {
+		bar = m.searchBar()
+	}
+	return append(m.fitBody(lines), m.barRule(inner), bar)
+}
+
+// fitBody keeps the table body at the rows the table has, so the rule and the
+// bottom bar always fit: a long empty state or a pile of error lines must never
+// clip the input.
+func (m model) fitBody(lines []string) []string {
+	limit := m.layout().rows + 1
+	if len(lines) > limit {
+		lines = lines[:limit]
+	}
+	for len(lines) < limit {
 		lines = append(lines, "")
 	}
-	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+	return lines
+}
+
+// barRule is the line above the bottom bar. A search bar takes the search
+// tone, so it reads as a different input from the installed filter.
+func (m model) barRule(inner int) string {
+	e := fg(th.subtle)
+	if m.search != nil {
+		e = searchTone()
+	}
+	return e.Render(strings.Repeat("─", inner))
+}
+
+// centered puts a styled line in the middle of width, measuring the styles so
+// the padding is right whatever the theme draws.
+func centered(text string, width int) string {
+	return strings.Repeat(" ", max((width-lipgloss.Width(text))/2, 0)) + text
+}
+
+// searchBridge fills the empty table body when the installed filter matches
+// nothing: the way to search the registries sits in the middle where the
+// missing rows would be, and n is lit the way the footer lights its keys.
+func (m model) searchBridge(inner int) []string {
+	hint := []string{
+		faint().Render(fmt.Sprintf("no installed match for %q", m.filter())),
+		accent().Render("n") + faint().Render(" search for a new package"),
+	}
+	lines := make([]string, m.layout().rows)
+	top := max((len(lines)-len(hint))/2, 0)
+	for i, l := range hint {
+		lines[top+i] = centered(l, inner)
+	}
+	return lines
 }
 
 // nameTag follows a project package's name: dev, and the direct package

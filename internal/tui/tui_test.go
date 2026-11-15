@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -175,6 +175,9 @@ func loaded(t *testing.T) model {
 	}
 	unlinkSkill = func(l provider.SkillLink) error { toggled = append(toggled, "unlink "+l.Agent); return nil }
 	now = func() time.Time { return clock }
+	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		return func() tea.Msg { return fn(clock) }
+	}
 	openURL = func(url string) error { opened = append(opened, url); return nil }
 	scanOSV = func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
 		hits := map[string][]string{}
@@ -312,9 +315,12 @@ func TestView(t *testing.T) {
 		{id: "skills show their audits", keys: []string{"G", "a"}, want: []string{"Security audits", "Gen Agent Trust Hub", "Pass", "Snyk", "Warn", "https://www.skills.sh/someone/"}},
 		{id: "skills show SKILL.md", keys: []string{"G", "3"}, want: []string{"description Plan big work", "📄 SKILL.md", "Split the work into tickets."}},
 		{id: "skills show their README", keys: []string{"G", "4"}, want: []string{"Read me first", "How to use it."}, lacks: []string{"📄 SKILL.md"}},
-		{id: "the filter bar sits in the package panel", want: []string{"⌕ / to filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1", "◌ 0", "✓ 1"}},
+		{id: "the filter bar sits in the package panel", // The wider filter box leaves less room for chips at this width; the first
+			// ones still show, and a wider terminal fits them all (images_test).
+			want: []string{"⌕ filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1"}},
 		{id: "the active chip is named in full", keys: []string{"o"}, want: []string{"↑ Outdated 3", "⚠ 1", "All 5"}},
-		{id: "typing shows in the filter bar", keys: []string{"/", "b"}, want: []string{"⌕ b▏"}},
+		{id: "typing shows in the filter bar under the label", keys: []string{"/", "b"}, want: []string{"⌕ filter b▏"}},
+		{id: "kept filter keeps the label", keys: []string{"/", "b", "enter"}, want: []string{"⌕ filter b"}},
 		{id: "long sidebar text wraps instead of being cut", want: []string{"wrap at the very end"}},
 		{id: "enter on a version asks to upgrade", keys: []string{"l", "v", "enter"}, want: []string{"⬆ Upgrade anvil?", "0.2.89 → v0.2.94", "runs  brew upgrade anvil"}},
 		{id: "brew can't go back a version", keys: []string{"l", "v", "j", "j", "enter"}, want: []string{"Can't change anvil", "Homebrew can only install the newest version, 0.2.94"}},
@@ -323,7 +329,8 @@ func TestView(t *testing.T) {
 		{id: "n cancels", keys: []string{"l", "v", "enter", "n"}, lacks: []string{"⬆ Upgrade anvil?"}},
 		{id: "links list every agent", keys: []string{"G", "5"}, want: []string{"AGENT", "claude", "🔗 linked", "cursor", "· none", "codex", "≈ shared"}},
 		{id: "skill info shows who sees it", keys: []string{"G"}, want: []string{"🔗 Seen by 2 agents"}},
-		{id: "and lists installed agents only, even after A on the Links tab", keys: []string{"G", "5", "A", "i"}, want: []string{"🔗 Seen by 2 agents", "claude", "codex"},
+		{id: "a skill's SKILL.md loads below its info", keys: []string{"G"}, want: []string{"📄 SKILL.md", "Split the work into tickets."}},
+		{id: "Info keeps the link count, not the whole agent list", keys: []string{"G", "5", "A", "i"}, want: []string{"🔗 Seen by 2 agents", "📄 SKILL.md"},
 			lacks: []string{"Goose", "Cline", "not installed"}},
 		{id: "enter on a link asks to remove it", keys: []string{"G", "5", "l", "enter"}, want: []string{"✂ Unlink pathmaker from claude?", "removes  /h/.claude/skills/pathmaker"}},
 		{id: "a shared agent has nothing to link", keys: []string{"G", "5", "l", "j", "j", "enter"}, want: []string{"Nothing to link", "codex reads ~/.agents/skills directly,"}},
@@ -715,7 +722,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "an agent that sees the shared copy has nothing to link, since a link would load it twice",
 			link:   provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkMissing, Shared: true, Installed: true},
-			seen:   "🔗 Seen by 1 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:    "OpenCode ≈ shared /h/.config/opencode/skills/pathmaker",
 			detail: at("/h/.config/opencode/skills/pathmaker", "OpenCode already sees it through ~/.agents/skills, so there is nothing to link."),
 			dialog: []string{"Nothing to link", "OpenCode already sees pathmaker through ~/.agents/skills,", "so a link of its own would load it twice."},
@@ -723,7 +730,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "an agent that reads only ~/.agents/skills doesn't see a skill that isn't there",
 			link:   provider.SkillLink{Agent: "codex", Display: "Codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Installed: true},
-			seen:   "🔗 Seen by 0 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:    "Codex · none /h/.agents/skills/pathmaker",
 			detail: at("/h/.agents/skills/pathmaker", "Codex reads only ~/.agents/skills, and this skill isn't there."),
 			dialog: []string{"Nothing to link", "Codex reads only ~/.agents/skills,", "and pathmaker isn't there."},
@@ -731,7 +738,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "and sees one that is",
 			link:   provider.SkillLink{Agent: "codex", Display: "Codex", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true, Installed: true},
-			seen:   "🔗 Seen by 1 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:    "Codex ≈ shared /h/.agents/skills/pathmaker",
 			detail: at("/h/.agents/skills/pathmaker", "Codex reads ~/.agents/skills directly, so it always sees this skill."),
 			dialog: []string{"Nothing to link", "Codex reads ~/.agents/skills directly,", "so it always sees pathmaker."},
@@ -739,7 +746,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "an agent with nothing in its own folder gets a link",
 			link:    provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Cursor · none /h/.cursor/skills/pathmaker",
 			detail:  at("/h/.cursor/skills/pathmaker", "enter links it into Cursor's own folder."),
 			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
@@ -749,7 +756,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "an agent not installed yet gets a link that waits for it, and isn't counted",
 			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing},
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Goose · not installed /h/.config/goose/skills/pathmaker",
 			detail:  at("/h/.config/goose/skills/pathmaker", "Goose isn't installed yet; the link waits for it.", "enter links it into Goose's own folder."),
 			dialog:  []string{"🔗 Link pathmaker into Goose?", "creates  /h/.config/goose/skills/pathmaker", "      →  {real}", "", "y link it   n cancel"},
@@ -759,7 +766,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "a link left for an agent nobody installed says so, and can still be removed",
 			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Own: true},
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Goose · not installed /h/.config/goose/skills/pathmaker",
 			detail:  at("/h/.config/goose/skills/pathmaker", "Goose isn't installed yet.", "points to: /h/.agents/skills/pathmaker", removes),
 			dialog:  unlink("Goose"),
@@ -769,7 +776,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "a harness nobody installed will see the shared copy once installed, and needs no link",
 			link:   provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkMissing, Shared: true},
-			seen:   "🔗 Seen by 0 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:    "Goose · not installed /h/.config/goose/skills/pathmaker",
 			detail: at("/h/.config/goose/skills/pathmaker", "Goose isn't installed yet.", "Goose will see it through ~/.agents/skills once installed, so there is nothing to link."),
 			dialog: []string{"Nothing to link", "Goose will see pathmaker through ~/.agents/skills", "once installed, so a link would load it twice."},
@@ -777,7 +784,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "and one that reads only the shared folder will see it once installed",
 			link:   provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.agents/skills/pathmaker", Kind: provider.LinkNoFolder, Shared: true},
-			seen:   "🔗 Seen by 0 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:    "Goose · not installed /h/.agents/skills/pathmaker",
 			detail: at("/h/.agents/skills/pathmaker", "Goose isn't installed yet.", "Goose reads ~/.agents/skills directly, so it sees this skill once installed."),
 			dialog: []string{"Nothing to link", "Goose reads ~/.agents/skills directly once installed,", "so it will always see pathmaker."},
@@ -785,7 +792,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "a link for a harness nobody installed would load the skill twice once it is",
 			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Own: true, Shared: true},
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Goose · not installed /h/.config/goose/skills/pathmaker",
 			detail:  at("/h/.config/goose/skills/pathmaker", "Goose isn't installed yet.", "points to: /h/.agents/skills/pathmaker", "Goose also reads ~/.agents/skills, so once installed it would load this skill twice.", removes),
 			dialog:  unlink("Goose"),
@@ -796,7 +803,7 @@ func TestLinkStates(t *testing.T) {
 			id:      "a skill whose entry in ~/.agents/skills is a link is linked through the entry, as the CLI does",
 			link:    provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkMissing, Installed: true},
 			atHome:  true,
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Cursor · none /h/.cursor/skills/pathmaker",
 			detail:  at("/h/.cursor/skills/pathmaker", "enter links it into Cursor's own folder."),
 			dialog:  []string{"🔗 Link pathmaker into Cursor?", "creates  /h/.cursor/skills/pathmaker", "      →  ~/.agents/skills/pathmaker", "", "y link it   n cancel"},
@@ -806,7 +813,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "a link can be removed",
 			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker", Own: true, Installed: true},
-			seen:    "🔗 Seen by 1 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:     "Goose 🔗 linked /h/.config/goose/skills/pathmaker",
 			detail:  at("/h/.config/goose/skills/pathmaker", "points to: /h/.agents/skills/pathmaker", removes),
 			dialog:  unlink("Goose"),
@@ -816,7 +823,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "a broken link says so, isn't counted, and can still be removed",
 			link:    provider.SkillLink{Agent: "goose", Display: "Goose", Path: "/h/.config/goose/skills/pathmaker", Kind: provider.LinkSymlink, Installed: true},
-			seen:    "🔗 Seen by 0 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:     "Goose ⚠ broken /h/.config/goose/skills/pathmaker",
 			detail:  at("/h/.config/goose/skills/pathmaker", "This link leads to no SKILL.md, so Goose doesn't load the skill from it.", removes),
 			dialog:  unlink("Goose"),
@@ -827,7 +834,7 @@ func TestLinkStates(t *testing.T) {
 			id: "a link next to the shared copy loads the skill twice",
 			link: provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkSymlink, Target: "/h/.agents/skills/pathmaker",
 				Shared: true, Own: true, Installed: true},
-			seen:    "🔗 Seen by 1 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:     "OpenCode 🔗 linked /h/.config/opencode/skills/pathmaker",
 			detail:  at("/h/.config/opencode/skills/pathmaker", "points to: /h/.agents/skills/pathmaker", "OpenCode also reads ~/.agents/skills, so it loads this skill twice.", removes),
 			dialog:  unlink("OpenCode"),
@@ -837,7 +844,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:      "a broken one there doesn't, though it still sees the shared copy",
 			link:    provider.SkillLink{Agent: "opencode", Display: "OpenCode", Path: "/h/.config/opencode/skills/pathmaker", Kind: provider.LinkSymlink, Shared: true, Installed: true},
-			seen:    "🔗 Seen by 1 agents",
+			seen:    "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:     "OpenCode ⚠ broken /h/.config/opencode/skills/pathmaker",
 			detail:  at("/h/.config/opencode/skills/pathmaker", "This link leads to no SKILL.md, so OpenCode doesn't load the skill from it.", "OpenCode still sees the skill through ~/.agents/skills.", removes),
 			dialog:  unlink("OpenCode"),
@@ -847,7 +854,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "a copied folder stays",
 			link:   provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkCopy, Own: true, Installed: true},
-			seen:   "🔗 Seen by 1 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 1 agents",
 			row:    "Cursor 📁 copy /h/.cursor/skills/pathmaker",
 			detail: at("/h/.cursor/skills/pathmaker", "A copied folder, not a link. kho won't delete it."),
 			dialog: []string{"Nothing to toggle", "/h/.cursor/skills/pathmaker is a folder, not a link.", "kho won't delete it."},
@@ -855,7 +862,7 @@ func TestLinkStates(t *testing.T) {
 		{
 			id:     "a folder with no SKILL.md says so and isn't counted",
 			link:   provider.SkillLink{Agent: "cursor", Display: "Cursor", Path: "/h/.cursor/skills/pathmaker", Kind: provider.LinkCopy, Installed: true},
-			seen:   "🔗 Seen by 0 agents",
+			seen:   "📄 SKILL.md · 🔗 Seen by 0 agents",
 			row:    "Cursor ⚠ no SKILL.md /h/.cursor/skills/pathmaker",
 			detail: at("/h/.cursor/skills/pathmaker", "A folder with no SKILL.md, so Cursor doesn't load the skill from it. kho won't delete it."),
 			dialog: []string{"Nothing to toggle", "/h/.cursor/skills/pathmaker is a folder, not a link.", "kho won't delete it."},
@@ -2031,9 +2038,9 @@ func TestFooter(t *testing.T) {
 		keys []string
 		want string
 	}{
-		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ select  tab panel  [ ] tabs  enter its advisories  D remove  i v a tabs  s sort  f status  / filter  w home  ? help"},
-		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A all agents  ? help"},
-		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  A installed only  ? help"},
+		{"the Info tab says how to open a dependency", pick("tidyup"), "↑↓ select  tab panel  [ ] tabs  enter its advisories  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  ? help"},
+		{"the Links tab offers every agent", pick("pathmaker", "5"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  A all agents  ? help"},
+		{"and after A, the installed ones again", pick("pathmaker", "5", "A"), "↑↓ select  tab panel  [ ] tabs  enter link or unlink  D remove  i v a tabs  s sort  f status  / filter  w home  n new package  A installed only  ? help"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -2638,6 +2645,75 @@ func TestHomeURL(t *testing.T) {
 		t.Run(tt.id, func(t *testing.T) {
 			if got := homeURL(tt.p); got != tt.want {
 				t.Errorf("homeURL = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A skill's Info fields stay put while SKILL.md scrolls in the lower pane.
+func TestSkillInfoScrollsTheDocUnderTheFields(t *testing.T) {
+	m := loaded(t)
+	p := m.pkgs["skills"][0]
+	var body strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&body, "## Section %d\n\nA line of the skill body.\n\n", i)
+	}
+	os.WriteFile(filepath.Join(p.Path, "SKILL.md"), []byte("---\nname: pathmaker\ndescription: Plan big work\n---\n"+body.String()), 0o644)
+	m = press(t, m, "G")
+	sc := screen(m)
+	if !strings.Contains(sc, "version") || !strings.Contains(sc, "Section 0") {
+		t.Fatalf("skill Info lacks its fields or the doc:\n%s", sc)
+	}
+	before := m.bodyOffset
+	m = press(t, m, "J")
+	if m.bodyOffset == before {
+		t.Errorf("J did not scroll the SKILL.md pane, offset stayed %d", before)
+	}
+	sc = screen(m)
+	if !strings.Contains(sc, "version") || !strings.Contains(sc, "path") {
+		t.Errorf("the fields scrolled away:\n%s", sc)
+	}
+	if strings.Contains(sc, "Section 0") {
+		t.Errorf("the doc did not scroll:\n%s", sc)
+	}
+}
+
+// The skills table names the repo a skill came from instead of repeating
+// "skills" in every row.
+func TestSkillsTableNamesSourceRepo(t *testing.T) {
+	m := loaded(t)
+	for i, r := range m.railRows() {
+		if r.kind == rowProvider && r.name == "skills" {
+			m.setRail(i)
+			break
+		}
+	}
+	sc := screen(m)
+	for _, want := range []string{"FROM", "someone/skills"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("skills table lacks %q:\n%s", want, sc)
+		}
+	}
+	if strings.Contains(sc, "SOURCE") {
+		t.Errorf("skills table still says SOURCE:\n%s", sc)
+	}
+}
+
+func TestSkillFrom(t *testing.T) {
+	tests := []struct {
+		id   string
+		p    provider.Package
+		want string
+	}{
+		{"a repo", provider.Package{Source: "skills", Repo: "owner/repo"}, "owner/repo"},
+		{"an origin when repo is empty", provider.Package{Source: "skills", Origin: "owner/repo"}, "owner/repo"},
+		{"a local folder reads local", provider.Package{Source: "skills", Repo: "/work/skills/one"}, "local"},
+		{"nothing known falls back to the source", provider.Package{Source: "skills"}, "skills"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := skillFrom(tt.p); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
 	}

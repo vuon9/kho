@@ -22,7 +22,11 @@ func (m model) sort(rows []provider.Package) {
 		case colName:
 			c = strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 		case colSource:
-			c = cmp.Or(order[provider.ProviderOf(a)]-order[provider.ProviderOf(b)], strings.Compare(a.Source, b.Source))
+			if m.skillScope() {
+				c = strings.Compare(strings.ToLower(skillFrom(a)), strings.ToLower(skillFrom(b)))
+			} else {
+				c = cmp.Or(order[provider.ProviderOf(a)]-order[provider.ProviderOf(b)], strings.Compare(a.Source, b.Source))
+			}
 		case colVersion:
 			c = vuln.Compare(a.Version, b.Version)
 		case colLatest:

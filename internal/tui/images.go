@@ -733,9 +733,12 @@ func (m model) imageTableLines() []string {
 	}
 	head += " " + pad(label(imgColState, "STATE"), stateW)
 	lines := []string{faint().Render(ansi.Truncate(head, inner, "…"))}
+	bar := func() []string {
+		return append(m.fitBody(lines), fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+	}
 	if m.imgErr != nil {
 		lines = append(lines, styled(red(), wrap(m.imgErr.Error(), inner))...)
-		return lines
+		return bar()
 	}
 	if len(rows) == 0 {
 		why := "no images in this project"
@@ -754,7 +757,7 @@ func (m model) imageTableLines() []string {
 			why = fmt.Sprintf("%d images kho could not identify; f shows them", m.hiddenUnverified())
 		}
 		lines = append(lines, faint().Render(" "+why))
-		return lines
+		return bar()
 	}
 	for i, r := range rows {
 		name := pad(ansi.Truncate(r.Image, nameW, "…"), nameW)
@@ -774,10 +777,7 @@ func (m model) imageTableLines() []string {
 		}
 		lines = append(lines, line)
 	}
-	for len(lines) < m.layout().rows+1 {
-		lines = append(lines, "")
-	}
-	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
+	return bar()
 }
 
 // sideBoxFor picks the sidebar the selected row needs: images have their own.

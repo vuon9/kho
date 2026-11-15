@@ -640,7 +640,7 @@ func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
 // then a chip per state with how many it holds.
 func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
-	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
 
 	bar := ansi.Strip(m.filterBar())
 	for _, want := range []string{"⌕", "All ", "⚠", "↑", "◎", "●"} {
@@ -950,5 +950,48 @@ func TestImageStateMarks(t *testing.T) {
 				t.Errorf("table and sidebar say %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// A filter that matches nothing must not hide the filter bar: the bar is the
+// only place to see or clear the query.
+func TestImagesFilterNoMatchKeepsTheBar(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	// The smallest layout kho draws, where a long empty state has clipped the
+	// bar before.
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
+	m = press(t, m, "/", "z", "z")
+	sc := screen(m)
+	for _, want := range []string{"nothing matches", "⌕ filter zz"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("screen lacks %q:\n%s", want, sc)
+		}
+	}
+}
+
+func TestImagesFilterKeepsOnlyMatches(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = press(t, m, "/", "p", "o", "s", "t")
+	sc := screen(m)
+	if !strings.Contains(sc, "postgres:13") {
+		t.Errorf("the match is missing:\n%s", sc)
+	}
+	if strings.Contains(sc, "python:3.9-slim") || strings.Contains(sc, "node:22-alpine") {
+		t.Errorf("a non-match stayed:\n%s", sc)
+	}
+	if !strings.Contains(sc, "⌕ filter post") {
+		t.Errorf("the bar lost the query:\n%s", sc)
+	}
+}
+
+// An error in the image table also leaves the filter bar in place.
+func TestImagesErrorKeepsTheBar(t *testing.T) {
+	m := onImages(t, withImages(t, sampleImages()...))
+	m.imgErr = errors.New("registry down")
+	sc := screen(m)
+	for _, want := range []string{"registry down", "⌕ filter"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("screen lacks %q:\n%s", want, sc)
+		}
 	}
 }

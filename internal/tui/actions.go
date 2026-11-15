@@ -52,11 +52,23 @@ var (
 	unlinkSkill    = provider.UnlinkSkill
 )
 
-// askInstall offers to move the selected package to the selected version.
+// askInstall offers to move the selected package to the selected version, or
+// to install the candidate the search opened.
 func (m *model) askInstall() {
 	p, ok := m.current()
+	if !ok {
+		return
+	}
+	if m.inResults() && m.isCandidate(p) && p.Source == "skills" {
+		m.askInstallNew(p, provider.SkillNewest)
+		return
+	}
 	r, ok2 := at(m.currentVersions(), m.sideCursor)
-	if !ok || !ok2 {
+	if !ok2 {
+		return
+	}
+	if m.isCandidate(p) {
+		m.askInstallNew(p, r.Version)
 		return
 	}
 	version := r.Version

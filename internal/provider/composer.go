@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -175,20 +178,39 @@ func (Composer) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return withNotes(ctx, repo, rels), nil
 }
 
+// packagistVersion is one release in Packagist's p2 document. Fields that
+// repeat the previous version are left out, so the caller carries them forward.
+type packagistVersion struct {
+	Version     string  `json:"version"`
+	Time        *string `json:"time"`
+	Homepage    string  `json:"homepage"`
+	Description string  `json:"description"`
+	// Source is an object, or "__unset" in a later version.
+	Source any `json:"source"`
+}
+
+type packagistMeta struct {
+	Packages map[string][]packagistVersion `json:"packages"`
+}
+
 func parsePackagist(name string, data []byte) ([]Release, string, error) {
-	var meta struct {
-		Packages map[string][]struct {
-			Version  string  `json:"version"`
-			Time     *string `json:"time"`
-			Homepage string  `json:"homepage"`
-			// source is an object, or "__unset" in a later version.
-			Source any `json:"source"`
-		} `json:"packages"`
+	meta, err := parsePackagistMeta(data)
+	if err != nil {
+		return nil, "", err
 	}
+	rels, repo := packagistReleases(name, meta.Packages[name])
+	return rels, repo, nil
+}
+
+func parsePackagistMeta(data []byte) (packagistMeta, error) {
+	var meta packagistMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, "", fmt.Errorf("packagist: %w", err)
+		return packagistMeta{}, fmt.Errorf("packagist: %w", err)
 	}
-	versions := meta.Packages[name]
+	return meta, nil
+}
+
+func packagistReleases(name string, versions []packagistVersion) ([]Release, string) {
 	var rels []Release
 	var date time.Time
 	for _, v := range versions {
@@ -201,10 +223,87 @@ func parsePackagist(name string, data []byte) ([]Release, string, error) {
 		rels = append(rels, Release{Version: v.Version, Date: date, URL: "https://packagist.org/packages/" + name + "#" + v.Version})
 	}
 	newestFirst(rels)
-	if len(versions) == 0 {
-		return rels, "", nil
+	repo := ""
+	if len(versions) > 0 {
+		repo = packagistRepo(versions[0])
 	}
-	src, _ := versions[0].Source.(map[string]any)
+	return rels, repo
+}
+
+func packagistRepo(v packagistVersion) string {
+	src, _ := v.Source.(map[string]any)
 	url, _ := src["url"].(string)
-	return rels, githubRepo(url, versions[0].Homepage), nil
+	return githubRepo(url, v.Homepage)
+}
+
+// packagistHeader names kho to Packagist, which asks public clients to say who
+// they are.
+var packagistHeader = http.Header{"User-Agent": {"kho (https://github.com/vuon9/kho)"}}
+
+// Search finds Composer packages through Packagist's search API. It does not
+// run `composer search`, which would load the current project's plugins.
+func (Composer) Search(ctx context.Context, query string, limit int) ([]Package, error) {
+	limit = searchLimit(limit)
+	u := "https://packagist.org/search.json?q=" + url.QueryEscape(query) + "&per_page=" + strconv.Itoa(limit)
+	var out struct {
+		Results []packagistSearchResult `json:"results"`
+	}
+	if err := getJSON(ctx, u, packagistHeader, &out); err != nil {
+		return nil, err
+	}
+	return parsePackagistSearch(out.Results), nil
+}
+
+// packagistSearchResult is one row of Packagist's search.json response.
+type packagistSearchResult struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Repository  string `json:"repository"`
+}
+
+func parsePackagistSearch(results []packagistSearchResult) []Package {
+	var pkgs []Package
+	for _, r := range results {
+		pkgs = append(pkgs, Package{Source: "composer", Name: r.Name, Desc: r.Description,
+			Homepage: r.URL, Repo: githubRepo(r.Repository), Origin: "packagist.org"})
+	}
+	return pkgs
+}
+
+// Find looks one package up on Packagist, which works for a package the
+// machine does not have.
+func (Composer) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "composer" {
+		return Package{}, fmt.Errorf("Composer doesn't serve the %s source", source)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || !strings.Contains(name, "/") {
+		return Package{}, fmt.Errorf("Composer names look like vendor/name")
+	}
+	var raw json.RawMessage
+	if err := getJSON(ctx, packagistURL(name), packagistHeader, &raw); err != nil {
+		return Package{}, fmt.Errorf("no Packagist package named %s", name)
+	}
+	meta, err := parsePackagistMeta(raw)
+	if err != nil {
+		return Package{}, err
+	}
+	return packagistCandidate(name, meta)
+}
+
+// packagistCandidate builds a candidate from one package's p2 document.
+func packagistCandidate(name string, meta packagistMeta) (Package, error) {
+	versions := meta.Packages[name]
+	rels, repo := packagistReleases(name, versions)
+	latest := newestStable(rels)
+	if latest == "" {
+		return Package{}, fmt.Errorf("no published version of %s", name)
+	}
+	var desc, home string
+	if len(versions) > 0 {
+		desc, home = versions[0].Description, versions[0].Homepage
+	}
+	return Package{Source: "composer", Name: name, Latest: latest, Desc: desc,
+		Homepage: home, Repo: repo, Origin: "packagist.org"}, nil
 }

@@ -17,6 +17,9 @@ import (
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
+// khoUserAgent names kho to public services that ask who is calling.
+const khoUserAgent = "kho (https://github.com/vuon9/kho)"
+
 // fillLatest looks up every package concurrently. A failed lookup leaves that
 // package's latest unknown and says why in its note.
 func fillLatest(ctx context.Context, pkgs []Package, lookup func(context.Context, Package) (string, error)) []Package {
@@ -112,7 +115,7 @@ func folderHashes(ctx context.Context, repo string) (map[string]string, error) {
 }
 
 func githubGet(ctx context.Context, path string, v any) error {
-	header := http.Header{"Accept": {"application/vnd.github+json"}}
+	header := http.Header{"Accept": {"application/vnd.github+json"}, "User-Agent": {khoUserAgent}}
 	if token := githubToken(); token != "" {
 		header.Set("Authorization", "Bearer "+token)
 	}

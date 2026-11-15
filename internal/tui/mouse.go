@@ -62,6 +62,9 @@ func (m model) layout() layout {
 		case m.activeTab() == tabSkill:
 			// SKILL.md's front matter is short; give the body the room.
 			l.topRows = max(min(len(m.topView(l.sideW-2)), l.topRows), 3)
+		case m.activeTab() == tabInfo && m.curIsSkill():
+			// The Info fields stay put; SKILL.md below gets the rest of the pane.
+			l.topRows = max(min(len(m.topView(l.sideW-2)), l.topRows), 3)
 		}
 		l.topRows = max(min(l.topRows, l.bodyH-3-minHalf), minHalf)
 		l.bottomRows = max(l.bodyH-3-l.topRows, 0)
@@ -151,6 +154,15 @@ func (m *model) click(x, y int) tea.Cmd {
 		m.clickHistory(x, r)
 		return nil
 	}
+	if m.search != nil && r == l.bodyH-3 && x >= l.tableX && x < l.sideX {
+		// The bottom bar is the prompt, or the query in results: a click
+		// there starts editing.
+		if m.inResults() {
+			m.search.editing, m.search.draft = true, m.search.query
+		}
+		m.focus = focusTable
+		return nil
+	}
 	m.sel = nil
 	// A border drag fixes every size first, so moving one border takes room
 	// only from the panels on either side of it.
@@ -183,7 +195,17 @@ func (m *model) click(x, y int) tea.Cmd {
 			}
 		}
 	case x < l.sideX:
+		focused := m.focus == focusTable
 		m.focus = focusTable
+		if m.search != nil {
+			if i := m.offset + r - 1; r > 0 && r <= l.rows && i < m.rowLen() {
+				if m.inResults() && i == m.cursor && focused {
+					return m.openResult()
+				}
+				m.cursor = i
+			}
+			return nil
+		}
 		switch {
 		case r == 0:
 			if isImageRow(m.curRow().kind) {

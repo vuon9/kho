@@ -140,6 +140,14 @@ func (m model) hasBottom() bool {
 	if !ok {
 		return false
 	}
+	if m.isCandidate(p) {
+		// A candidate has no dependencies to read, so its Info tab is one
+		// piece, except for a skill: its SKILL.md gets the lower half.
+		if p.Source == "skills" {
+			return true
+		}
+		return m.activeTab() != tabInfo
+	}
 	switch m.activeTab() {
 	case tabReadme:
 		return false
@@ -266,7 +274,7 @@ func (m model) topLines(inner int) []line {
 	case tabLinks:
 		return linkLines(m.links)
 	}
-	return m.infoLines(p)
+	return m.infoLines(p, inner)
 }
 
 func (m model) bottomTitle() string {
@@ -291,13 +299,16 @@ func (m model) bottomTitle() string {
 		return "🔗 Link"
 	}
 	if p.Source == "skills" {
+		if m.isCandidate(p) {
+			return "📄 SKILL.md"
+		}
 		linked := 0
 		for _, l := range installed(m.links) {
 			if l.Sees() {
 				linked++
 			}
 		}
-		return fmt.Sprintf("🔗 Seen by %d agents", linked)
+		return fmt.Sprintf("📄 SKILL.md · 🔗 Seen by %d agents", linked)
 	}
 	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return fmt.Sprintf("🔗 Dependencies · %d", len(d.val))
@@ -324,13 +335,16 @@ func (m model) bottomLines(inner int) []line {
 	case tabLinks:
 		return m.linkDetail(p)
 	}
-	if p.Source == "skills" {
-		return linkLines(installed(m.links))
+	if m.activeTab() == tabInfo && p.Source == "skills" {
+		return m.skillDocView(p, inner)
 	}
 	return m.depLines(p, inner)
 }
 
-func (m model) infoLines(p provider.Package) []line {
+func (m model) infoLines(p provider.Package, inner int) []line {
+	if m.isCandidate(p) {
+		return m.candidateInfoLines(p, inner)
+	}
 	lines := plain(" "+icon(provider.ProviderOf(p))+" "+accent().Render(p.Name)+faint().Render(" · "+p.Source), "")
 	add := func(label, value, url string) {
 		if value == "" {
@@ -380,9 +394,6 @@ func (m model) infoLines(p provider.Package) []line {
 		add("alias", p.Entry, "")
 	default:
 		add("path", p.Path, "")
-	}
-	if p.Source == "skills" {
-		add("agents", strings.Join(p.Agents, ", "), "")
 	}
 	add("note", p.Note, "")
 	if p.Dependency && p.Lockfile == "" {
@@ -446,7 +457,7 @@ func fixFor(advs []vuln.Advisory, version string) string {
 // depList is the dependencies the Info tab lists for ↑↓ to pick from.
 func (m model) depList() []provider.Dep {
 	p, ok := m.current()
-	if !ok || p.Source == "skills" || m.activeTab() != tabInfo {
+	if !ok || p.Source == "skills" || m.isCandidate(p) || m.activeTab() != tabInfo {
 		return nil
 	}
 	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
@@ -580,6 +591,9 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	verW := max(min(inner-36, 22), 10)
 	lines := plain("  " + faint().Bold(true).Render(pad("VERSION", verW)+" "+pad("DATE", 10)+" NOTES  SECURITY"))
 	for _, r := range v.val {
+		if r.Version == "" {
+			continue
+		}
 		date := ""
 		if !r.Date.IsZero() {
 			date = r.Date.Format("2006-01-02")
@@ -598,13 +612,16 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		switch {
 		case affected > 0:
 			tags = append(tags, red().Render(fmt.Sprintf("⚠ %d", affected)))
-		case history && vuln.Compare(r.Version, p.Version) > 0:
+		case history && p.Version != "" && vuln.Compare(r.Version, p.Version) > 0:
 			tags = append(tags, green().Render("✓ safe"))
 		}
-		if provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
+		if p.Version != "" && provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
 			tags = append(tags, pill("installed", th.green))
 		}
-		lines = append(lines, row("  "+pad(r.Version, verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
+		lines = append(lines, row("  "+pad(printable(r.Version), verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))
+	}
+	if m.isCandidate(p) && (p.Source == "brew" || p.Source == "cask") && len(v.val) > 1 && p.Latest != "" {
+		lines = append(lines, line{text: faint().Render(" Homebrew installs only " + printable(p.Latest) + "; older rows are its source repo's releases.")})
 	}
 	return lines
 }
@@ -651,6 +668,18 @@ func (m model) securityEntries() []securityEntry {
 	if !ok {
 		return nil
 	}
+	if m.isCandidate(p) {
+		// A package without an installation has no version of its own, so the
+		// tab lists what affects the newest version the registry knows.
+		version := p.Latest
+		var es []securityEntry
+		for _, a := range m.db.Known(provider.Ecosystem(p), provider.OSVName(p)) {
+			if version == "" || a.Affects(version) {
+				es = append(es, securityEntry{adv: a})
+			}
+		}
+		return es
+	}
 	var es []securityEntry
 	for _, a := range m.vulns[pkgKey(p)] {
 		es = append(es, securityEntry{adv: a})
@@ -662,6 +691,9 @@ func (m model) securityEntries() []securityEntry {
 }
 
 func (m model) securityLines(p provider.Package, inner int) []line {
+	if m.isCandidate(p) {
+		return m.candidateSecurityLines(p, inner)
+	}
 	q, ok := provider.Query(p)
 	if !ok {
 		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
@@ -692,12 +724,50 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+// candidateSecurityLines is the Security tab for a package the machine does
+// not have: the advisories that affect the newest version, with the same
+// detail panel an installed package has.
+func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
+	eco, name := provider.Ecosystem(p), provider.OSVName(p)
+	version := p.Latest
+	if eco == "" {
+		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
+	}
+	hkey := eco + "/" + name
+	if !m.db.HistoryFresh(eco, name, now()) {
+		if m.advising[hkey] || m.scanning > 0 {
+			return plain(" " + m.spin() + faint().Render(" checking advisories…"))
+		}
+		return m.unchecked(p.Name)
+	}
+	es := m.securityEntries()
+	if len(es) == 0 {
+		label := version
+		if label == "" {
+			label = "the newest version"
+		}
+		return plain("", green().Render(" ✓ No known advisories for "+label), faint().Render(" checked "+ago(m.db.HistoryAt[hkey])+" on osv.dev"))
+	}
+	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
+	for _, e := range es {
+		fix := red().Render("no fix yet")
+		if f := e.adv.FixedAfter(version); f != "" {
+			fix = green().Render("≥ " + f)
+		}
+		lines = append(lines, row("  "+severityPill(e.adv.Severity)+" "+pad(e.adv.ID, 20)+" "+fix))
+	}
+	return lines
+}
+
 func (m model) advisoryLines(p provider.Package, inner int) []line {
 	e, ok := at(m.securityEntries(), m.sideCursor)
 	if !ok {
 		return nil
 	}
 	version, latest := p.Version, p.Latest
+	if m.isCandidate(p) {
+		version = p.Latest
+	}
 	if e.dep != "" {
 		_, version, _ = strings.Cut(e.dep, "@")
 		latest = ""
@@ -788,6 +858,25 @@ func (m model) skillMetaLines(p provider.Package) []line {
 		}
 	}
 	return append(lines, field("files", strings.Join(d.val.Files, "  "), ""))
+}
+
+// skillDocView is the SKILL.md body alone, drawn in the scrollable bottom pane
+// under the fixed Info fields.
+func (m model) skillDocView(p provider.Package, inner int) []line {
+	d := m.docs[cacheKey(p)]
+	switch {
+	case d == nil:
+		// The debounce timer is still running, so there is nothing to spin
+		// yet; saying loading is honest until the read starts.
+		return plain(faint().Render(" loading SKILL.md…"))
+	case !d.done:
+		return plain(m.spin() + faint().Render(" loading SKILL.md…"))
+	case d.err != nil:
+		return plain(red().Render(" " + d.err.Error()))
+	case strings.TrimSpace(d.val.Body) == "":
+		return plain(faint().Render(" this SKILL.md has no body"))
+	}
+	return plain(m.md.render(d.val.Body, inner)...)
 }
 
 func (m model) readmeLines(p provider.Package, inner int) []line {
@@ -923,4 +1012,34 @@ func (m model) linkDetail(p provider.Package) []line {
 		say(name + " will see it through ~/.agents/skills once installed, so there is nothing to link.")
 	}
 	return lines
+}
+
+// skillScope says the skills panel is the one showing, installed or searching,
+// so its table can name the source repo instead of repeating "skills".
+func (m model) skillScope() bool {
+	r := m.curRow()
+	return r.kind == rowProvider && r.name == "skills"
+}
+
+// skillFrom is the repo a skill came from. A skill installed from a local
+// folder has a path there instead, which reads as local; the path itself is on
+// Info.
+func skillFrom(p provider.Package) string {
+	repo := p.Repo
+	if repo == "" {
+		repo = p.Origin
+	}
+	switch {
+	case strings.HasPrefix(repo, "/"), strings.HasPrefix(repo, "~"):
+		return "local"
+	case repo != "":
+		return repo
+	}
+	return p.Source
+}
+
+// curIsSkill says the selected package is a skill, installed or candidate.
+func (m model) curIsSkill() bool {
+	p, ok := m.current()
+	return ok && p.Source == "skills"
 }
