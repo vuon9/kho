@@ -1121,12 +1121,28 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	prov, key := m.provider(providerOfSource(p.Source)), cacheKey(p)
 	tab := m.activeTab()
 	var cmds []tea.Cmd
-	if p.Source == "skills" && m.focus == focusSide && m.docs[key] == nil {
-		m.docs[key] = &lazy[provider.SkillDoc]{}
-		cmds = append(cmds, func() tea.Msg {
-			doc, err := provider.ReadRemoteSkill(context.Background(), p)
-			return docMsg{key, doc, err}
-		})
+	if p.Source != "skills" {
+		m.skillDocFor = ""
+	} else if m.docs[key] == nil {
+		switch {
+		case m.focus == focusSide:
+			// Opening the row is explicit, so read at once.
+			m.skillDocFor = ""
+			m.docs[key] = &lazy[provider.SkillDoc]{}
+			cmds = append(cmds, func() tea.Msg {
+				doc, err := provider.ReadRemoteSkill(context.Background(), p)
+				return docMsg{key, doc, err}
+			})
+		case m.skillDocFor != key:
+			// A cursor that lands and stays reads the doc; one that keeps
+			// moving drops its timer instead of asking GitHub for each row.
+			m.skillDocFor = key
+			m.skillDocGen++
+			gen := m.skillDocGen
+			cmds = append(cmds, skillDocTick(skillDocDelay, func(time.Time) tea.Msg {
+				return skillDocDueMsg{gen: gen, key: key}
+			}))
+		}
 	}
 	if prov != nil && tab == tabVersions && m.versions[key] == nil {
 		m.versions[key] = &lazy[[]provider.Release]{}

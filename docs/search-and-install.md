@@ -704,7 +704,8 @@ Small choices made while building, none of which changes the shape:
 - Info carries SKILL.md as its own scroll area: the fields stay fixed in the
   upper half and the markdown fills the lower half, scrolled with `J K` or the
   wheel. An installed skill reads it from its folder; a new skill reads it from
-  its repo once the row is opened. The agent list lives on Links, and Info's
+  its repo after a short pause on the row, or at once when the row is opened. The
+  agent list lives on Links, and Info's
   lower title names the skill and how many agents see it.
 - Go keyword search is best effort: GitHub's repository search supplies
   repositories, then kho reads each root `go.mod` and file tree and keeps the
@@ -728,7 +729,8 @@ Small choices made while building, none of which changes the shape:
 - The empty-filter bridge is centered in the table, with `n` lit as a key,
   rather than a sentence at the left edge.
 - Candidate Versions and Security load when their tab is showing, without an
-  enter first; Info stays quiet until the row is opened.
+  enter first. Info stays quiet until the row is opened, except a skill's
+  SKILL.md, which loads after a 300ms pause so arrowing keeps GitHub quiet.
 
 ## 7. Build order
 

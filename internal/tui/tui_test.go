@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -175,6 +175,9 @@ func loaded(t *testing.T) model {
 	}
 	unlinkSkill = func(l provider.SkillLink) error { toggled = append(toggled, "unlink "+l.Agent); return nil }
 	now = func() time.Time { return clock }
+	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		return func() tea.Msg { return fn(clock) }
+	}
 	openURL = func(url string) error { opened = append(opened, url); return nil }
 	scanOSV = func(_ context.Context, qs []vuln.Query, _ map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
 		hits := map[string][]string{}

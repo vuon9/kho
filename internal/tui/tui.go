@@ -146,6 +146,20 @@ type docMsg struct {
 	err error
 }
 
+// skillDocDueMsg says a selected skill has been quiet long enough to read its
+// remote SKILL.md.
+type skillDocDueMsg struct {
+	gen int
+	key string
+}
+
+// skillDocTick is tea.Tick, shortened in tests.
+var skillDocTick = tea.Tick
+
+// skillDocDelay is how long a selected skill waits before its SKILL.md is
+// read, so arrowing through results does not ask GitHub for each row.
+const skillDocDelay = 300 * time.Millisecond
+
 type scanMsg struct {
 	hits       map[string][]string
 	advisories map[string]vuln.Advisory
@@ -224,6 +238,10 @@ type model struct {
 	sideCursor int
 	sideOffset int
 	bodyOffset int
+	// skillDocFor is the skill candidate whose SKILL.md waits for a quiet
+	// moment; skillDocGen drops the timer of a selection that moved on.
+	skillDocFor string
+	skillDocGen int
 
 	sortCol  int
 	sortDesc bool
@@ -598,6 +616,20 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gotFind(msg)
 	case docMsg:
 		m.docs[msg.key] = &lazy[provider.SkillDoc]{msg.doc, msg.err, true}
+	case skillDocDueMsg:
+		p, ok := m.current()
+		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "skills" ||
+			msg.gen != m.skillDocGen || msg.key != cacheKey(p) {
+			break
+		}
+		if m.docs[msg.key] != nil {
+			break
+		}
+		m.docs[msg.key] = &lazy[provider.SkillDoc]{}
+		cmds = append(cmds, func() tea.Msg {
+			doc, err := provider.ReadRemoteSkill(context.Background(), p)
+			return docMsg{msg.key, doc, err}
+		})
 	case scanMsg:
 		m.scanning--
 		m.secErr = msg.err
@@ -798,6 +830,9 @@ func (m *model) load() tea.Cmd {
 	p, ok := m.current()
 	if !ok {
 		return nil
+	}
+	if !(m.inResults() && m.isCandidate(p) && p.Source == "skills") {
+		m.skillDocFor = ""
 	}
 	if m.inResults() && m.isCandidate(p) {
 		// A candidate reads only what its visible tab needs, like an installed

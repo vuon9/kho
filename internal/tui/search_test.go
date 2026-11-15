@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -145,11 +146,14 @@ func searchable(t *testing.T) (model, *searchStack) {
 		mise: &fake{name: "mise"},
 		skills: &catalogFake{
 			fake: fake{name: "skills"},
-			results: []provider.Package{{
-				Source: "skills", Name: "pdf", Desc: "1200 installs", Latest: provider.SkillNewest,
-				Origin: "acme/skills", Repo: "acme/skills", Entry: "pdf",
-				Homepage: "https://www.skills.sh/acme/skills/pdf",
-			}},
+			results: []provider.Package{
+				{Source: "skills", Name: "pdf", Desc: "1200 installs", Latest: provider.SkillNewest,
+					Origin: "acme/skills", Repo: "acme/skills", Entry: "pdf", Path: skillDocDir(t, "pdf"),
+					Homepage: "https://www.skills.sh/acme/skills/pdf"},
+				{Source: "skills", Name: "pdf-tools", Desc: "800 installs", Latest: provider.SkillNewest,
+					Origin: "acme/skills", Repo: "acme/skills", Entry: "pdf-tools", Path: skillDocDir(t, "pdf-tools"),
+					Homepage: "https://www.skills.sh/acme/skills/pdf-tools"},
+			},
 		},
 	}
 	ps := []provider.Provider{s.brew, s.npm, s.composer, s.pipx, s.gobin, s.mise, s.skills}
@@ -1115,20 +1119,28 @@ func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
 	}
 }
 
+// skillDocDir is a local SKILL.md a fake candidate can read without network.
+func skillDocDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: "+name+"\n---\n# "+name+"\nUse it for documents.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // A skill searches like any other source, and installs from Info because the
 // skills CLI has no version to pick: it always takes the newest commit.
 func TestSkillsSearchAndInstall(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "skills", "pdf")
-	docDir := t.TempDir()
-	os.WriteFile(filepath.Join(docDir, "SKILL.md"), []byte("---\nname: pdf\n---\n# PDF\nUse it for documents.\n"), 0o644)
-	m.search.rows[0].Path = docDir
 	sc := screen(m)
 	if !strings.Contains(sc, "skills/pdf") {
 		t.Fatalf("the skill did not come back:\n%s", sc)
 	}
-	if !strings.Contains(sc, "press enter to read SKILL.md") {
-		t.Errorf("an unopened skill does not say how to read its SKILL.md:\n%s", sc)
+	if !strings.Contains(sc, "Use it for documents.") {
+		t.Fatalf("a paused selection did not load its SKILL.md:\n%s", sc)
 	}
 	m = press(t, m, "enter")
 	sc = screen(m)
@@ -1150,5 +1162,38 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 		if !strings.Contains(flat, want) && !strings.Contains(sc, want) {
 			t.Errorf("confirm lacks %q:\n%s", want, sc)
 		}
+	}
+}
+
+// Moving on before the quiet period ends drops the earlier SKILL.md read, so
+// arrowing through results asks GitHub for the one left selected only.
+func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
+	m, _ := searchable(t)
+	var ticks []func(time.Time) tea.Msg
+	old := skillDocTick
+	t.Cleanup(func() { skillDocTick = old })
+	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		ticks = append(ticks, fn)
+		return nil
+	}
+	m = runSearch(t, m, "skills", "pdf")
+	if len(ticks) != 1 {
+		t.Fatalf("first selection scheduled %d reads, want 1", len(ticks))
+	}
+	first, _ := m.current()
+	firstKey := cacheKey(first)
+	m = press(t, m, "j")
+	second, _ := m.current()
+	secondKey := cacheKey(second)
+	if len(ticks) != 2 {
+		t.Fatalf("second selection scheduled %d reads, want 2", len(ticks))
+	}
+	m = update(t, m, ticks[0](clock))
+	if m.docs[firstKey] != nil {
+		t.Error("the stale selection's SKILL.md was read")
+	}
+	m = update(t, m, ticks[1](clock))
+	if m.docs[secondKey] == nil {
+		t.Error("the selected skill's SKILL.md was not read")
 	}
 }
