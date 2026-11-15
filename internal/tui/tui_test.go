@@ -312,7 +312,7 @@ func TestView(t *testing.T) {
 		{id: "skills show their audits", keys: []string{"G", "a"}, want: []string{"Security audits", "Gen Agent Trust Hub", "Pass", "Snyk", "Warn", "https://www.skills.sh/someone/"}},
 		{id: "skills show SKILL.md", keys: []string{"G", "3"}, want: []string{"description Plan big work", "📄 SKILL.md", "Split the work into tickets."}},
 		{id: "skills show their README", keys: []string{"G", "4"}, want: []string{"Read me first", "How to use it."}, lacks: []string{"📄 SKILL.md"}},
-		{id: "the filter bar sits in the package panel", want: []string{"⌕ / to filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1", "◌ 0", "✓ 1"}},
+		{id: "the filter bar sits in the package panel", want: []string{"⌕ filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1", "◌ 0", "✓ 1"}},
 		{id: "the active chip is named in full", keys: []string{"o"}, want: []string{"↑ Outdated 3", "⚠ 1", "All 5"}},
 		{id: "typing shows in the filter bar", keys: []string{"/", "b"}, want: []string{"⌕ b▏"}},
 		{id: "long sidebar text wraps instead of being cut", want: []string{"wrap at the very end"}},

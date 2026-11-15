@@ -113,7 +113,9 @@ type chipEntry struct {
 // drops the one that is on.
 func (m model) filterBarChips() (string, []chipEntry) {
 	names, icons, counts, active := m.statusChips()
-	query := faint().Render("/ to filter")
+	// The installed box names its job the way the search box names its own, so
+	// the two inputs read alike. Typing replaces the label with the query.
+	query := accent().Render("filter")
 	switch {
 	case m.filtering:
 		query = m.filter() + accent().Render("▏")
