@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.15](https://github.com/vuon9/kho/compare/v0.1.14...v0.1.15) (2026-11-15)
+
+
+### Features
+
+* search and install new packages across every manager ([#56](https://github.com/vuon9/kho/issues/56)) ([5dcc002](https://github.com/vuon9/kho/commit/5dcc002c0c56c63422a970ee8273ae62fbed2ac5))
+
 ## [0.1.14](https://github.com/vuon9/kho/compare/v0.1.13...v0.1.14) (2026-11-14)
 
 
