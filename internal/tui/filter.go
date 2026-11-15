@@ -113,16 +113,7 @@ type chipEntry struct {
 // drops the one that is on.
 func (m model) filterBarChips() (string, []chipEntry) {
 	names, icons, counts, active := m.statusChips()
-	// The installed box names its job the way the search box names its own, so
-	// the two inputs read alike. Typing replaces the label with the query.
-	query := accent().Render("filter")
-	switch {
-	case m.filtering:
-		query = m.filter() + accent().Render("▏")
-	case m.filter() != "":
-		query = m.filter()
-	}
-	head := " " + accent().Render("⌕ ") + pad(query, filterWidth) + " "
+	head := m.filterBox()
 	var chips []chipEntry
 	for i := range names {
 		chips = append(chips, chipEntry{status: i, text: m.chip(names, icons, i, active, counts[i])})
@@ -157,6 +148,21 @@ func (m model) filterBar() string {
 		texts = append(texts, c.text)
 	}
 	return head + strings.Join(texts, " ")
+}
+
+// filterBoxWidth is the keyword box with its filter label in it. The box keeps
+// one width while typing, so the label stays and the chips never move.
+const filterBoxWidth = 22
+
+// filterBox is the bar's head: the word filter, then the query, lit like the
+// search box's own label. A long query keeps its tail, as the search bar does.
+func (m model) filterBox() string {
+	prefix := " " + accent().Render("⌕ filter ")
+	cursor := ""
+	if m.filtering {
+		cursor = accent().Render("▏")
+	}
+	return pad(fitBar(prefix, m.filter(), cursor, "", filterBoxWidth), filterBoxWidth)
 }
 
 const filterWidth = 14

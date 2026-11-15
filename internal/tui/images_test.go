@@ -640,7 +640,7 @@ func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
 // then a chip per state with how many it holds.
 func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
-	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
+	m = update(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
 
 	bar := ansi.Strip(m.filterBar())
 	for _, want := range []string{"⌕", "All ", "⚠", "↑", "◎", "●"} {
