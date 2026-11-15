@@ -1139,8 +1139,10 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 	if !strings.Contains(sc, "skills/pdf") {
 		t.Fatalf("the skill did not come back:\n%s", sc)
 	}
-	if !strings.Contains(sc, "Use it for documents.") {
-		t.Fatalf("a paused selection did not load its SKILL.md:\n%s", sc)
+	for _, want := range []string{"FROM", "acme/skills", "Use it for documents."} {
+		if !strings.Contains(sc, want) {
+			t.Fatalf("skills results lack %q:\n%s", want, sc)
+		}
 	}
 	m = press(t, m, "enter")
 	sc = screen(m)

@@ -2641,3 +2641,44 @@ func TestSkillInfoScrollsTheDocUnderTheFields(t *testing.T) {
 		t.Errorf("the doc did not scroll:\n%s", sc)
 	}
 }
+
+// The skills table names the repo a skill came from instead of repeating
+// "skills" in every row.
+func TestSkillsTableNamesSourceRepo(t *testing.T) {
+	m := loaded(t)
+	for i, r := range m.railRows() {
+		if r.kind == rowProvider && r.name == "skills" {
+			m.setRail(i)
+			break
+		}
+	}
+	sc := screen(m)
+	for _, want := range []string{"FROM", "someone/skills"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("skills table lacks %q:\n%s", want, sc)
+		}
+	}
+	if strings.Contains(sc, "SOURCE") {
+		t.Errorf("skills table still says SOURCE:\n%s", sc)
+	}
+}
+
+func TestSkillFrom(t *testing.T) {
+	tests := []struct {
+		id   string
+		p    provider.Package
+		want string
+	}{
+		{"a repo", provider.Package{Source: "skills", Repo: "owner/repo"}, "owner/repo"},
+		{"an origin when repo is empty", provider.Package{Source: "skills", Origin: "owner/repo"}, "owner/repo"},
+		{"a local folder reads local", provider.Package{Source: "skills", Repo: "/work/skills/one"}, "local"},
+		{"nothing known falls back to the source", provider.Package{Source: "skills"}, "skills"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			if got := skillFrom(tt.p); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

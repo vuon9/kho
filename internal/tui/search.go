@@ -469,6 +469,14 @@ func sortedErrKeys(errs map[string]string) []string {
 // room first, and the source tag goes before a name is cut short.
 func (m model) resultColumns() []column {
 	inner := m.layout().tableW - 4
+	if m.skillScope() {
+		// Skills have no version to show, so the repo takes that room and
+		// tells two skills with the same name apart.
+		statusW := min(max(inner/4, 11), 18)
+		fromW := min(max(inner*2/5, 10), 24)
+		nameW := max(inner-2-fromW-statusW, 8)
+		return []column{{colName, nameW}, {colSource, fromW}, {colStatus, statusW}}
+	}
 	latestW := 8
 	statusW := min(max(inner-2-8-10, 11), 18)
 	nameW := max(inner-2-latestW-statusW, 8)
@@ -488,7 +496,11 @@ func resultRow(cols []column, cells [5]string) string {
 func (m model) searchLines() []string {
 	cols := m.resultColumns()
 	var head [5]string
-	head[colName], head[colLatest], head[colStatus] = "NAME", "LATEST", "STATUS"
+	if m.skillScope() {
+		head[colName], head[colSource], head[colStatus] = "NAME", "FROM", "STATUS"
+	} else {
+		head[colName], head[colLatest], head[colStatus] = "NAME", "LATEST", "STATUS"
+	}
 	lines := []string{"  " + faint().Bold(true).Render(resultRow(cols, head))}
 	rows := m.searchRows()
 	end := min(m.offset+m.layout().rows, len(rows))
@@ -504,7 +516,11 @@ func (m model) searchLines() []string {
 			latest = "?"
 		}
 		var cells [5]string
-		cells[colName], cells[colLatest], cells[colStatus] = name, latest, m.searchStatusCell(p)
+		if m.skillScope() {
+			cells[colName], cells[colSource], cells[colStatus] = name, printable(skillFrom(p)), m.searchStatusCell(p)
+		} else {
+			cells[colName], cells[colLatest], cells[colStatus] = name, latest, m.searchStatusCell(p)
+		}
 		line := "  " + resultRow(cols, cells)
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)

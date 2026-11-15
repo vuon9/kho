@@ -995,6 +995,30 @@ func (m model) linkDetail(p provider.Package) []line {
 	return lines
 }
 
+// skillScope says the skills panel is the one showing, installed or searching,
+// so its table can name the source repo instead of repeating "skills".
+func (m model) skillScope() bool {
+	r := m.curRow()
+	return r.kind == rowProvider && r.name == "skills"
+}
+
+// skillFrom is the repo a skill came from. A skill installed from a local
+// folder has a path there instead, which reads as local; the path itself is on
+// Info.
+func skillFrom(p provider.Package) string {
+	repo := p.Repo
+	if repo == "" {
+		repo = p.Origin
+	}
+	switch {
+	case strings.HasPrefix(repo, "/"), strings.HasPrefix(repo, "~"):
+		return "local"
+	case repo != "":
+		return repo
+	}
+	return p.Source
+}
+
 // curIsSkill says the selected package is a skill, installed or candidate.
 func (m model) curIsSkill() bool {
 	p, ok := m.current()

@@ -428,6 +428,12 @@ type column struct {
 func (m model) tableColumns() []column {
 	inner := m.layout().tableW - 4
 	cols := []column{{colName, 0}, {colSource, 8}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
+	if m.skillScope() {
+		// A skill's versions are short commit hashes, so the repo gets the
+		// room the generic VERSION and LATEST columns do not need.
+		fromW := min(max(inner-10-9-9-11-4, 12), 28)
+		cols = []column{{colName, 0}, {colSource, fromW}, {colVersion, 9}, {colLatest, 9}, {colStatus, 11}}
+	}
 	if inner < 10+9+14+14+12 {
 		cols = []column{{colName, 0}, {colVersion, 10}, {colLatest, 10}, {colStatus, 11}}
 	}
@@ -489,6 +495,9 @@ func (m model) tableLines() []string {
 	if m.sortDesc {
 		arrow = "▼"
 	}
+	if m.skillScope() {
+		head[colSource] = "FROM"
+	}
 	head[m.sortCol] += arrow
 	lines := []string{"  " + faint().Bold(true).Render(row(head))}
 	rows := m.rows()
@@ -506,7 +515,11 @@ func (m model) tableLines() []string {
 		if tag := nameTag(p); tag != "" {
 			name += faint().Render(tag)
 		}
-		line := "  " + row([5]string{name, p.Source, ver, p.Latest, m.statusCell(p)})
+		source := p.Source
+		if m.skillScope() {
+			source = skillFrom(p)
+		}
+		line := "  " + row([5]string{name, source, ver, p.Latest, m.statusCell(p)})
 		if i == m.cursor {
 			line = selected(line, inner, m.focus == focusTable)
 		}

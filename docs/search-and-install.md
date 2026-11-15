@@ -90,7 +90,7 @@ Notes:
 | P1 | Which sources in v1 | Discovery for npm, brew/cask, composer, Go (best effort through GitHub), pipx/uv (best effort through GitHub then PyPI) and skills (through skills.sh). Exact-name install for pipx and uv. Defer mise. | decided; Go, Python and skills keyword added in v1.1 |
 | P2 | Command surface | Add `kho search`, extend `kho install` to not-installed refs. Keep `@version` required, `latest` accepted. | decided |
 | P3 | Search scope | Search every ready source by default, `--source` narrows it, and the report names what could not be searched. Go search accepts a keyword, a module path or a package path; Python accepts a keyword or a pypi.org project page; a skill search accepts a keyword or an `owner/repo/skill` path. | decided |
-| P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. A skill's latest is the word `newest`. | decided |
+| P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. On the skills panel, FROM shows the repo in place of the version. | decided |
 | P5 | Search JSON | Object `{query, results, notSearched, skipped, errors}`. Exit 0 when a source answered, 1 when all failed, 2 on usage. | decided |
 | P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. A Go package path resolves through its module, so it can be validated before the yes. Skills have no version to choose, so a skill candidate has Info only and `enter` there installs the newest commit. | decided |
 | P7 | Advisories | Fetch history when a candidate's Versions or Security tab shows, warn in the confirm, never block. | decided |
@@ -348,7 +348,8 @@ Rows use the machine table's language, squeezed to the panel's width:
 | Column | Shows |
 |---|---|
 | NAME | the name the manager installs, with a faint `source/` prefix when the row's source is not the panel's own (a cask in the brew panel, any source in All) |
-| LATEST | the newest version search returned, or `?` until Versions or enter resolves it |
+| LATEST | the newest version search returned, or `?` until Versions or enter resolves it. On the skills panel this column is FROM instead |
+| FROM | on the skills panel only, the repo the skill comes from, since skills have no version to show. A skill installed from a local folder reads `local` |
 | STATUS | `· not installed`, `✓ installed 2.7.0`, `↑ newer 2.7.0`, `⚑ newer 2.7.0` for a pinned package |
 
 - A name that is already installed still appears in results, marked. Opening
@@ -697,6 +698,9 @@ Small choices made while building, none of which changes the shape:
 - `notSearched` is empty now that pipx and uv search too; mise is deferred
   rather than unsearchable, so it is not named there, and asking for it with
   `--source` is a usage error.
+- Both skill tables name FROM: the installed skills table replaces its repeated
+  SOURCE "skills" with the repo, and the search results replace LATEST with it.
+  Local skills read `local`; their path stays on Info.
 - A skill candidate is Info only, because skills have no versions: `enter` in
   Info asks to install the newest commit, and the command uses the skill slug
   from the registry. The security line says skills.sh audits come after install.
