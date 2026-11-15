@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.16](https://github.com/vuon9/kho/compare/v0.1.15...v0.1.16) (2026-11-15)
+
+
+### Features
+
+* check Homebrew formulae with Homebrew's own scan ([#60](https://github.com/vuon9/kho/issues/60)) ([00e3930](https://github.com/vuon9/kho/commit/00e39303efadedc8062a6a1f2e2bfc4faaa18122))
+
 ## [0.1.15](https://github.com/vuon9/kho/compare/v0.1.14...v0.1.15) (2026-11-15)
 
 
