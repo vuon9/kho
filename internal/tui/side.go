@@ -575,12 +575,7 @@ func (m model) depLines(p provider.Package, inner int) []line {
 func (m model) versionLines(p provider.Package, inner int) []line {
 	v := m.versions[cacheKey(p)]
 	switch {
-	case v == nil:
-		if m.inResults() && m.search != nil && !m.search.opened {
-			return plain(faint().Render(" press enter to load versions"))
-		}
-		return plain(" " + m.spin() + faint().Render(" loading versions…"))
-	case !v.done:
+	case v == nil || !v.done:
 		return plain(" " + m.spin() + faint().Render(" loading versions…"))
 	case v.err != nil:
 		return plain(red().Render(" " + v.err.Error()))

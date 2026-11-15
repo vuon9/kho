@@ -64,7 +64,6 @@ type searchState struct {
 	took              time.Duration
 	savedCursor       int
 	savedOffset       int
-	opened            bool
 	installedName     string
 	installedProvider string
 }
@@ -221,7 +220,7 @@ func (m *model) submitSearch() tea.Cmd {
 	st.errs = map[string]string{}
 	st.answered = map[string]bool{}
 	st.asks, st.took = nil, 0
-	st.busy, st.finding, st.opened = true, false, false
+	st.busy, st.finding = true, false
 	st.installedName, st.installedProvider = "", ""
 	st.started = now()
 	if !keep {
@@ -736,7 +735,6 @@ func (m *model) openResult() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	st.opened = true
 	m.focus = focusSide
 	if !m.isCandidate(p) {
 		return nil
@@ -871,12 +869,10 @@ func (m *model) pressSearch(key string, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return m.tabTo(m.tabs()[i]), false
 		}
 	case "i":
-		st.opened = true
 		m.setTab(tabInfo)
 	case "v":
 		return m.tabTo(tabVersions), false
 	case "a":
-		st.opened = true
 		m.setTab(tabSecurity)
 	case "]":
 		tabs := m.tabs()
@@ -1090,14 +1086,15 @@ func printablePaste(s string) string {
 	return printable(strings.ReplaceAll(strings.TrimSpace(s), "\n", " "))
 }
 
-// loadCandidate reads what a candidate's sidebar needs once it is opened: its
-// published versions when Versions is showing, and its advisory history for
-// the Info status and the confirm. Dependencies are not read: a package
-// without an installation has none.
+// loadCandidate reads what a candidate's visible tab needs: its published
+// versions on Versions, and its advisory history on Versions or Security, as an
+// installed package's tabs do. Info stays quiet until the row is opened.
+// Dependencies are not read: a package without an installation has none.
 func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	prov, key := m.provider(providerOfSource(p.Source)), cacheKey(p)
+	tab := m.activeTab()
 	var cmds []tea.Cmd
-	if prov != nil && m.activeTab() == tabVersions && m.versions[key] == nil {
+	if prov != nil && tab == tabVersions && m.versions[key] == nil {
 		m.versions[key] = &lazy[[]provider.Release]{}
 		cmds = append(cmds, func() tea.Msg {
 			rels, err := prov.Versions(context.Background(), p)
@@ -1106,7 +1103,7 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	}
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	hkey := eco + "/" + name
-	if eco != "" && !m.advising[hkey] && !m.db.HistoryFresh(eco, name, now()) {
+	if eco != "" && (tab == tabVersions || tab == tabSecurity) && !m.advising[hkey] && !m.db.HistoryFresh(eco, name, now()) {
 		m.advising[hkey] = true
 		cmds = append(cmds, func() tea.Msg {
 			advs, err := fetchHistory(context.Background(), eco, name)

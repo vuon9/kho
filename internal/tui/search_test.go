@@ -406,9 +406,9 @@ func TestSearchFailures(t *testing.T) {
 	}
 }
 
-// Nothing is read while the cursor moves through the results: opening a row
-// with enter is the first network step for it.
-func TestSearchReadsNothingUntilEnter(t *testing.T) {
+// Info reads nothing while the cursor moves through the results: enter is the
+// first network step on that tab.
+func TestSearchInfoReadsNothingUntilEnter(t *testing.T) {
 	m, s := searchable(t)
 	m = runSearch(t, m, "All", "yaml")
 	versions := len(m.versions)
@@ -421,17 +421,11 @@ func TestSearchReadsNothingUntilEnter(t *testing.T) {
 	if len(m.versions) != versions {
 		t.Errorf("moving loaded versions: %d, want %d", len(m.versions), versions)
 	}
-	if m.search.opened {
-		t.Error("moving opened a row")
-	}
 	// yaml-lint is the composer row: its search gave no newest version, so
 	// enter resolves it before the sidebar reads anything else.
 	m = press(t, m, "j", "enter")
 	if s.composer.finds != 1 {
 		t.Errorf("composer looked up %d times, want once", s.composer.finds)
-	}
-	if !m.search.opened {
-		t.Error("enter did not open the row")
 	}
 	sc := screen(m)
 	for _, want := range []string{"yaml-lint", "latest    1.4.0", "runs      composer global require yaml-lint:1.4.0"} {
@@ -1091,5 +1085,24 @@ func TestCandidateVersionsLoadOnVWithoutEnter(t *testing.T) {
 	}
 	if !strings.Contains(sc, "0.2.94") {
 		t.Errorf("the versions list did not arrive:\n%s", sc)
+	}
+}
+
+// Versions and Security read when they are showing, without an enter first,
+// the way an installed package's tabs do.
+func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
+	m, _ := searchable(t)
+	m = runSearch(t, m, "All", "yaml")
+	m = press(t, m, "v")
+	if sc := screen(m); !strings.Contains(sc, "0.2.94") {
+		t.Errorf("the first row's versions did not load on the Versions tab:\n%s", sc)
+	}
+	m = press(t, m, "j")
+	sc := screen(m)
+	if strings.Contains(sc, "loading versions") {
+		t.Errorf("moving on Versions left it loading:\n%s", sc)
+	}
+	if !strings.Contains(sc, "2.8.1") {
+		t.Errorf("the next row's versions did not load:\n%s", sc)
 	}
 }

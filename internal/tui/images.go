@@ -163,11 +163,6 @@ func (m *model) wantTags() tea.Cmd {
 // that needs them opens, however it was opened: the v key, a numbered tab, or
 // a click on the tab bar.
 func (m *model) tabTo(tab int) tea.Cmd {
-	if m.inResults() && m.search != nil {
-		// Picking a tab is an explicit request for that data, so it opens the
-		// result even when enter was not pressed first.
-		m.search.opened = true
-	}
 	m.setTab(tab)
 	if tab != tabVersions {
 		return nil

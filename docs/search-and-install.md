@@ -80,7 +80,7 @@ Notes:
 | P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. | decided |
 | P5 | Search JSON | Object `{query, results, notSearched, skipped, errors}`. Exit 0 when a source answered, 1 when all failed, 2 on usage. | decided |
 | P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. Validate as `install` does today, best effort for go package paths. | decided |
-| P7 | Advisories | Fetch history when a candidate is opened, warn in the confirm, never block. | decided |
+| P7 | Advisories | Fetch history when a candidate's Versions or Security tab shows, warn in the confirm, never block. | decided |
 | P8 | Already installed | One install verb. Installed hits show `✓ installed` and upgrading behaves as today. A name installed under another manager is a warning in the confirm. | decided |
 | P9 | TUI shape | Search is scoped to the selected rail row: every package manager's panel has its own search, and All searches everything. The panel shows installed packages by default. | decided, UX-2 A |
 | P10 | Query timing | Explicit submit. Typing is a draft, and nothing is fetched until `enter`. | decided, UX-1 |
@@ -335,7 +335,7 @@ Rows use the machine table's language, squeezed to the panel's width:
 | Column | Shows |
 |---|---|
 | NAME | the name the manager installs, with a faint `source/` prefix when the row's source is not the panel's own (a cask in the brew panel, any source in All) |
-| LATEST | the newest version search returned, or `?` until the row is opened |
+| LATEST | the newest version search returned, or `?` until Versions or enter resolves it |
 | STATUS | `· not installed`, `✓ installed 2.7.0`, `↑ newer 2.7.0`, `⚑ newer 2.7.0` for a pinned package |
 
 - A name that is already installed still appears in results, marked. Opening
@@ -343,10 +343,10 @@ Rows use the machine table's language, squeezed to the panel's width:
   so upgrading works exactly as it does on the installed list.
 - A name that is not installed opens a candidate sidebar.
 - Results never join the installed list, its counts or its status chips.
-- Nothing is read while the selection moves. Pressing `enter`, or picking a
-  data tab such as Versions, opens the row: it resolves the newest version when
-  search did not return one (composer), fills `LATEST`, and loads the sidebar.
-  After that the row behaves like an installed one on that tab.
+- Info reads nothing while the cursor moves. Versions and Security load as
+  soon as they are the visible tab, like an installed package's tabs, without
+  an enter first. Enter still resolves a newest version that search did not
+  return (composer) and fills `LATEST`.
 
 The candidate sidebar is the existing right sidebar, not a new panel. Same box,
 same tab bar, same width, same keys (`i v a`, `1-3`, `[ ]`, `J K`, `enter`),
@@ -693,6 +693,8 @@ Small choices made while building, none of which changes the shape:
   installed filter keeps the first accent.
 - The empty-filter bridge is centered in the table, with `n` lit as a key,
   rather than a sentence at the left edge.
+- Candidate Versions and Security load when their tab is showing, without an
+  enter first; Info stays quiet until the row is opened.
 
 ## 7. Build order
 

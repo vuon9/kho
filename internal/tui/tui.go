@@ -797,15 +797,10 @@ func (m *model) load() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if m.inResults() {
-		// A result reads nothing until enter opens it: not the row under the
-		// cursor, and not the installed package it may turn out to be.
-		if !m.search.opened {
-			return nil
-		}
-		if m.isCandidate(p) {
-			return m.loadCandidate(p)
-		}
+	if m.inResults() && m.isCandidate(p) {
+		// A candidate reads only what its visible tab needs, like an installed
+		// package; Info stays quiet until the row is opened.
+		return m.loadCandidate(p)
 	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
 	if p.Lockfile != "" {
