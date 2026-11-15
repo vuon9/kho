@@ -354,10 +354,10 @@ func TestSearchNarrowsTheSource(t *testing.T) {
 			out:  "no packages match \"zzzz\"\nsearched uv in 0.0s\n",
 		},
 		{
-			id:   "mise and skills cannot be searched",
-			args: []string{"search", "yaml", "--source", "mise,skills"},
+			id:   "mise cannot be searched",
+			args: []string{"search", "yaml", "--source", "mise"},
 			code: ExitUsage,
-			err:  "--source mise, skills is not supported yet\n",
+			err:  "--source mise is not supported yet\n",
 		},
 		{
 			id:   "an unknown source is a usage error",
@@ -534,6 +534,15 @@ func TestInstallNew(t *testing.T) {
 			args:      []string{"install", "uv/ruff@latest"},
 			code:      ExitOK,
 			out:       "would run: uv tool install ruff==0.14.0\nadd --yes to run it\n",
+		},
+		{
+			id: "a skill installs its newest commit",
+			providers: []provider.Provider{&fakeFull{fakeProvider: fakeProvider{name: "skills"}, found: provider.Package{
+				Source: "skills", Name: "yaml", Entry: "yaml", Repo: "acme/skills", Latest: provider.SkillNewest,
+			}}},
+			args: []string{"install", "skills/yaml@latest"},
+			code: ExitOK,
+			out:  "would run: npx -y skills add acme/skills --skill yaml -g -y --json\nadd --yes to run it\n",
 		},
 		{
 			id:        "a new package with --yes runs it and records the change",

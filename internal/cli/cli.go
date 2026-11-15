@@ -1451,7 +1451,7 @@ func (env Env) installNew(ctx context.Context, ref, version string, errs map[str
 		return res, nil, ExitError
 	}
 	res.To = version
-	if candidate.Source != "brew" && candidate.Source != "cask" {
+	if candidate.Source != "brew" && candidate.Source != "cask" && candidate.Source != "skills" {
 		if err := env.published(ctx, candidate, version); err != nil {
 			if candidate.Source != "go" {
 				fmt.Fprintln(env.Err, err)

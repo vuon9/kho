@@ -282,9 +282,12 @@ func (m model) rowKeys() []string {
 // enterLabel is what enter does where the cursor is: the panel decides, and the
 // footer says so instead of promising one thing for both.
 func (m model) enterLabel() string {
+	p, _ := m.current()
 	switch {
 	case m.focus == focusTable:
 		return "details"
+	case m.inResults() && m.isCandidate(p) && p.Source == "skills" && m.focus == focusSide:
+		return "install it"
 	case m.activeTab() == tabVersions && !m.inProjectPkg():
 		return "install it"
 	case m.activeTab() == tabLinks:

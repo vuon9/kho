@@ -8,8 +8,8 @@ import "context"
 // have. Latest is set when the registry returned one.
 //
 // A manager that has no keyword search does not implement Searcher. pipx and
-// uv are exact-name only, Go searches keywords through GitHub, and mise and
-// skills are deferred.
+// uv are exact-name only, Go searches keywords through GitHub, and mise is
+// deferred.
 type Searcher interface {
 	Search(ctx context.Context, query string, limit int) ([]Package, error)
 }
@@ -75,6 +75,8 @@ var (
 	_ Searcher = Npm{}
 	_ Searcher = Composer{}
 	_ Searcher = GoBin{}
+	_ Searcher = Skills{}
+	_ Finder   = Skills{}
 
 	_ Finder = Brew{}
 	_ Finder = Npm{}
@@ -87,7 +89,7 @@ var (
 // deferredSources are the managers kho does not search yet. They are a product
 // choice, not a capability: the interfaces would allow them, but their install
 // shape or registry is not settled.
-var deferredSources = map[string]bool{"mise": true, "skills": true}
+var deferredSources = map[string]bool{"mise": true}
 
 // DeferredSource says whether a manager's search is deferred. The TUI says so
 // on that panel; the CLI treats a search for it as a usage error.

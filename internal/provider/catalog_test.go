@@ -182,6 +182,12 @@ func TestInstallNewCmd(t *testing.T) {
 			args: []string{"go", "install", "example.com/tool@v1.2.3"}},
 		{id: "a go package with no entry", pkg: Package{Source: "go", Name: "tool", Latest: "v1.2.3"}, version: "v1.2.3",
 			err: "this package has no main package path to install from"},
+		{id: "a skill installs its newest commit", pkg: Package{Source: "skills", Name: "yaml", Entry: "yaml", Repo: "acme/skills", Latest: SkillNewest}, version: SkillNewest,
+			args: []string{"npx", "-y", "skills", "add", "acme/skills", "--skill", "yaml", "-g", "-y", "--json"}},
+		{id: "a skill display name installs by its slug", pkg: Package{Source: "skills", Name: "Command Development", Entry: "command-development", Repo: "acme/skills", Latest: SkillNewest}, version: SkillNewest,
+			args: []string{"npx", "-y", "skills", "add", "acme/skills", "--skill", "command-development", "-g", "-y", "--json"}},
+		{id: "a skill with no repo cannot install", pkg: Package{Source: "skills", Name: "yaml", Latest: SkillNewest}, version: SkillNewest,
+			err: "this skill has no repository to install from"},
 		{id: "mise is deferred", pkg: Package{Source: "mise", Name: "node", Latest: "24.0.0"}, version: "24.0.0",
 			err: "kho can't install new mise packages yet"},
 	}
@@ -212,10 +218,10 @@ func TestSearchCapabilities(t *testing.T) {
 		}
 		return out
 	}
-	if got, want := names(Searchers(All())), []string{"brew", "npm", "composer", "go"}; !reflect.DeepEqual(got, want) {
+	if got, want := names(Searchers(All())), []string{"brew", "npm", "composer", "go", "skills"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("searchers %v, want %v", got, want)
 	}
-	if got, want := names(Finders(All())), []string{"brew", "npm", "composer", "pipx", "uv", "go"}; !reflect.DeepEqual(got, want) {
+	if got, want := names(Finders(All())), []string{"brew", "npm", "composer", "pipx", "uv", "go", "skills"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("finders %v, want %v", got, want)
 	}
 	if p := ProviderNamed(All(), "uv"); p == nil || p.Name() != "uv" {

@@ -636,6 +636,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("%s %s failed: %v", msg.name, msg.version, msg.err)
 		case msg.removed:
 			m.notice = msg.name + " is removed"
+		case msg.provider == "skills" && msg.version == provider.SkillNewest:
+			m.notice = msg.name + " is installed"
 		default:
 			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
@@ -1158,6 +1160,14 @@ func (m *model) moveSide(key string, step int) {
 		m.moveImageSide(key, step)
 		return
 	}
+	// A skill candidate has only Info, and its install is the newest commit,
+	// so enter there asks the install instead of opening a list.
+	if key == "enter" && m.sidePart == 0 && m.inResults() {
+		if p, ok := m.current(); ok && m.isCandidate(p) && p.Source == "skills" && m.activeTab() == tabInfo {
+			m.askInstall()
+			return
+		}
+	}
 	list := m.sideListLen() >= 0
 	switch {
 	case key == "enter" && list && m.sidePart == 0:
@@ -1353,7 +1363,11 @@ func (m model) current() (provider.Package, bool) {
 func (m model) tabs() []int {
 	if p, ok := m.current(); ok && m.isCandidate(p) {
 		// A package that is not installed has nothing to show on Skill,
-		// Readme or Links: those come from an installed skill's files.
+		// Readme or Links: those come from an installed skill's files. A skill
+		// has no versions either, so Info is all there is to show.
+		if p.Source == "skills" {
+			return []int{tabInfo}
+		}
 		return []int{tabInfo, tabVersions, tabSecurity}
 	}
 	if p, ok := m.current(); ok && p.Source == "skills" {

@@ -99,7 +99,7 @@ func (m model) searchWorking() bool {
 }
 
 // providerCanSearch says a manager's panel has a search at all. pipx and uv
-// have only an exact-name lookup; mise and skills are deferred.
+// have only an exact-name lookup; mise is deferred.
 func (m model) providerCanSearch(name string) bool {
 	p := m.provider(name)
 	if p == nil {
@@ -629,9 +629,15 @@ func (m model) searchRows() []provider.Package {
 // installedFor finds the installed package a result names under its own source.
 func (m model) installedFor(p provider.Package) (provider.Package, bool) {
 	for _, q := range m.pkgs[providerOfSource(p.Source)] {
-		if q.Name == p.Name && q.Source == p.Source {
-			return q, true
+		if q.Name != p.Name || q.Source != p.Source {
+			continue
 		}
+		// Two repositories can publish a skill with the same display name, so
+		// a skill is only the installed one when its repo matches too.
+		if p.Source == "skills" && p.Repo != "" && q.Repo != "" && p.Repo != q.Repo {
+			continue
+		}
+		return q, true
 	}
 	return provider.Package{}, false
 }
@@ -971,6 +977,9 @@ func (m model) candidateInfoLines(p provider.Package) []line {
 // version, or why there is none yet.
 func (m model) candidateSecurity(p provider.Package) string {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
+	if p.Source == "skills" {
+		return faint().Render("skills.sh audits after install")
+	}
 	if eco == "" {
 		return faint().Render("not covered: OSV has no data for " + p.Source)
 	}
@@ -1021,6 +1030,24 @@ func (m *model) askInstallNew(p provider.Package, version string) {
 		m.confirm = &confirm{title: "Can't install " + p.Name, lines: []string{err.Error()}}
 		return
 	}
+	title := "＋ Install " + printable(p.Name)
+	if p.Source == "skills" {
+		lines := []string{
+			bold().Render(printable(p.Name)) + "  " + faint().Render("not installed"),
+			m.sourceLine(p),
+			"",
+			faint().Render("installs the newest commit from " + printable(p.Repo)),
+			"",
+		}
+		if q, ok := m.otherInstall(p); ok {
+			lines = append(lines, yellow().Render("⚠ "+p.Name+" is installed as "+q.Source+"/"+q.Name+" "+q.Version), "")
+		}
+		lines = append(lines, faint().Render("runs  ")+printable(strings.Join(cmd.Args, " ")), "",
+			accent().Render("y")+faint().Render(" run it   ")+accent().Render("n")+faint().Render(" cancel"))
+		m.confirm = &confirm{title: title + "?", lines: lines,
+			run: startInstall(title, cmd, m.log, installedMsg{provider: "skills", name: p.Name, version: provider.SkillNewest})}
+		return
+	}
 	lines := []string{
 		bold().Render(printable(p.Name)) + "  " + faint().Render("not installed") + faint().Render(" → ") + green().Render(printable(version)),
 		m.sourceLine(p),
@@ -1037,7 +1064,6 @@ func (m *model) askInstallNew(p provider.Package, version string) {
 	}
 	lines = append(lines, faint().Render("runs  ")+printable(strings.Join(cmd.Args, " ")), "",
 		accent().Render("y")+faint().Render(" run it   ")+accent().Render("n")+faint().Render(" cancel"))
-	title := "＋ Install " + printable(p.Name)
 	m.confirm = &confirm{title: title + "?", lines: lines,
 		run: startInstall(title, cmd, m.log, installedMsg{provider: providerOfSource(p.Source), name: p.Name, version: version})}
 }
@@ -1048,6 +1074,7 @@ func (m model) sourceLine(p provider.Package) string {
 	word := map[string]string{
 		"brew": "brew formula", "cask": "brew cask", "npm": "npm global",
 		"composer": "composer global", "pipx": "pipx", "uv": "uv tool", "go": "go module",
+		"skills": "skills CLI",
 	}[p.Source]
 	if word == "" {
 		word = p.Source

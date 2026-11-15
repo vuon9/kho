@@ -11,6 +11,18 @@ import (
 // from a Searcher or a Finder, so Version is empty and Latest is the newest
 // version the registry gave.
 func InstallNewCmd(p Package, version string) (*exec.Cmd, error) {
+	if p.Source == "skills" {
+		// The skills CLI installs the newest commit, so there is no version to
+		// choose; the version word on a candidate is only for the screen.
+		skill := p.Entry
+		if skill == "" {
+			skill = p.Name
+		}
+		if p.Repo == "" || skill == "" {
+			return nil, errors.New("this skill has no repository to install from")
+		}
+		return exec.Command("npx", "-y", "skills", "add", p.Repo, "--skill", skill, "-g", "-y", "--json"), nil
+	}
 	if version == "" {
 		return nil, fmt.Errorf("no version to install for %s", p.Name)
 	}

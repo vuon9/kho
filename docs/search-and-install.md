@@ -56,7 +56,7 @@ Files that matter:
 | uv | none | same PyPI JSON | `uv tool install name==version` |
 | go | GitHub repository search by keyword, then the root `go.mod` for the module path and the tree for main packages. Best effort, and rate limited without a token. pkg.go.dev's `/search?*` is disallowed by its robots.txt, so it is not scraped | module proxy; a package path is resolved by walking its parents to the module | `go install path@version` |
 | mise | `mise search`, text table, no JSON | tool name and description only | `mise install name@v`, but the tool is not on PATH until a config names it; `mise use` writes config |
-| skills | `npx skills find`, text, or the skills.sh `/api/search` endpoint the CLI uses (undocumented) | name, repo, install count; no description or version | different shape: `npx skills add owner/repo --skill name -g` |
+| skills | the skills.sh `/api/search` endpoint the skills CLI's find uses (undocumented), JSON | source repo, skill name and slug, install count; no description or version | newest commit only: `npx skills add owner/repo --skill slug -g -y` |
 
 Notes:
 
@@ -75,24 +75,26 @@ Notes:
   anonymous-rate-limited without a token. It is best effort: a Go package not
   on GitHub, or not a module, is not found.
 - skills are identified by source repo plus skill name, not by a global package
-  name, and they have no version to pick.
+  name, and they have no version to pick: the candidate's LATEST reads `newest`
+  and installing takes the newest commit. The install uses the skill slug, not
+  the display name, which may contain spaces.
 
 ## 4. Product decisions
 
 | # | Question | Decision | State |
 |---|---|---|---|
-| P1 | Which sources in v1 | Discovery for npm, brew/cask, composer and Go (best effort through GitHub). Exact-name install for pipx and uv. Defer mise and skills. | decided, Go keyword added in v1.1 |
+| P1 | Which sources in v1 | Discovery for npm, brew/cask, composer, Go (best effort through GitHub) and skills (through skills.sh). Exact-name install for pipx and uv. Defer mise. | decided; Go and skills keyword added in v1.1 |
 | P2 | Command surface | Add `kho search`, extend `kho install` to not-installed refs. Keep `@version` required, `latest` accepted. | decided |
-| P3 | Search scope | Search every ready source by default, `--source` narrows it, the report names what could not be searched, and an explicitly named name-only manager gets an exact-name lookup. Go search accepts a keyword, a module path or a package path. | decided |
-| P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. | decided |
+| P3 | Search scope | Search every ready source by default, `--source` narrows it, the report names what could not be searched, and an explicitly named name-only manager gets an exact-name lookup. Go search accepts a keyword, a module path or a package path; a skill search accepts a keyword or an `owner/repo/skill` path. | decided |
+| P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. A skill's latest is the word `newest`. | decided |
 | P5 | Search JSON | Object `{query, results, notSearched, skipped, errors}`. Exit 0 when a source answered, 1 when all failed, 2 on usage. | decided |
-| P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. A Go package path resolves through its module, so it can be validated before the yes. | decided |
+| P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. A Go package path resolves through its module, so it can be validated before the yes. Skills have no version to choose, so a skill candidate has Info only and `enter` there installs the newest commit. | decided |
 | P7 | Advisories | Fetch history when a candidate's Versions or Security tab shows, warn in the confirm, never block. | decided |
 | P8 | Already installed | One install verb. Installed hits show `✓ installed` and upgrading behaves as today. A name installed under another manager is a warning in the confirm. | decided |
 | P9 | TUI shape | Search is scoped to the selected rail row: every package manager's panel has its own search, and All searches everything. The panel shows installed packages by default. | decided, UX-2 A |
 | P10 | Query timing | Explicit submit. Typing is a draft, and nothing is fetched until `enter`. | decided, UX-1 |
 | P11 | Projects | Machine only. Search works on machine package panels; project, part and image rows are read-only and ignore `n`. | decided, UX-4 |
-| P12 | Cache and privacy | No disk cache. In-memory only, per session. Package manager commands are logged as reads by the existing `Record` hook. The README gains the search endpoints and the fact that query words leave the machine, GitHub included for a Go keyword search. | decided |
+| P12 | Cache and privacy | No disk cache. In-memory only, per session. Package manager commands are logged as reads by the existing `Record` hook. The README gains the search endpoints and the fact that query words leave the machine, GitHub included for a Go keyword search and skills.sh for a skill search. | decided |
 
 ## 5. UX design
 
@@ -394,7 +396,10 @@ Security: the advisories that affect the newest version, with the same detail
 panel an installed package has. The per-version view is the SECURITY column in
 Versions.
 
-No Skill, Readme or Links tabs for a candidate; skills search is deferred.
+No Skill, Readme or Links tabs for a candidate. A skill candidate has only
+Info, and `enter` there installs the newest commit, because the skills CLI has
+no version to pick. Its install line uses the skill slug, not the display name,
+which may contain spaces.
 
 Decided: the Security tab stays for a candidate, showing the advisories that
 affect the newest version (or the version being installed, as the confirm
@@ -688,8 +693,11 @@ Small choices made while building, none of which changes the shape:
   That keeps the version history and changelog readable; picking an older row
   still shows the existing Homebrew refusal.
 - `notSearched` in the CLI names the ready managers that resolve an exact name
-  only (pipx, uv). mise and skills are deferred rather than unsearchable, so
-  they are not named there; asking for one with `--source` is a usage error.
+  only (pipx, uv). mise is deferred rather than unsearchable, so it is not named
+  there; asking for it with `--source` is a usage error.
+- A skill candidate is Info only, because skills have no versions: `enter` in
+  Info asks to install the newest commit, and the command uses the skill slug
+  from the registry. The security line says skills.sh audits come after install.
 - Go keyword search is the one best effort source: GitHub's repository search
   supplies repositories, then kho reads each root `go.mod` and file tree and
   keeps the `cmd/<tool>` or root main packages the module proxy can serve. It
@@ -721,7 +729,7 @@ Small choices made while building, none of which changes the shape:
 3. TUI: the three panel modes, the candidate sidebar, the confirm, the install
    and relist path, the states. Tests, and a real terminal look at full size and
    about 110 columns.
-4. Optional: mise and skills discovery, live search if ever asked for.
+4. Optional: mise discovery, live search if ever asked for.
 
 Rough size: 2 days, 1 day, 4 to 5 days, half a day of docs.
 
@@ -758,8 +766,9 @@ Rough size: 2 days, 1 day, 4 to 5 days, half a day of docs.
   missing result is not proof the package does not exist.
 - mise new installs are awkward: no PATH until a config names the tool, and
   `mise use` writes config. Deferring mise keeps v1 honest.
-- skills need a different install shape (repo plus skill name, newest commit
-  only) and an undocumented search endpoint. Deferring them keeps v1 honest.
+- skills have a different install shape (repo plus skill slug, newest commit
+  only) and an undocumented search endpoint. A skill candidate therefore has
+  Info only, no version list, and its audits are checked after install.
 - The main TUI risk is the model change, not the drawing: `rows`, `current` and
   `load` have to carry a package that is not installed without letting it into
   the installed counts, filters, security index or cache keys. Search state

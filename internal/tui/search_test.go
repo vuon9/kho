@@ -101,7 +101,8 @@ func (f *finderFake) Find(_ context.Context, source, name string) (provider.Pack
 type searchStack struct {
 	brew, npm, composer *catalogFake
 	pipx, gobin         *finderFake
-	mise, skills        *fake
+	mise                *fake
+	skills              *catalogFake
 }
 
 func searchable(t *testing.T) (model, *searchStack) {
@@ -139,8 +140,15 @@ func searchable(t *testing.T) (model, *searchStack) {
 			fake:    fake{name: "go"},
 			results: []provider.Package{{Source: "go", Name: "wren", Latest: "v1.2.0", Origin: "example.com/wren", Entry: "example.com/wren/cmd/wren"}},
 		},
-		mise:   &fake{name: "mise"},
-		skills: &fake{name: "skills"},
+		mise: &fake{name: "mise"},
+		skills: &catalogFake{
+			fake: fake{name: "skills"},
+			results: []provider.Package{{
+				Source: "skills", Name: "pdf", Desc: "1200 installs", Latest: provider.SkillNewest,
+				Origin: "acme/skills", Repo: "acme/skills", Entry: "pdf",
+				Homepage: "https://www.skills.sh/acme/skills/pdf",
+			}},
+		},
 	}
 	ps := []provider.Provider{s.brew, s.npm, s.composer, s.pipx, s.gobin, s.mise, s.skills}
 	m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -239,8 +247,6 @@ func TestSearchPromptIsQuiet(t *testing.T) {
 			notice: "type one more character", shows: []string{"type one more character"}},
 		{id: "mise is deferred and stays on the installed list", rail: "mise", keys: []string{"n"}, nilSearch: true,
 			notice: "mise can't search yet"},
-		{id: "skills are deferred too", rail: "skills", keys: []string{"n"}, nilSearch: true,
-			notice: "skills can't search yet"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -314,7 +320,7 @@ func TestSearchRuns(t *testing.T) {
 		{id: "an empty answer reads as no match", rail: "npm", query: "zzzz", npm: 1,
 			shows: []string{`no packages match "zzzz"`, "searched npm in 0.0s"}},
 		{id: "All names the exact-name managers under no match", rail: "All", query: "zzzz", brew: 1, npm: 1, composer: 1,
-			shows: []string{`no packages match "zzzz"`, "searched brew, npm, composer in 0.0s", "pipx and go install by exact name only"}},
+			shows: []string{`no packages match "zzzz"`, "searched brew, npm, composer, skills in 0.0s", "pipx and go install by exact name only"}},
 		{id: "one source returns at most twenty rows", rail: "npm", query: "bulk", npm: 1,
 			setup: func(s *searchStack) {
 				var bulk []provider.Package
@@ -388,8 +394,8 @@ func TestSearchFailures(t *testing.T) {
 			setup: func(s *searchStack) { s.composer.err = down },
 			shows: []string{`no packages match "zzzz"`, "composer: rate limited"}},
 		{id: "every source failing says so", rail: "All", query: "yaml",
-			setup: func(s *searchStack) { s.brew.err, s.npm.err, s.composer.err = down, down, down },
-			shows: []string{"could not search any package manager", "brew: rate limited", "npm: rate limited", "composer: rate limited"}},
+			setup: func(s *searchStack) { s.brew.err, s.npm.err, s.composer.err, s.skills.err = down, down, down, down },
+			shows: []string{"could not search any package manager", "brew: rate limited", "npm: rate limited", "composer: rate limited", "skills: rate limited"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -1104,5 +1110,32 @@ func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
 	}
 	if !strings.Contains(sc, "2.8.1") {
 		t.Errorf("the next row's versions did not load:\n%s", sc)
+	}
+}
+
+// A skill searches like any other source, and installs from Info because the
+// skills CLI has no version to pick: it always takes the newest commit.
+func TestSkillsSearchAndInstall(t *testing.T) {
+	m, _ := searchable(t)
+	m = runSearch(t, m, "skills", "pdf")
+	if sc := screen(m); !strings.Contains(sc, "skills/pdf") {
+		t.Fatalf("the skill did not come back:\n%s", sc)
+	}
+	m = press(t, m, "enter")
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(screen(m), "│", "")), " ")
+	if !strings.Contains(flat, "npx -y skills add acme/skills --skill pdf -g -y --json") {
+		t.Fatalf("the skill's command is missing; flat:\n%s", flat)
+	}
+	if footer := footerLine(m); !strings.Contains(footer, "enter install it") {
+		t.Errorf("footer %q does not offer the install", footer)
+	}
+	m = press(t, m, "enter")
+	sc := screen(m)
+	flat = strings.Join(strings.Fields(strings.ReplaceAll(sc, "│", "")), " ")
+	for _, want := range []string{"＋ Install pdf?", "installs the newest commit from acme/skills",
+		"runs npx -y skills add acme/skills --skill pdf -g -y --json"} {
+		if !strings.Contains(flat, want) && !strings.Contains(sc, want) {
+			t.Errorf("confirm lacks %q:\n%s", want, sc)
+		}
 	}
 }

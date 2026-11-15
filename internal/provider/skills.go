@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -18,11 +19,32 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 // Skills reads what the skills CLI (`npx skills`) writes: the shared
 // ~/.agents/skills folder and its lock file.
 type Skills struct{}
+
+// SkillNewest is the version word a skill candidate carries. The skills CLI
+// installs the newest commit, never a chosen version.
+const SkillNewest = "newest"
+
+// skillsSearchURL is the endpoint the skills CLI's own find uses.
+const skillsSearchURL = "https://www.skills.sh/api/search"
+
+// skillHit is one skill skills.sh knows about.
+type skillHit struct {
+	ID       string `json:"id"`
+	Source   string `json:"source"`
+	SkillID  string `json:"skillId"`
+	Name     string `json:"name"`
+	Installs int    `json:"installs"`
+}
+
+// skillSearch is the one read a skill search makes, so tests can answer it.
+var skillSearch = searchSkillsSh
 
 func (Skills) Name() string { return "skills" }
 
@@ -187,6 +209,102 @@ func (Skills) List(context.Context) ([]Package, error) {
 		return nil, err
 	}
 	return scanSkills(home, lock)
+}
+
+// Search finds skills by keyword through skills.sh, the registry the skills
+// CLI's find calls.
+func (Skills) Search(ctx context.Context, query string, limit int) ([]Package, error) {
+	query = strings.TrimSpace(query)
+	if len([]rune(query)) < 2 {
+		return nil, fmt.Errorf("a skill search needs two characters")
+	}
+	hits, err := skillSearch(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	limit = searchLimit(limit)
+	out := make([]Package, 0, min(len(hits), limit))
+	for _, h := range hits {
+		if len(out) >= limit {
+			break
+		}
+		if h.Source == "" || (h.Name == "" && h.SkillID == "") {
+			continue
+		}
+		out = append(out, skillPackage(h))
+	}
+	return out, nil
+}
+
+// Find resolves a skill the CLI names: owner/repo/skill directly, otherwise an
+// exact skill name through search.
+func (Skills) Find(ctx context.Context, source, name string) (Package, error) {
+	if source != "" && source != "skills" {
+		return Package{}, fmt.Errorf("skills doesn't serve the %s source", source)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Package{}, fmt.Errorf("a skill install needs a skill name or an owner/repo/skill path")
+	}
+	if parts := strings.Split(name, "/"); len(parts) >= 3 {
+		repo, skill := strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
+		return skillPackage(skillHit{Source: repo, SkillID: skill, Name: skill}), nil
+	}
+	hits, err := Skills{}.Search(ctx, name, 20)
+	if err != nil {
+		return Package{}, err
+	}
+	for _, p := range hits {
+		if strings.EqualFold(p.Name, name) || strings.EqualFold(p.Entry, name) {
+			return p, nil
+		}
+	}
+	return Package{}, fmt.Errorf("no skill named %s", name)
+}
+
+// skillPackage turns one search hit into the candidate kho shows.
+func skillPackage(h skillHit) Package {
+	skill := h.SkillID
+	if skill == "" {
+		skill = h.Name
+	}
+	name := h.Name
+	if name == "" {
+		name = skill
+	}
+	desc := ""
+	if h.Installs > 0 {
+		desc = fmt.Sprintf("%d installs", h.Installs)
+	}
+	// Entry carries the slug the skills CLI installs. Name is what the
+	// registry shows, which may be a display name with spaces.
+	return Package{
+		Source: "skills", Name: name, Desc: desc, Latest: SkillNewest,
+		Origin: h.Source, Homepage: vuln.SkillPage(h.Source, skill), Repo: h.Source, Entry: skill,
+	}
+}
+
+func searchSkillsSh(ctx context.Context, query string) ([]skillHit, error) {
+	var raw json.RawMessage
+	header := http.Header{"User-Agent": {khoUserAgent}}
+	if err := getJSON(ctx, skillsSearchURL+"?q="+url.QueryEscape(query), header, &raw); err != nil {
+		return nil, fmt.Errorf("skills.sh: %w", err)
+	}
+	return parseSkillHits(raw)
+}
+
+func parseSkillHits(data []byte) ([]skillHit, error) {
+	var resp struct {
+		Skills []skillHit `json:"skills"`
+		Error  string     `json:"error"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("skills.sh search: %w", err)
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("skills.sh: %s", resp.Error)
+	}
+	return resp.Skills, nil
 }
 
 // isSkill says whether dir holds a skill. As in the skills CLI, it does only
