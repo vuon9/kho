@@ -147,6 +147,8 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 
 `kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
+The JSON each command returns, field by field, is in [skills/use-kho/SKILL.md](skills/use-kho/SKILL.md).
+
 <details>
 <summary>Uninstalling with <code>kho remove</code></summary>
 
@@ -239,13 +241,17 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first. It has a reading order for the code, the rules and the checks. In short:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, propose a change and run the checks, and [AGENTS.md](AGENTS.md) for the reading order, the rules and the code layout. In short:
 
 ```bash
 gofmt -l . && go vet ./... && go test -race ./...
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org), which is how releases get their version and changelog.
+
+## Security
+
+Report a vulnerability privately through the repository's [Security tab](https://github.com/vuon9/kho/security), not in a public issue. [SECURITY.md](SECURITY.md) says what to include and when to expect a reply.
 
 ## License
 
