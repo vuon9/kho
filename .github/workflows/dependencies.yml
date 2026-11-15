@@ -1,6 +1,12 @@
 name: dependencies
 
-on: pull_request
+on:
+  pull_request:
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
 
 permissions: {}
 

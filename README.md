@@ -3,6 +3,7 @@
 [![ci](https://github.com/vuon9/kho/actions/workflows/ci.yml/badge.svg)](https://github.com/vuon9/kho/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/vuon9/kho?include_prereleases&sort=semver)](https://github.com/vuon9/kho/releases)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/vuon9/kho/badge)](https://scorecard.dev/viewer/?uri=github.com/vuon9/kho)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16741/badge)](https://www.bestpractices.dev/projects/16741)
 
 **Every package manager on your machine, one list, checked.**
 
@@ -77,6 +78,14 @@ To check that an archive from the [Releases page](https://github.com/vuon9/kho/r
 VERSION=0.1.8   # the release you downloaded
 gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
   --signer-workflow vuon9/kho/.github/workflows/release.yml
+```
+
+`checksums.txt` is signed with keyless cosign. Download it and `checksums.txt.sigstore.json` from the release, then verify:
+
+```bash
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/vuon9/kho/.github/workflows/release.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 </details>
@@ -241,17 +250,11 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, propose a change and run the checks, and [AGENTS.md](AGENTS.md) for the reading order, the rules and the code layout. In short:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem and open a change. [AGENTS.md](AGENTS.md) has the code layout and the safety rules.
 
 ```bash
 gofmt -l . && go vet ./... && go test -race ./...
 ```
-
-Commits follow [Conventional Commits](https://www.conventionalcommits.org), which is how releases get their version and changelog.
-
-## Security
-
-Report a vulnerability privately through the repository's [Security tab](https://github.com/vuon9/kho/security), not in a public issue. [SECURITY.md](SECURITY.md) says what to include and when to expect a reply.
 
 ## License
 
