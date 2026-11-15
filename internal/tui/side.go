@@ -296,13 +296,16 @@ func (m model) bottomTitle() string {
 		return "🔗 Link"
 	}
 	if p.Source == "skills" {
+		if m.isCandidate(p) {
+			return "📄 SKILL.md"
+		}
 		linked := 0
 		for _, l := range installed(m.links) {
 			if l.Sees() {
 				linked++
 			}
 		}
-		return fmt.Sprintf("🔗 Seen by %d agents", linked)
+		return fmt.Sprintf("📄 SKILL.md · 🔗 Seen by %d agents", linked)
 	}
 	if d := m.deps[cacheKey(p)]; d != nil && d.done && d.err == nil {
 		return fmt.Sprintf("🔗 Dependencies · %d", len(d.val))
@@ -329,8 +332,8 @@ func (m model) bottomLines(inner int) []line {
 	case tabLinks:
 		return m.linkDetail(p)
 	}
-	if p.Source == "skills" {
-		return linkLines(installed(m.links))
+	if m.activeTab() == tabInfo && p.Source == "skills" {
+		return m.skillDocView(p, inner)
 	}
 	return m.depLines(p, inner)
 }
@@ -388,12 +391,6 @@ func (m model) infoLines(p provider.Package, inner int) []line {
 		add("alias", p.Entry, "")
 	default:
 		add("path", p.Path, "")
-	}
-	if p.Source == "skills" {
-		// The SKILL.md is the useful part, so it comes before the long agent
-		// list rather than after it.
-		lines = append(lines, m.skillDocLines(p, inner)...)
-		add("agents", strings.Join(p.Agents, ", "), "")
 	}
 	add("note", p.Note, "")
 	if p.Dependency && p.Lockfile == "" {
@@ -860,20 +857,19 @@ func (m model) skillMetaLines(p provider.Package) []line {
 	return append(lines, field("files", strings.Join(d.val.Files, "  "), ""))
 }
 
-// skillDocLines draws SKILL.md under a skill's fields, for an installed skill
-// read from its folder or a candidate read from its repo.
-func (m model) skillDocLines(p provider.Package, inner int) []line {
-	lines := []line{{}, {text: " " + accent().Render("📄 SKILL.md")}, {}}
+// skillDocView is the SKILL.md body alone, drawn in the scrollable bottom pane
+// under the fixed Info fields.
+func (m model) skillDocView(p provider.Package, inner int) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
 	case d == nil || !d.done:
-		return append(lines, plain(m.spin()+faint().Render(" loading…"))...)
+		return plain(m.spin() + faint().Render(" loading SKILL.md…"))
 	case d.err != nil:
-		return append(lines, plain(red().Render(" "+d.err.Error()))...)
+		return plain(red().Render(" " + d.err.Error()))
 	case strings.TrimSpace(d.val.Body) == "":
-		return append(lines, plain(faint().Render(" this SKILL.md has no body"))...)
+		return plain(faint().Render(" this SKILL.md has no body"))
 	}
-	return append(lines, plain(m.md.render(d.val.Body, inner)...)...)
+	return plain(m.md.render(d.val.Body, inner)...)
 }
 
 func (m model) readmeLines(p provider.Package, inner int) []line {
@@ -990,4 +986,10 @@ func (m model) linkDetail(p provider.Package) []line {
 		say(name + " already sees it through ~/.agents/skills, so there is nothing to link.")
 	}
 	return lines
+}
+
+// curIsSkill says the selected package is a skill, installed or candidate.
+func (m model) curIsSkill() bool {
+	p, ok := m.current()
+	return ok && p.Source == "skills"
 }

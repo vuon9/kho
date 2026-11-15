@@ -970,9 +970,6 @@ func (m model) candidateInfoLines(p provider.Package, inner int) []line {
 	if runs := m.candidateRuns(p); runs != "" {
 		lines = append(lines, field("runs", runs, ""))
 	}
-	if p.Source == "skills" {
-		lines = append(lines, m.skillDocLines(p, inner)...)
-	}
 	return lines
 }
 

@@ -700,9 +700,12 @@ Small choices made while building, none of which changes the shape:
 - A skill candidate is Info only, because skills have no versions: `enter` in
   Info asks to install the newest commit, and the command uses the skill slug
   from the registry. The security line says skills.sh audits come after install.
-- Info also carries SKILL.md now: an installed skill reads it from its folder,
-  and a new skill reads it from its repo once the row is opened. It sits before
-  the agent list so it is visible without scrolling past every agent.
+  Its Info fields stay fixed while SKILL.md scrolls below them.
+- Info carries SKILL.md as its own scroll area: the fields stay fixed in the
+  upper half and the markdown fills the lower half, scrolled with `J K` or the
+  wheel. An installed skill reads it from its folder; a new skill reads it from
+  its repo once the row is opened. The agent list lives on Links, and Info's
+  lower title names the skill and how many agents see it.
 - Go keyword search is best effort: GitHub's repository search supplies
   repositories, then kho reads each root `go.mod` and file tree and keeps the
   `cmd/<tool>` or root main packages the module proxy can serve. It also

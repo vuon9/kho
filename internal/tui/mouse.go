@@ -62,6 +62,9 @@ func (m model) layout() layout {
 		case m.activeTab() == tabSkill:
 			// SKILL.md's front matter is short; give the body the room.
 			l.topRows = max(min(len(m.topView(l.sideW-2)), l.topRows), 3)
+		case m.activeTab() == tabInfo && m.curIsSkill():
+			// The Info fields stay put; SKILL.md below gets the rest of the pane.
+			l.topRows = max(min(len(m.topView(l.sideW-2)), l.topRows), 3)
 		}
 		l.topRows = max(min(l.topRows, l.bodyH-3-minHalf), minHalf)
 		l.bottomRows = max(l.bodyH-3-l.topRows, 0)
