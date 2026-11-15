@@ -5,7 +5,17 @@ name: codeql
 on:
   push:
     branches: [main]
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/codeql.yml"
   pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/codeql.yml"
   schedule:
     - cron: "40 6 * * 1"
   workflow_dispatch:
