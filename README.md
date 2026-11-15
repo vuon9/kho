@@ -45,7 +45,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | Agent skills | ✓ |  | keyword | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
 | Docker images | ✓ | ✓ |  | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
 
-Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm, Composer, Go, pipx, uv and agent skills search by keyword. Go and Python use GitHub's repository search, so they are best effort and want a GitHub token; Python then keeps the repositories PyPI actually publishes. Skills use the skills.sh endpoint the skills CLI's own find calls. A Go search also accepts a module or package path, including a pasted pkg.go.dev URL, and a Python search accepts a pypi.org project page. mise is not searchable yet. Homebrew and skills can install only their newest version; the confirm says so when you pick another. A skill's Info tab also loads its SKILL.md: the fields stay fixed on top and the markdown scrolls in the lower half. A new skill's markdown loads after a short pause on the row, without pressing enter.
+Search is read-only and machine only: it asks registries for packages the machine does not have, while a project's dependencies stay untouched. Go and Python keyword searches use GitHub's repository search, so both are best effort; Python keeps only what PyPI publishes. Skills use the skills.sh endpoint the skills CLI's own `find` calls. Beyond a keyword, a Go query can be a module or package path or a pkg.go.dev URL, a Python query a pypi.org project page, and a skill an `owner/repo/skill` path.
 
 kho reads all three, and changes only what is on the machine:
 
@@ -87,12 +87,12 @@ macOS or Linux. Everything else is optional, and kho skips what it can't find:
 - **The package managers you use.** One that isn't installed shows as skipped, not as an error.
 - **docker**, to see which images are on disk, and to pull or remove one.
 - **[trivy](https://trivy.dev)**, to list the CVEs inside an image. It runs when you open an image's Security tab. Install it with `brew install trivy`.
-- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go or Python keyword searches can use up. Both searches use GitHub's repository search, so a token keeps them reliable.
+- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go or Python keyword searches can use up.
 - **Go 1.27 or later**, only to install with `go install`.
 
 ## Use it
 
-Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes. On a package manager's panel, `n` opens a quiet search for a package the machine does not have; nothing is asked of a registry until you press `enter`.
+Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes. On a package manager's panel, `n` opens a quiet search for a package the machine does not have; nothing is asked of a registry until you press `enter`. On a skill's Info tab, SKILL.md sits below the fixed fields and scrolls on its own; a new skill's loads after a short pause.
 
 <details>
 <summary>Every status, and what it means</summary>
@@ -142,7 +142,7 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 | `kho list` | every package as JSON |
 | `kho version`, `kho help` | the version, and every command |
 
-`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer`, `go`, `pipx`, `uv` and `skills` answer keywords; a Go query can also be a package or module path, and a Python query can be a pypi.org project page.
+`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer`, `go`, `pipx`, `uv` and `skills` answer keywords; a Go query can also be a package or module path, a Python query a pypi.org project page, and a skill an `owner/repo/skill` path. Homebrew and skills install only their newest version.
 
 `kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
