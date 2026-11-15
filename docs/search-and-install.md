@@ -1,7 +1,8 @@
 # Search and install new packages
 
-Status: design settled on 2026-11-14, implemented on 2026-11-15. Product and
-UX decisions are in sections 4 and 6. Sections 7 and 8 say how it was built and
+Status: design settled on 2026-11-14, implemented on 2026-11-15 and extended on
+2026-11-16 with keyword search for Go, Python and skills. Product and UX
+decisions are in sections 4 and 6. Sections 7 and 8 say how it was built and
 tested; section 6.2 records where the shipped code differs from this design.
 
 The plan was written down first so the UX work had a fixed target. This file is
@@ -654,7 +655,7 @@ Every UX decision is settled, and every product decision is decided.
 | UX-6 | Confirm dialog wording and advisories (5.8) | install verb, newest nudge, advisory timing A |
 | UX-7 | After the yes (5.9) | stay in results, select the new package on esc |
 | UX-8 | Prompt and results states, copy (5.6) | body hints, status bar errors |
-| UX-9 | CLI text and JSON (5.12) | decided: A, exact-name lookup when `--source` names a name-only manager |
+| UX-9 | CLI text and JSON (5.12) | decided: A, keyword search for every ready manager, and `--source` narrows it |
 
 ### 6.1 The design in one page
 
@@ -664,9 +665,10 @@ Every UX decision is settled, and every product decision is decided.
   searches. Esc cancels. Nothing else reads the network.
 - `n` is ignored on project, part, docker and image rows. Search is transient:
   changing rail rows returns to installed.
-- The All row searches every manager. Every other panel searches its own. pipx
-  and uv resolve an exact name instead of keyword search; Go searches keywords
-  through GitHub and also accepts a module or package path.
+- The All row searches every manager. Every other panel searches its own. Every
+  ready manager searches by keyword; Go also accepts a module or package path,
+  Python accepts a pypi.org project page, and skills accept an
+  `owner/repo/skill` path.
 - Results include installed hits, marked `✓ installed` or `↑ newer`, so an
   upgrade happens from the same list.
 - Enter on a result opens it in the existing right sidebar. For a new package,
@@ -709,8 +711,8 @@ Small choices made while building, none of which changes the shape:
   upper half and the markdown fills the lower half, scrolled with `J K` or the
   wheel. An installed skill reads it from its folder; a new skill reads it from
   its repo after a short pause on the row, or at once when the row is opened. The
-  agent list lives on Links, and Info's
-  lower title names the skill and how many agents see it.
+  agent list lives on Links, and Info's lower title names the skill and how
+  many agents see it.
 - Go keyword search is best effort: GitHub's repository search supplies
   repositories, then kho reads each root `go.mod` and file tree and keeps the
   `cmd/<tool>` or root main packages the module proxy can serve. It also
@@ -722,8 +724,8 @@ Small choices made while building, none of which changes the shape:
   supplies the version. It also normalises a pasted pypi.org project page.
 - A deferred manager's panel answers `n` with `<manager> can't search yet` and
   stays on the installed list.
-- A name-only lookup that finds nothing (CLI or TUI) is a no-match, not a
-  failed source: `kho search --source uv zzzz` exits 0 with no rows.
+- An empty answer is a no-match, not a failed source: `kho search --source uv
+  zzzz` exits 0 with no rows.
 - Python keyword search depends on GitHub and on a repo naming its PyPI project
   in its packaging files; a package that does neither is not found. It is best
   effort, and a missing result is not proof the package does not exist.
@@ -731,7 +733,11 @@ Small choices made while building, none of which changes the shape:
   the theme's second accent, so the mode reads without naming the manager. The
   installed filter keeps the first accent.
 - The empty-filter bridge is centered in the table, with `n` lit as a key,
-  rather than a sentence at the left edge.
+  rather than a sentence at the left edge. The image table keeps its filter bar
+  in its empty and error states too, capped so it cannot be clipped.
+- Skill names and repos are balanced in the results table: the name caps at 20
+  columns, FROM takes the rest, and status stays wide enough for
+  `not installed`.
 - Candidate Versions and Security load when their tab is showing, without an
   enter first. Info stays quiet until the row is opened, except a skill's
   SKILL.md, which loads after a 300ms pause so arrowing keeps GitHub quiet.
@@ -742,8 +748,8 @@ Small choices made while building, none of which changes the shape:
    for pipx, uv and go. Keyword search for Go, Python (pipx/uv), and skills was
    added later on top: repository search, packaging file, registry version, or
    the skills.sh endpoint. Pure parse tests over captured output.
-2. CLI: `kho search`, install for not-installed refs, the exact-name `--source`
-   path. `Usage`, README, `skills/use-kho/SKILL.md`, and the docs test.
+2. CLI: `kho search`, install for not-installed refs, and `--source` to narrow
+   the search. `Usage`, README, `skills/use-kho/SKILL.md`, and the docs test.
 3. TUI: the three panel modes, the candidate sidebar, the confirm, the install
    and relist path, the states. Tests, and a real terminal look at full size and
    about 110 columns.
@@ -755,7 +761,7 @@ Rough size: 2 days, 1 day, 4 to 5 days, half a day of docs.
 
 - Every manager parse gets a table with a readable id and made-up fixtures.
 - Search orchestration: fake providers, partial failures, `--source` validation
-  including the name-only managers, the two-character minimum, the per-source
+  including the deferred manager, the two-character minimum, the per-source
   cap, and that nothing is asked before `enter`.
 - Install for a new package: dry run, `--yes`, JSON, history entry, a source that
   is skipped on this machine, a name no registry knows, a version never
