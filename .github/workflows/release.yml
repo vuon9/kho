@@ -1,17 +1,32 @@
 name: release
 
-# Every push to main updates one release PR, written by release-please from the
-# Conventional Commits since the last tag. Merging that PR tags the release,
-# and the goreleaser job then builds the binaries and updates the Homebrew cask.
+# Releases start by hand. A person runs this workflow on main, and
+# release-please opens or updates one release PR from the Conventional Commits
+# since the last tag. Merging that PR changes the manifest and the changelog,
+# and that push tags the release; the goreleaser job then builds the binaries
+# and updates the Homebrew cask. An ordinary push to main starts nothing.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
+    # Only a merged release PR touches these files, so this is the run that
+    # tags it. Commits on their own don't reach it.
+    paths:
+      - ".release-please-manifest.json"
+      - "CHANGELOG.md"
 
 permissions: {}
 
+# One release at a time: two runs at once can tag the same version twice.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release-please:
+    # Run it from main, never from a branch or a tag: the action reads the
+    # history of the ref it runs on.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
