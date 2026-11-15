@@ -448,6 +448,7 @@ func (m model) tableLines() []string {
 	if k := m.curRow().kind; k == rowImages || k == rowMachineImages {
 		return m.imageTableLines()
 	}
+	inner := m.layout().tableW - 2
 	if r := m.curRow(); r.kind == rowPart && len(m.rowPkgs(r)) == 0 {
 		lines := []string{""}
 		for _, lf := range m.partLockfiles(r) {
@@ -459,20 +460,19 @@ func (m model) tableLines() []string {
 			}
 		}
 		if len(lines) > 1 {
-			return lines
+			return append(m.fitBody(lines), m.barRule(inner), m.filterBar())
 		}
 	}
 	if r := m.curRow(); r.kind == rowProvider {
 		name := r.name
 		if err := m.errs[name]; err != nil && len(m.pkgs[name]) == 0 {
-			return []string{"", red().Render(" " + err.Error())}
+			return append(m.fitBody([]string{"", red().Render(" " + err.Error())}), m.barRule(inner), m.filterBar())
 		}
 		if m.busy[name] == "listing" {
-			return []string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}
+			return append(m.fitBody([]string{"", " " + m.spin() + faint().Render(" scanning "+name+"…")}), m.barRule(inner), m.filterBar())
 		}
 	}
 	cols := m.tableColumns()
-	inner := m.layout().tableW - 2
 	row := func(cells [5]string) string {
 		var parts []string
 		for _, c := range cols {
@@ -521,14 +521,25 @@ func (m model) tableLines() []string {
 			lines = append(lines, "", faint().Render("  nothing matches"))
 		}
 	}
-	for len(lines) < m.layout().rows+1 {
-		lines = append(lines, "")
-	}
 	bar := m.filterBar()
 	if m.inPrompt() {
 		bar = m.searchBar()
 	}
-	return append(lines, m.barRule(inner), bar)
+	return append(m.fitBody(lines), m.barRule(inner), bar)
+}
+
+// fitBody keeps the table body at the rows the table has, so the rule and the
+// bottom bar always fit: a long empty state or a pile of error lines must never
+// clip the input.
+func (m model) fitBody(lines []string) []string {
+	limit := m.layout().rows + 1
+	if len(lines) > limit {
+		lines = lines[:limit]
+	}
+	for len(lines) < limit {
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 // barRule is the line above the bottom bar. A search bar takes the search
@@ -552,7 +563,7 @@ func centered(text string, width int) string {
 // missing rows would be, and n is lit the way the footer lights its keys.
 func (m model) searchBridge(inner int) []string {
 	hint := []string{
-		faint().Render(fmt.Sprintf("no installed package matches %q", m.filter())),
+		faint().Render(fmt.Sprintf("no installed match for %q", m.filter())),
 		accent().Render("n") + faint().Render(" search for a new package"),
 	}
 	lines := make([]string, m.layout().rows)

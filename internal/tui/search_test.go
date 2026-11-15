@@ -1006,7 +1006,7 @@ func TestSearchBridgeIsCentered(t *testing.T) {
 	m.busy = map[string]string{}
 	m = press(t, m, "/", "q", "q", "enter")
 	raw := screen(m)
-	if !strings.Contains(raw, `no installed package matches "qq"`) {
+	if !strings.Contains(raw, `no installed match for "qq"`) {
 		t.Fatalf("no bridge:\n%s", raw)
 	}
 	if strings.Contains(raw, "n searches the registry") {
@@ -1017,7 +1017,7 @@ func TestSearchBridgeIsCentered(t *testing.T) {
 	}
 	var line string
 	for _, l := range strings.Split(ansi.Strip(raw), "\n") {
-		if strings.Contains(l, "no installed package matches") {
+		if strings.Contains(l, "no installed match for") {
 			line = l
 			break
 		}
@@ -1027,5 +1027,30 @@ func TestSearchBridgeIsCentered(t *testing.T) {
 	}
 	if at := strings.Index(line, "no installed"); at < 8 {
 		t.Errorf("the bridge is not centered (text at %d):\n%s", at, line)
+	}
+}
+
+// A long empty state must not push the bottom bar out of the table: the rule
+// and the query stay the last two lines however many hint or error lines there
+// are.
+func TestSearchBarSurvivesALongEmptyState(t *testing.T) {
+	m, _ := searchable(t)
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
+	m = searchRail(t, m, "All")
+	m.busy = map[string]string{}
+	errs := map[string]string{}
+	var asks []string
+	for _, name := range []string{"brew", "npm", "composer", "pipx", "uv", "go", "mise", "skills"} {
+		errs[name] = "registry unreachable"
+		asks = append(asks, name)
+	}
+	m.search = &searchState{mode: modeResults, scope: m.curRow().key, query: "zz",
+		errs: errs, answered: map[string]bool{}, asks: asks}
+	sc := screen(m)
+	if !strings.Contains(sc, "could not search any package manager") {
+		t.Errorf("the empty state is missing:\n%s", sc)
+	}
+	if !strings.Contains(sc, "⌕ search zz") {
+		t.Errorf("the bar was clipped by the empty state:\n%s", sc)
 	}
 }

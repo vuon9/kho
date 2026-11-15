@@ -513,10 +513,7 @@ func (m model) searchLines() []string {
 		lines = append(lines, line)
 	}
 	lines = append(lines, m.searchHints(len(rows))...)
-	for len(lines) < m.layout().rows+1 {
-		lines = append(lines, "")
-	}
-	return append(lines, m.barRule(inner), m.searchBar())
+	return append(m.fitBody(lines), m.barRule(inner), m.searchBar())
 }
 
 // searchHints is the table body when it has no rows: what is still on its way,

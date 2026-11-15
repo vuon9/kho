@@ -268,8 +268,8 @@ Mode markers:
   results it is the search.
 
 The way in, decided: the footer key `n new package`, the help screen entry, and
-the empty-filter bridge in the middle of the table: `no installed package
-matches "zzz"`, then `n search for a new package` with `n` lit as a key. There
+the empty-filter bridge in the middle of the table: `no installed match for
+"zzz"`, then `n search for a new package` with `n` lit as a key. There
 is no extra row in the table and no hint line in the panel.
 
 The sidebar's tabs are unchanged: Info, Versions and Security. Enter on a
