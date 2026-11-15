@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -225,5 +226,25 @@ func TestSearchCapabilities(t *testing.T) {
 	}
 	if _, ok := Finders(All())[1].(Finder); !ok { // a sanity check of the helper's shape
 		t.Errorf("Finders returned something that is not a Finder")
+	}
+}
+
+func TestBrewVersionsForACandidate(t *testing.T) {
+	rels, err := Brew{}.Versions(context.Background(), Package{Source: "brew", Name: "neon", Latest: "0.37.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Release{{Version: "0.37.1"}}; !reflect.DeepEqual(rels, want) {
+		t.Errorf("candidate versions %+v, want %+v (no blank installed version)", rels, want)
+	}
+
+	installed, err := Brew{}.Versions(context.Background(), Package{
+		Source: "brew", Name: "neon", Version: "0.36.0", Latest: "0.37.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Release{{Version: "0.37.1"}, {Version: "0.36.0"}}
+	if !reflect.DeepEqual(installed, want) {
+		t.Errorf("installed versions %+v, want %+v", installed, want)
 	}
 }

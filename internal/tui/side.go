@@ -588,6 +588,9 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	verW := max(min(inner-36, 22), 10)
 	lines := plain("  " + faint().Bold(true).Render(pad("VERSION", verW)+" "+pad("DATE", 10)+" NOTES  SECURITY"))
 	for _, r := range v.val {
+		if r.Version == "" {
+			continue
+		}
 		date := ""
 		if !r.Date.IsZero() {
 			date = r.Date.Format("2006-01-02")
@@ -609,7 +612,7 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		case history && p.Version != "" && vuln.Compare(r.Version, p.Version) > 0:
 			tags = append(tags, green().Render("✓ safe"))
 		}
-		if provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
+		if p.Version != "" && provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
 			tags = append(tags, pill("installed", th.green))
 		}
 		lines = append(lines, row("  "+pad(printable(r.Version), verW)+" "+pad(faint().Render(date), 10)+" "+notes+" "+strings.Join(tags, " ")))

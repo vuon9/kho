@@ -1054,3 +1054,23 @@ func TestSearchBarSurvivesALongEmptyState(t *testing.T) {
 		t.Errorf("the bar was clipped by the empty state:\n%s", sc)
 	}
 }
+
+// A candidate's Versions tab must never look installed: a blank release would
+// compare equal to the candidate's empty version and grow an installed pill.
+func TestCandidateVersionsDoNotLookInstalled(t *testing.T) {
+	m, _ := searchable(t)
+	m = openCandidate(t, m, "brew", "yq", 0)
+	p, ok := m.current()
+	if !ok || p.Version != "" {
+		t.Fatalf("current %+v is not a candidate", p)
+	}
+	m.versions[cacheKey(p)] = &lazy[[]provider.Release]{done: true,
+		val: []provider.Release{{Version: "0.2.94"}, {Version: ""}}}
+	raw := m.View().Content
+	if strings.Contains(raw, pill("installed", th.green)) {
+		t.Errorf("a candidate version looks installed:\n%s", ansi.Strip(raw))
+	}
+	if !strings.Contains(ansi.Strip(raw), "0.2.94") {
+		t.Errorf("the real version is missing:\n%s", ansi.Strip(raw))
+	}
+}

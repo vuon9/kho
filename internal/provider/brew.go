@@ -152,13 +152,17 @@ func (Brew) Versions(ctx context.Context, p Package) ([]Release, error) {
 			return rels, nil
 		}
 	}
-	rels := []Release{{Version: p.Latest, URL: p.Homepage}}
+	var rels []Release
+	if p.Latest != "" {
+		rels = append(rels, Release{Version: p.Latest, URL: p.Homepage})
+	}
 	for _, v := range slices.Backward(p.Versions) {
-		if v != p.Latest {
+		if v != p.Latest && v != "" {
 			rels = append(rels, Release{Version: v, URL: p.Homepage})
 		}
 	}
-	if len(p.Versions) == 0 && p.Version != p.Latest {
+	// A package the machine does not have has no installed version to add.
+	if len(p.Versions) == 0 && p.Version != "" && p.Version != p.Latest {
 		rels = append(rels, Release{Version: p.Version, URL: p.Homepage})
 	}
 	return rels, nil
