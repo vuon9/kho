@@ -865,9 +865,11 @@ func (m model) skillMetaLines(p provider.Package) []line {
 func (m model) skillDocView(p provider.Package, inner int) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
-	case d == nil && m.isCandidate(p) && m.focus != focusSide:
-		return plain(faint().Render(" press enter to read SKILL.md"))
-	case d == nil || !d.done:
+	case d == nil:
+		// The debounce timer is still running, so there is nothing to spin
+		// yet; saying loading is honest until the read starts.
+		return plain(faint().Render(" loading SKILL.md…"))
+	case !d.done:
 		return plain(m.spin() + faint().Render(" loading SKILL.md…"))
 	case d.err != nil:
 		return plain(red().Render(" " + d.err.Error()))

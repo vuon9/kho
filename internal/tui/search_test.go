@@ -1180,6 +1180,9 @@ func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
 	if len(ticks) != 1 {
 		t.Fatalf("first selection scheduled %d reads, want 1", len(ticks))
 	}
+	if sc := screen(m); strings.Contains(sc, "press enter to read SKILL.md") || !strings.Contains(sc, "loading SKILL.md") {
+		t.Errorf("the waiting pane is wrong:\n%s", sc)
+	}
 	first, _ := m.current()
 	firstKey := cacheKey(first)
 	m = press(t, m, "j")
