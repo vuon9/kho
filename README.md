@@ -79,6 +79,18 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
   --signer-workflow vuon9/kho/.github/workflows/release.yml
 ```
 
+`checksums.txt` also carries a keyless cosign signature. With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) installed, verify it:
+
+```bash
+VERSION=0.1.15   # the release you downloaded
+curl -LO "https://github.com/vuon9/kho/releases/download/v${VERSION}/checksums.txt"
+curl -LO "https://github.com/vuon9/kho/releases/download/v${VERSION}/checksums.txt.sigstore.json"
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/vuon9/kho/.github/workflows/release.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
 </details>
 
 ### Requirements
