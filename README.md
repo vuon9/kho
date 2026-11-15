@@ -6,7 +6,8 @@
 
 **Every package manager on your machine, one list, checked.**
 
-![kho](https://github.com/user-attachments/assets/955660c2-7728-4f2b-b8b1-90ba7b144888)
+<img width="1904" height="1120" alt="image" src="https://github.com/user-attachments/assets/edb2dcb7-8a0a-4c15-b51e-898eabf202f6" />
+
 
 *Kho* is Vietnamese for storehouse: one place for what your machine and your project have installed, the advisories that affect them, and the command that fixes each one. It runs as a terminal app, and as a JSON CLI for agents.
 
