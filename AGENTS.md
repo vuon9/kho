@@ -70,5 +70,5 @@ kho gets opened on machines and folders nobody has vetted. Breaking one of these
 
 - [Conventional Commits](https://www.conventionalcommits.org). release-please picks the version and writes the changelog from the type: `feat`, `fix`, `perf` and `docs` cut a release, `refactor` and `chore` don't. A `Release-As: x.y.z` footer forces one.
 - Commits are signed.
-- A merged release PR tags the release, and the release job waits for a person to approve it before it builds binaries and updates the Homebrew cask in `vuon9/tap`. After every release, check that the release has assets and the cask moved.
+- Nothing releases on its own. Run the `release` workflow from `main` (`gh workflow run release.yml --ref main`, or Actions, release, Run workflow) and release-please opens or updates the release PR. A merged release PR tags the release, and the release job waits for a person to approve it before it builds binaries and updates the Homebrew cask in `vuon9/tap`. After every release, check that the release has assets and the cask moved.
 - Dependabot minor and patch updates merge themselves once CI passes. Majors wait for a person.
