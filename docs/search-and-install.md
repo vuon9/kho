@@ -343,9 +343,10 @@ Rows use the machine table's language, squeezed to the panel's width:
   so upgrading works exactly as it does on the installed list.
 - A name that is not installed opens a candidate sidebar.
 - Results never join the installed list, its counts or its status chips.
-- Nothing is read while the selection moves. `enter` is the first network step
-  for a row: it resolves the newest version when search did not return one
-  (composer), fills `LATEST`, and loads the sidebar.
+- Nothing is read while the selection moves. Pressing `enter`, or picking a
+  data tab such as Versions, opens the row: it resolves the newest version when
+  search did not return one (composer), fills `LATEST`, and loads the sidebar.
+  After that the row behaves like an installed one on that tab.
 
 The candidate sidebar is the existing right sidebar, not a new panel. Same box,
 same tab bar, same width, same keys (`i v a`, `1-3`, `[ ]`, `J K`, `enter`),

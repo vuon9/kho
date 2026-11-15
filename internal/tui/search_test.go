@@ -1074,3 +1074,22 @@ func TestCandidateVersionsDoNotLookInstalled(t *testing.T) {
 		t.Errorf("the real version is missing:\n%s", ansi.Strip(raw))
 	}
 }
+
+// Pressing a data tab on a result is an explicit request: Versions loads even
+// when enter was not pressed first. Without that, the tab said "loading" with
+// nothing scheduled and a spinner that could not tick.
+func TestCandidateVersionsLoadOnVWithoutEnter(t *testing.T) {
+	m, _ := searchable(t)
+	m = runSearch(t, m, "brew", "yq")
+	m = press(t, m, "v")
+	sc := screen(m)
+	if strings.Contains(sc, "loading versions") {
+		t.Errorf("versions kept loading:\n%s", sc)
+	}
+	if strings.Contains(sc, "press enter to load versions") {
+		t.Errorf("pressing v did not open the row:\n%s", sc)
+	}
+	if !strings.Contains(sc, "0.2.94") {
+		t.Errorf("the versions list did not arrive:\n%s", sc)
+	}
+}

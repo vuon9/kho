@@ -871,10 +871,12 @@ func (m *model) pressSearch(key string, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			return m.tabTo(m.tabs()[i]), false
 		}
 	case "i":
+		st.opened = true
 		m.setTab(tabInfo)
 	case "v":
 		return m.tabTo(tabVersions), false
 	case "a":
+		st.opened = true
 		m.setTab(tabSecurity)
 	case "]":
 		tabs := m.tabs()
