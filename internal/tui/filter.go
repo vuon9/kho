@@ -150,9 +150,17 @@ func (m model) filterBar() string {
 	return head + strings.Join(texts, " ")
 }
 
-// filterBoxWidth is the keyword box with its filter label in it. The box keeps
-// one width while typing, so the label stays and the chips never move.
-const filterBoxWidth = 22
+// The filter box keeps one width while typing, so the label stays and the
+// chips never move. It grows with the table but stays narrow enough to leave
+// the active chip beside it on the smallest terminal kho draws.
+const (
+	filterBoxMin = 20
+	filterBoxMax = 30
+)
+
+func (m model) filterBoxWidth() int {
+	return min(filterBoxMax, max(filterBoxMin, m.layout().tableW-12))
+}
 
 // filterBox is the bar's head: the word filter, then the query, lit like the
 // search box's own label. A long query keeps its tail, as the search bar does.
@@ -162,7 +170,8 @@ func (m model) filterBox() string {
 	if m.filtering {
 		cursor = accent().Render("▏")
 	}
-	return pad(fitBar(prefix, m.filter(), cursor, "", filterBoxWidth), filterBoxWidth)
+	w := m.filterBoxWidth()
+	return pad(fitBar(prefix, m.filter(), cursor, "", w), w)
 }
 
 const filterWidth = 14

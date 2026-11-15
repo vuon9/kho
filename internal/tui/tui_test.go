@@ -312,7 +312,9 @@ func TestView(t *testing.T) {
 		{id: "skills show their audits", keys: []string{"G", "a"}, want: []string{"Security audits", "Gen Agent Trust Hub", "Pass", "Snyk", "Warn", "https://www.skills.sh/someone/"}},
 		{id: "skills show SKILL.md", keys: []string{"G", "3"}, want: []string{"description Plan big work", "📄 SKILL.md", "Split the work into tickets."}},
 		{id: "skills show their README", keys: []string{"G", "4"}, want: []string{"Read me first", "How to use it."}, lacks: []string{"📄 SKILL.md"}},
-		{id: "the filter bar sits in the package panel", want: []string{"⌕ filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1", "◌ 0", "✓ 1"}},
+		{id: "the filter bar sits in the package panel", // The wider filter box leaves less room for chips at this width; the first
+			// ones still show, and a wider terminal fits them all (images_test).
+			want: []string{"⌕ filter", "All 5", "⚠ 1", "↑ 3", "⚑ 1"}},
 		{id: "the active chip is named in full", keys: []string{"o"}, want: []string{"↑ Outdated 3", "⚠ 1", "All 5"}},
 		{id: "typing shows in the filter bar under the label", keys: []string{"/", "b"}, want: []string{"⌕ filter b▏"}},
 		{id: "kept filter keeps the label", keys: []string{"/", "b", "enter"}, want: []string{"⌕ filter b"}},
