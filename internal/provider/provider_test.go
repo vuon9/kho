@@ -515,6 +515,22 @@ func TestParseVersions(t *testing.T) {
 			wantRepo: "owner/name",
 		},
 		{
+			id:    "npm 12 wraps the view document in one array element",
+			parse: func(in string) ([]Release, string, error) { return parseNpmView("diffkit", []byte(in)) },
+			in: `[{"time":{"created":"2026-10-01T00:00:00Z","modified":"2026-10-09T00:00:00Z","0.23.0":"2026-10-02T00:00:00Z","0.24.1":"2026-10-08T00:00:00Z"},
+				"repository":{"type":"git","url":"git+https://github.com/example/diffkit.git"}}]`,
+			want: []Release{
+				{Version: "0.24.1", Date: day(8), URL: "https://www.npmjs.com/package/diffkit/v/0.24.1"},
+				{Version: "0.23.0", Date: day(2), URL: "https://www.npmjs.com/package/diffkit/v/0.23.0"},
+			},
+			wantRepo: "example/diffkit",
+		},
+		{
+			id:    "npm 12 empty array holds no document",
+			parse: func(in string) ([]Release, string, error) { return parseNpmView("x", []byte(in)) },
+			in:    `[]`,
+		},
+		{
 			id:    "packagist versions carry a field left out from the version before, newest first",
 			parse: func(in string) ([]Release, string, error) { return parsePackagist("acme/ledger", []byte(in)) },
 			in: `{"minified":"composer/2.0","packages":{"acme/ledger":[

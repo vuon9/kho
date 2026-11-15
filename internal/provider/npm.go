@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -95,12 +96,34 @@ func (Npm) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return withNotes(ctx, repo, rels), nil
 }
 
+// npmViewDoc unwraps the document `npm view --json` prints. npm 12 wraps it in
+// a one-element array; older releases and the registry's own document are the
+// object itself.
+func npmViewDoc(data []byte) (json.RawMessage, error) {
+	doc := bytes.TrimSpace(data)
+	if len(doc) == 0 || doc[0] != '[' {
+		return doc, nil
+	}
+	var docs []json.RawMessage
+	if err := json.Unmarshal(doc, &docs); err != nil {
+		return nil, err
+	}
+	if len(docs) == 0 {
+		return json.RawMessage("{}"), nil
+	}
+	return docs[0], nil
+}
+
 func parseNpmView(name string, data []byte) ([]Release, string, error) {
+	doc, err := npmViewDoc(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("npm view: %w", err)
+	}
 	var view struct {
 		Time       map[string]time.Time `json:"time"`
 		Repository any                  `json:"repository"`
 	}
-	if err := json.Unmarshal(data, &view); err != nil {
+	if err := json.Unmarshal(doc, &view); err != nil {
 		return nil, "", fmt.Errorf("npm view: %w", err)
 	}
 	var rels []Release
