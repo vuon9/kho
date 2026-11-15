@@ -223,15 +223,15 @@ func TestSearchPromptIsQuiet(t *testing.T) {
 		lacks     []string
 	}{
 		{id: "n opens the prompt and reads nothing at all", rail: "brew", prompt: true,
-			shows: []string{"⌕ search brew for", "type a name  enter search  esc cancel", "anvil"}},
-		{id: "pipx says it takes a name, not a query", rail: "pipx", prompt: true,
-			shows: []string{"add to pipx by name"}},
-		{id: "go says it takes a module path", rail: "go", prompt: true,
-			shows: []string{"install a module by path"}},
-		{id: "the All row says it searches everything", rail: "All", prompt: true,
-			shows: []string{"search every package manager for"}},
+			shows: []string{"⌕ search", "type a name  enter search  esc cancel", "anvil"}},
+		{id: "every manager's prompt says only search", rail: "pipx", prompt: true,
+			shows: []string{"⌕ search"}, lacks: []string{"add to pipx"}},
+		{id: "go says only search too", rail: "go", prompt: true,
+			shows: []string{"⌕ search"}, lacks: []string{"module by path"}},
+		{id: "the All row says only search", rail: "All", prompt: true,
+			shows: []string{"⌕ search"}, lacks: []string{"every package manager for"}},
 		{id: "typing is a draft and still reads nothing", rail: "brew", query: "yq", prompt: true,
-			searches: 0, shows: []string{"⌕ search brew for yq▏"}},
+			searches: 0, shows: []string{"⌕ search yq▏"}},
 		{id: "esc cancels the prompt", rail: "brew", query: "yq", keys: []string{"esc"}, nilSearch: true, shows: []string{"anvil"}},
 		{id: "enter with nothing typed does nothing", rail: "brew", keys: []string{"enter"}, prompt: true,
 			notice: "type a name to search", shows: []string{"type a name to search"}},
@@ -726,7 +726,7 @@ func TestSearchCarriesFilter(t *testing.T) {
 	if m.search == nil || m.search.draft != "fo" {
 		t.Errorf("draft %q, want the filter", m.search.draft)
 	}
-	if sc := screen(m); !strings.Contains(sc, "search brew for fo") {
+	if sc := screen(m); !strings.Contains(sc, "⌕ search fo") {
 		t.Errorf("prompt lacks the carried filter:\n%s", sc)
 	}
 }
@@ -993,5 +993,39 @@ func TestSearchShowsItsSpinner(t *testing.T) {
 	m.search.busy, m.search.finding = false, true
 	if got := ansi.Strip(m.searchStatusBar()); !strings.Contains(got, "resolving the newest version") {
 		t.Errorf("resolving status %q", got)
+	}
+}
+
+// The empty installed filter points at the registry search from the middle of
+// the table, with the key lit the way the footer lights its keys.
+func TestSearchBridgeIsCentered(t *testing.T) {
+	m, _ := searchable(t)
+	m = searchRail(t, m, "brew")
+	// The harness does not drain every provider's latest lookup, so clear the
+	// spun-up set and let the empty table draw.
+	m.busy = map[string]string{}
+	m = press(t, m, "/", "q", "q", "enter")
+	raw := screen(m)
+	if !strings.Contains(raw, `no installed package matches "qq"`) {
+		t.Fatalf("no bridge:\n%s", raw)
+	}
+	if strings.Contains(raw, "n searches the registry") {
+		t.Errorf("the old bridge copy survived:\n%s", raw)
+	}
+	if want := accent().Render("n") + faint().Render(" search for a new package"); !strings.Contains(m.View().Content, want) {
+		t.Errorf("n is not lit like a key:\n%s", m.View().Content)
+	}
+	var line string
+	for _, l := range strings.Split(ansi.Strip(raw), "\n") {
+		if strings.Contains(l, "no installed package matches") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("no bridge line")
+	}
+	if at := strings.Index(line, "no installed"); at < 8 {
+		t.Errorf("the bridge is not centered (text at %d):\n%s", at, line)
 	}
 }

@@ -83,11 +83,15 @@ func fg(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c)
 func faint() lipgloss.Style  { return fg(th.muted) }
 func bold() lipgloss.Style   { return lipgloss.NewStyle().Bold(true) }
 func accent() lipgloss.Style { return fg(th.accent).Bold(true) }
-func green() lipgloss.Style  { return fg(th.green) }
-func yellow() lipgloss.Style { return fg(th.yellow) }
-func orange() lipgloss.Style { return fg(th.orange) }
-func red() lipgloss.Style    { return fg(th.red).Bold(true) }
-func cyan() lipgloss.Style   { return fg(th.cyan) }
+
+// searchTone marks the search input, so a search bar reads differently from the
+// installed filter without a sentence saying which manager it asks.
+func searchTone() lipgloss.Style { return fg(th.accent2).Bold(true) }
+func green() lipgloss.Style      { return fg(th.green) }
+func yellow() lipgloss.Style     { return fg(th.yellow) }
+func orange() lipgloss.Style     { return fg(th.orange) }
+func red() lipgloss.Style        { return fg(th.red).Bold(true) }
+func cyan() lipgloss.Style       { return fg(th.cyan) }
 
 func link(url string) lipgloss.Style {
 	return fg(th.cyan).Underline(true).Hyperlink(url)

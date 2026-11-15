@@ -223,7 +223,7 @@ bar changed:
 │ uv             ││                                               ││                              │
 │ go             ││                                               ││                              │
 │                 ││ ───────────────────────────────────────────── ││                              │
-│ ── Project ──  ││  ⌕ search brew for ▏                          ││                              │
+│ ── Project ──  ││  ⌕ search ▏                                   ││                              │
 ╰─────────────────╯╰───────────────────────────────────────────────╯╰──────────────────────────────╯
  45 packages · 18 outdated                                        🎨 kho
  ───────────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ Results, after `enter`:
 │ ── Project ──  ││                                               ││ runs      brew install       │
 │ ...            ││                                               ││           --formula yq       │
 │                 ││ ───────────────────────────────────────────── ││                              │
-│                 ││  ⌕ yam                                        ││ ✓ no known advisories in     │
+│                 ││  ⌕ search yam                                 ││ ✓ no known advisories in     │
 ╰─────────────────╯╰───────────────────────────────────────────────╯╰──────────────────────────────╯
  12 results · brew                                                🎨 kho
  ───────────────────────────────────────────────────────────────
@@ -259,15 +259,18 @@ Mode markers:
   `🍺 brew · search · 12 results` in results. The prompt keeps the installed
   title and changes only the bottom bar and footer.
 - The bottom bar carries the mode: the filter box and status chips in
-  installed, the prompt line in prompt, the query in results.
+  installed, the prompt line in prompt, the query in results. A search bar says
+  only `⌕ search`; its glyph, cursor and the rule above it take the theme's
+  second accent, while the installed filter keeps the first.
 - The status bar's left side follows: `45 packages · 18 outdated` in installed,
   `12 results · brew` in results.
 - `⌕` means typing goes somewhere. In installed it is the filter, in prompt and
   results it is the search.
 
 The way in, decided: the footer key `n new package`, the help screen entry, and
-the empty-filter hint `no installed package matches "zzz" · n searches the
-registry`. There is no extra row in the table and no hint line in the panel.
+the empty-filter bridge in the middle of the table: `no installed package
+matches "zzz"`, then `n search for a new package` with `n` lit as a key. There
+is no extra row in the table and no hint line in the panel.
 
 The sidebar's tabs are unchanged: Info, Versions and Security. Enter on a
 result opens it in the sidebar, as Enter on the machine table does, and the
@@ -398,14 +401,14 @@ side carries the spinner and any short source error.
 **Prompt, empty.** The installed rows stay in the body. The bottom bar becomes:
 
 ```
-  ⌕ search brew for ▏
+  ⌕ search ▏
   type a name  enter search  esc cancel
 ```
 
-- All row: `⌕ search every package manager for`.
-- pipx and uv: `⌕ add to <manager> by name` (they only know exact names).
-- go: `⌕ install a module by path`.
-- Enter with nothing typed does nothing and says `type a name to search`.
+Every manager's prompt says only `search`. The search tone on its glyph, cursor
+and rule separates it from the installed filter; the title and the results
+status bar still name the scope. Enter with nothing typed does nothing and says
+`type a name to search`.
 
 **Prompt, one character.** Enter does not fetch. The bar adds
 `type one more character`.
@@ -684,6 +687,11 @@ Small choices made while building, none of which changes the shape:
   failed source: `kho search --source uv zzzz` exits 0 with no rows.
 - Exact-name errors cannot be told apart from network errors yet, so both read
   as no match for pipx, uv and go.
+- The search bar says only `search`. Its glyph, cursor and the rule above it use
+  the theme's second accent, so the mode reads without naming the manager. The
+  installed filter keeps the first accent.
+- The empty-filter bridge is centered in the table, with `n` lit as a key,
+  rather than a sentence at the left edge.
 
 ## 7. Build order
 

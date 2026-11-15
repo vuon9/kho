@@ -144,21 +144,6 @@ func (m *model) openSearch() {
 	m.notice = ""
 }
 
-// searchPromptLabel is the prompt's sentence above the draft. The exact-name
-// managers say what they take, and the whole list says it searches everything.
-func (m model) searchPromptLabel() string {
-	r := m.curRow()
-	switch {
-	case r.kind == rowAll:
-		return "search every package manager for"
-	case r.name == "pipx", r.name == "uv":
-		return "add to " + r.name + " by name"
-	case r.name == "go":
-		return "install a module by path"
-	}
-	return "search " + r.name + " for"
-}
-
 // searchScopeLabel names the scope on the status bar's left side.
 func (m model) searchScopeLabel() string {
 	if m.curRow().kind == rowAll {
@@ -167,23 +152,24 @@ func (m model) searchScopeLabel() string {
 	return m.curRow().name
 }
 
-// searchBar is the bottom bar in prompt and results: the prompt with its draft,
-// or the query the results answer. A long query keeps its tail on screen.
+// searchBar is the bottom bar in prompt and results: the word search, then the
+// draft or the query. The search tone on its glyph, cursor and the rule above
+// it says which input this is; the manager's name is already in the title and
+// the status bar. A long query keeps its tail on screen.
 func (m model) searchBar() string {
 	st := m.search
 	w := max(m.layout().tableW-2, 12)
 	cursor := ""
-	prefix := " " + accent().Render("⌕ ")
+	prefix := " " + searchTone().Render("⌕ search ")
 	hint := ""
 	switch {
 	case st.mode == modePrompt:
-		prefix += m.searchPromptLabel() + " "
-		cursor = accent().Render("▏")
+		cursor = searchTone().Render("▏")
 		if utf8.RuneCountInString(strings.TrimSpace(st.draft)) == 1 {
 			hint = faint().Render("  type one more character")
 		}
 	case st.editing:
-		cursor = accent().Render("▏")
+		cursor = searchTone().Render("▏")
 	}
 	return fitBar(prefix, st.draftOrQuery(), cursor, hint, w)
 }
@@ -530,7 +516,7 @@ func (m model) searchLines() []string {
 	for len(lines) < m.layout().rows+1 {
 		lines = append(lines, "")
 	}
-	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), m.searchBar())
+	return append(lines, m.barRule(inner), m.searchBar())
 }
 
 // searchHints is the table body when it has no rows: what is still on its way,

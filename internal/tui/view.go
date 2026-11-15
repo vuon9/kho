@@ -510,16 +510,16 @@ func (m model) tableLines() []string {
 		lines = append(lines, line)
 	}
 	if len(rows) == 0 && len(m.busy) == 0 {
-		empty := "  nothing matches"
 		switch {
 		case m.filter() != "" && (m.curRow().kind == rowAll || m.curRow().kind == rowProvider):
-			// The bridge to search: the installed filter has nothing, so say
-			// where the registry search is.
-			empty = fmt.Sprintf("  no installed package matches %q · n searches the registry", m.filter())
+			// The installed filter found nothing, so the bridge to the registry
+			// search takes the middle of the table.
+			lines = append(lines, m.searchBridge(inner)...)
 		case m.status() != statusAll && m.filter() == "":
-			empty = "  ✨ all clear here"
+			lines = append(lines, "", faint().Render("  ✨ all clear here"))
+		default:
+			lines = append(lines, "", faint().Render("  nothing matches"))
 		}
-		lines = append(lines, "", faint().Render(empty))
 	}
 	for len(lines) < m.layout().rows+1 {
 		lines = append(lines, "")
@@ -528,7 +528,39 @@ func (m model) tableLines() []string {
 	if m.inPrompt() {
 		bar = m.searchBar()
 	}
-	return append(lines, fg(th.subtle).Render(strings.Repeat("─", inner)), bar)
+	return append(lines, m.barRule(inner), bar)
+}
+
+// barRule is the line above the bottom bar. A search bar takes the search
+// tone, so it reads as a different input from the installed filter.
+func (m model) barRule(inner int) string {
+	e := fg(th.subtle)
+	if m.search != nil {
+		e = searchTone()
+	}
+	return e.Render(strings.Repeat("─", inner))
+}
+
+// centered puts a styled line in the middle of width, measuring the styles so
+// the padding is right whatever the theme draws.
+func centered(text string, width int) string {
+	return strings.Repeat(" ", max((width-lipgloss.Width(text))/2, 0)) + text
+}
+
+// searchBridge fills the empty table body when the installed filter matches
+// nothing: the way to search the registries sits in the middle where the
+// missing rows would be, and n is lit the way the footer lights its keys.
+func (m model) searchBridge(inner int) []string {
+	hint := []string{
+		faint().Render(fmt.Sprintf("no installed package matches %q", m.filter())),
+		accent().Render("n") + faint().Render(" search for a new package"),
+	}
+	lines := make([]string, m.layout().rows)
+	top := max((len(lines)-len(hint))/2, 0)
+	for i, l := range hint {
+		lines[top+i] = centered(l, inner)
+	}
+	return lines
 }
 
 // nameTag follows a project package's name: dev, and the direct package
