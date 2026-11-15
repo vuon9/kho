@@ -39,6 +39,43 @@ func OSVName(p Package) string {
 
 var pypiSeparators = regexp.MustCompile(`[-_.]+`)
 
+var brewRevision = regexp.MustCompile(`_\d+$`)
+
+// BrewVersion is an installed formula version without the revision brew
+// appends, as in 4.0.0_1. Homebrew's scan reports the upstream form.
+func BrewVersion(v string) string {
+	return brewRevision.ReplaceAllString(v, "")
+}
+
+// BrewQuery is the cache key for the formula Homebrew's own scan assessed.
+// OSV has no ecosystem for brew, so this query stays away from vuln.Scan.
+func BrewQuery(p Package) (vuln.Query, bool) {
+	if p.Source != "brew" {
+		return vuln.Query{}, false
+	}
+	return vuln.Query{Ecosystem: vuln.Homebrew, Name: p.Name, Version: BrewVersion(p.Version)}, true
+}
+
+// BrewQueries are the cache keys for the installed Homebrew formulae.
+func BrewQueries(pkgs []Package) []vuln.Query {
+	var qs []vuln.Query
+	for _, p := range pkgs {
+		if q, ok := BrewQuery(p); ok {
+			qs = append(qs, q)
+		}
+	}
+	return qs
+}
+
+// Coverage says why kho has no advisories for p when a source does not cover
+// it at all, or "" when it does.
+func Coverage(p Package) string {
+	if p.Source == "cask" {
+		return "Homebrew scans formulae, not casks"
+	}
+	return ""
+}
+
 // NormalizePyPI is a Python package's standard name (PEP 503), the form OSV
 // and PyPI index it under: "Foo_Bar" becomes "foo-bar".
 func NormalizePyPI(name string) string {

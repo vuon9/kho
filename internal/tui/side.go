@@ -413,9 +413,15 @@ func (m model) securitySummary(p provider.Package) string {
 		}
 		return verdictPill(vuln.Verdict(a.Worst())) + faint().Render(" worst of 3 audits on skills.sh")
 	}
-	q, ok := provider.Query(p)
+	q, ok := securityQuery(p)
 	if !ok {
+		if why := m.coverage(p); why != "" {
+			return faint().Render("not covered: " + why)
+		}
 		return faint().Render("not covered: OSV has no data for " + p.Source)
+	}
+	if why := m.coverage(p); why != "" {
+		return faint().Render("not covered: " + why)
 	}
 	if _, checked := m.db.Checked[q.Key()]; !checked {
 		return faint().Render("not checked yet")
@@ -694,16 +700,24 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	if m.isCandidate(p) {
 		return m.candidateSecurityLines(p, inner)
 	}
-	q, ok := provider.Query(p)
-	if !ok {
-		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
+	q, ok := securityQuery(p)
+	if !ok || m.coverage(p) != "" {
+		why := m.coverage(p)
+		if why == "" {
+			why = "OSV has no data for " + p.Source
+		}
+		return plain("", faint().Render(" 🛡  Not covered: "+why), faint().Render("    so kho can't check this one yet."))
 	}
 	es := m.securityEntries()
 	if len(es) == 0 {
 		if _, checked := m.db.Checked[q.Key()]; !checked {
 			return m.unchecked(p.Name)
 		}
-		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+" on osv.dev"))
+		by := " on osv.dev"
+		if p.Source == "brew" {
+			by = " by Homebrew"
+		}
+		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+by))
 	}
 	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
 	for _, e := range es {

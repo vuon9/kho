@@ -925,3 +925,170 @@ func TestCheckProjectGoneTag(t *testing.T) {
 		t.Errorf("verdict %q reads as a clean project", text.out)
 	}
 }
+
+func TestCheckBrewScan(t *testing.T) {
+	anvil := provider.Package{Source: "brew", Name: "anvil", Version: "1.2.3", Latest: "1.2.4", Outdated: true}
+	bramble := provider.Package{Source: "brew", Name: "bramble", Version: "2.0.0", Latest: "2.0.0", Dependency: true}
+	cask := provider.Package{Source: "cask", Name: "focusbar", Version: "2.0.3", Latest: "2.0.3"}
+	fixed := vuln.Advisory{ID: "CVE-0000-0001", Severity: "HIGH", Summary: "Anvil runs a command twice",
+		Package: "anvil", Versions: []string{"1.2.3"}, Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "1.2.4"}}}
+	unfixed := vuln.Advisory{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file",
+		Package: "anvil", Versions: []string{"1.2.3"}}
+	tests := []struct {
+		id     string
+		pkgs   []provider.Package
+		result vuln.BrewResult
+		err    error
+		scanOK bool
+		code   int
+		check  func(Report) bool
+	}{
+		{
+			id: "a released fix is at risk and offers the upgrade", pkgs: []provider.Package{anvil},
+			result: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{fixed}}}},
+			scanOK: true, code: ExitAtRisk,
+			check: func(r Report) bool {
+				f := r.Vulnerable[0]
+				return len(r.Vulnerable) == 1 && f.Source == "brew" && f.FixedIn == "1.2.4" && *f.LatestIsClear &&
+					f.Fix == "kho install brew/anvil@1.2.4 --yes" && r.Complete && len(r.NotCovered) == 0
+			},
+		},
+		{
+			id: "a finding with no released fix never claims the newest formula is clear", pkgs: []provider.Package{anvil},
+			result: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{unfixed}}}},
+			scanOK: true, code: ExitAtRisk,
+			check: func(r Report) bool {
+				f := r.Vulnerable[0]
+				return f.FixedIn == "" && f.LatestIsClear != nil && !*f.LatestIsClear && f.Fix == ""
+			},
+		},
+		{
+			id: "a skipped formula leaves the scan incomplete", pkgs: []provider.Package{anvil, bramble},
+			result: vuln.BrewResult{Checked: 2, Complete: false, Skipped: []string{"bramble"}},
+			scanOK: true, code: ExitOK,
+			check: func(r Report) bool {
+				return r.Safe && !r.Complete && slices.Contains(r.NotCovered, "brew/bramble (Homebrew found no source it could match)")
+			},
+		},
+		{
+			id: "an untrusted tap is named, and its finding is not shown", pkgs: []provider.Package{anvil},
+			result: vuln.BrewResult{Checked: 1, Complete: false, Unscanned: map[string]string{"anvil": "untrusted_tap"},
+				Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{fixed}}}},
+			scanOK: true, code: ExitOK,
+			check: func(r Report) bool {
+				return r.Safe && slices.Contains(r.NotCovered, "brew/anvil (from an untrusted tap)")
+			},
+		},
+		{
+			id: "an old brew is a coverage gap, not an error", pkgs: []provider.Package{anvil},
+			err: provider.ErrBrewVulnsUnsupported, code: ExitOK,
+			check: func(r Report) bool {
+				return r.Safe && !r.Complete && len(r.Errors) == 0 &&
+					slices.Contains(r.NotCovered, "brew ("+provider.ErrBrewVulnsUnsupported.Error()+")")
+			},
+		},
+		{
+			id: "a cask is named as outside Homebrew's scan", pkgs: []provider.Package{anvil, cask},
+			result: vuln.BrewResult{Checked: 1, Complete: true},
+			scanOK: true, code: ExitOK,
+			check: func(r Report) bool {
+				return r.Safe && r.Complete && slices.Contains(r.NotCovered, "cask (Homebrew scans formulae, not casks)")
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			var r run
+			env := Env{
+				Version:   "v9.9.9",
+				Providers: []provider.Provider{fake{name: "brew", pkgs: tt.pkgs}},
+				DB:        vuln.NewDB(),
+				Log:       history.Open(""),
+				Out:       &out,
+				Err:       &errOut,
+				Now:       func() time.Time { return clock },
+				Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+					return map[string][]string{}, map[string]vuln.Advisory{}, nil
+				},
+				Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+				BrewScan: func(context.Context) (vuln.BrewResult, error) {
+					r.scanned++
+					return tt.result, tt.err
+				},
+			}
+			code := Main(env, []string{"check", "--json"})
+			var report Report
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, out.String())
+			}
+			if code != tt.code || !tt.check(report) {
+				t.Errorf("exit %d, report %+v", code, report)
+			}
+		})
+	}
+}
+
+func TestCheckBrewScanUsesTheCache(t *testing.T) {
+	var out, errOut bytes.Buffer
+	scans := 0
+	db := vuln.NewDB()
+	env := Env{
+		Version:   "v9.9.9",
+		Providers: []provider.Provider{fake{name: "brew", pkgs: []provider.Package{{Source: "brew", Name: "anvil", Version: "1.2.3", Latest: "1.2.3"}}}},
+		DB:        db,
+		Log:       history.Open(""),
+		Out:       &out,
+		Err:       &errOut,
+		Now:       func() time.Time { return clock },
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+		BrewScan: func(context.Context) (vuln.BrewResult, error) {
+			scans++
+			return vuln.BrewResult{Checked: 1, Complete: true}, nil
+		},
+	}
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	out.Reset()
+	Main(env, []string{"check", "--json"})
+	if scans != 1 {
+		t.Errorf("scanned brew %d times, want once", scans)
+	}
+	out.Reset()
+	Main(env, []string{"check", "--json", "--refresh"})
+	if scans != 2 {
+		t.Errorf("scanned brew %d times after --refresh, want twice", scans)
+	}
+}
+
+func TestRequireCompleteNamesHomebrewCoverage(t *testing.T) {
+	var out, errOut bytes.Buffer
+	env := Env{
+		Version:   "v9.9.9",
+		Providers: []provider.Provider{fake{name: "brew", pkgs: []provider.Package{{Source: "brew", Name: "anvil", Version: "1.2.3", Latest: "1.2.3"}}}},
+		DB:        vuln.NewDB(),
+		Log:       history.Open(""),
+		Out:       &out,
+		Err:       &errOut,
+		Now:       func() time.Time { return clock },
+		Skipped:   map[string]string{"uv": "uv not on PATH"},
+		Scan: func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error) {
+			return map[string][]string{}, map[string]vuln.Advisory{}, nil
+		},
+		Audits: func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error) { return nil, nil },
+		BrewScan: func(context.Context) (vuln.BrewResult, error) {
+			return vuln.BrewResult{Checked: 1, Complete: false, Skipped: []string{"anvil"}}, nil
+		},
+	}
+	if code := Main(env, []string{"check", "--require-complete"}); code != ExitIncomplete {
+		t.Fatalf("exit %d, want %d", code, ExitIncomplete)
+	}
+	for _, want := range []string{"uv (uv not on PATH)", "brew (1 formula not covered)"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errOut.String())
+		}
+	}
+}

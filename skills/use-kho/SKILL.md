@@ -5,7 +5,7 @@ description: "Use when the user asks whether their machine or a project is safe,
 
 # Use kho
 
-kho knows every package on this machine across Homebrew, npm globals, Composer globals, pipx, uv tools, `go install` binaries, mise, and agent skills. It also reads a project's lockfiles. It checks them against OSV (osv.dev) and skills.sh audits, and keeps what it learns in a local cache. You read its JSON and report to the user. The user decides what changes.
+kho knows every package on this machine across Homebrew, npm globals, Composer globals, pipx, uv tools, `go install` binaries, mise, and agent skills. It also reads a project's lockfiles. It checks them against OSV (osv.dev), Homebrew's own scanner for installed formulae, and skills.sh audits, and keeps what it learns in a local cache. You read its JSON and report to the user. The user decides what changes.
 
 If `kho` is missing, ask before installing it: `brew install vuon9/tap/kho` or `go install github.com/vuon9/kho@latest`.
 
@@ -15,10 +15,10 @@ If `kho` is missing, ask before installing it: `brew install vuon9/tap/kho` or `
 kho check --json                      # exit 0 safe, 3 at risk
 kho check --json --require uv,npm     # exit 4 when a named manager could not be read
 kho check --json --require-complete   # exit 4 when anything was skipped or failed
-kho check --json --refresh            # skip the 12-hour cache, ask OSV and skills.sh again
+kho check --json --refresh            # skip the 12-hour cache, ask OSV, Homebrew and skills.sh again
 ```
 
-check exits 0, 3 or 4, or 2 on a usage error. At risk wins: a scan that is at risk exits 3 even when `--require` or `--require-complete` also failed, and stderr still names what was not read. A failed OSV or skills.sh lookup does not change the exit code by itself: the report says `complete: false` and names it under `errors.security`, and `--require-complete` turns it into exit 4.
+check exits 0, 3 or 4, or 2 on a usage error. At risk wins: a scan that is at risk exits 3 even when `--require` or `--require-complete` also failed, and stderr still names what was not read. A failed OSV, Homebrew or skills.sh lookup does not change the exit code by itself: the report says `complete: false` and names it under `errors.security`, and `--require-complete` turns it into exit 4. A brew too old for `brew vulns` is not an error: it is named under `notCovered`, and `--require-complete` turns it into exit 4.
 
 Exit codes for every command: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under --require or --require-complete.
 
@@ -40,15 +40,15 @@ kho reads `package-lock.json`, `composer.lock`, `go.mod`, `uv.lock`, `poetry.loc
 The report has:
 
 - `safe`: false when an installed package has a known advisory or a skill failed an audit.
-- `vulnerable[]`: one entry per package, with `advisories[]` (`id`, `severity`, `summary`, `fixedIn`, `url`), `fixedIn` (the lowest version that fixes all of them), `latestIsClear`, and `fix`, a ready command when the latest version is clear.
+- `vulnerable[]`: one entry per package, with `advisories[]` (`id`, `severity`, `summary`, `fixedIn`, `url`), `fixedIn` (the lowest version that fixes all of them), `latestIsClear`, and `fix`, a ready command when the latest version is clear. Homebrew findings come from Homebrew's scanner and have no ranges, so `fixedIn` is set only when Homebrew named a released fix; without one, `latestIsClear` is false and `fix` is empty.
 - `vulnerableDeps[]`: advisories in a package's dependencies. OSV matches these by module, so the vulnerable code may never run. Report them as "worth a look", not as an emergency.
 - `riskySkills[]`: skills an auditor failed, with the `report` link on skills.sh.
-- `outdated[]`, `notCovered[]` (sources OSV has no data for, such as `brew`), and `errors`, keyed by what failed: a manager's name when it could not be listed, `<manager> latest` when only its latest versions are unknown (its packages were still checked), and `security` when OSV or skills.sh could not be asked.
+- `outdated[]`, `notCovered[]`, and `errors`, keyed by what failed: a manager's name when it could not be listed, `<manager> latest` when only its latest versions are unknown (its packages were still checked), and `security` when OSV, Homebrew or skills.sh could not be asked. `notCovered[]` names each Homebrew formula the scan could not check, with the reason (`brew/<formula> (reason)`), and names casks because Homebrew scans formulae only.
 - `skipped`: the package managers this machine does not have, with what was looked for, such as `{"uv": "uv not on PATH"}`. A manager that is skipped is not read at all, so nothing it holds was checked. `complete` is false whenever this or `errors` is non-empty, so a script can tell a full scan from a partial one.
 
 ## Report
 
-Lead with the verdict in one line. Then list each vulnerable package: name, installed version, the worst severity, how many advisories, and the version that fixes them. Say when the latest version is still affected or no fix exists. Then risky skills with their report links, then a one-line count of vulnerable dependencies and outdated packages. Name the sources that were not covered, and name every manager in `skipped`, so "safe" is never read as "checked everything".
+Lead with the verdict in one line. Then list each vulnerable package: name, installed version, the worst severity, how many advisories, and the version that fixes them. Say when the latest version is still affected or no fix exists. Then risky skills with their report links, then a one-line count of vulnerable dependencies and outdated packages. Name the sources that were not covered, including the Homebrew formulae Homebrew could not check and every cask, and name every manager in `skipped`, so "safe" is never read as "checked everything".
 
 For detail on one package:
 

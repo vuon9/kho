@@ -56,6 +56,8 @@ func (f fake) Versions(_ context.Context, p provider.Package) ([]provider.Releas
 
 var clock = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
+var brewScanResult = vuln.BrewResult{Checked: 3, Complete: true}
+
 var redos = vuln.Advisory{ID: "GHSA-test", Aliases: []string{"CVE-0000-00001"}, Summary: "Bramble vulnerable to ReDoS", Severity: "MODERATE",
 	Package: "bramble", Details: "A regular expression can take a long time.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "24.3.0"}}}
 
@@ -108,7 +110,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -198,6 +200,7 @@ func loaded(t *testing.T) model {
 	fetchAudits = func(_ context.Context, bySource map[string][]string) (map[string]vuln.SkillAudit, error) {
 		return map[string]vuln.SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "safe", Snyk: "medium"}}, nil
 	}
+	scanBrew = func(context.Context) (vuln.BrewResult, error) { return brewScanResult, nil }
 	ps := fakes(t)
 	m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
 	for _, p := range ps {
@@ -297,7 +300,7 @@ func TestView(t *testing.T) {
 		{id: "the rail marks screens with a filter", keys: []string{"h", "j", "/", "g", "o", "enter", "k"}, want: []string{"3 ⌕"}},
 		{id: "selection looks the same in rail and table", want: []string{"▌ ✨ All", "▌ anvil"}},
 		{id: "dependencies sit under the info", want: []string{"🔗 Dependencies · 2", "• openssl@4", "ca-certificates"}},
-		{id: "info shows links", want: []string{"home      https://anvil.example", "repo      github.com/example/anvil", "not covered: OSV has no data for brew"}},
+		{id: "info shows links", want: []string{"home      https://anvil.example", "repo      github.com/example/anvil", "✓ no known advisories"}},
 		{id: "info sums up security", keys: bramble, want: []string{"⚠ 1 known in 22.12.0", "fixed in 24.3.0"}},
 		{id: "pinned and outdated reads as newer", keys: []string{"j"}, want: []string{"⚑ newer", "1.27.1 → 1.27.2"}},
 		{id: "a failing source shows its error", keys: []string{"h", "j", "j", "j"}, want: []string{"mise ls: boom"}},
@@ -311,7 +314,7 @@ func TestView(t *testing.T) {
 		{id: "versions ahead show which are safe", keys: keys(bramble, []string{"v"}), want: []string{"26.10.1", "✓ safe", "22.12.0", "⚠ 1"}},
 		{id: "the security tab lists advisories", keys: keys(bramble, []string{"a"}), want: []string{"MED", "GHSA-test", "≥ 24.3.0", "🛡 GHSA-test", "Bramble vulnerable to ReDoS",
 			"fixed in  24.3.0 · latest 26.10.1 is clear", "https://osv.dev/vulnerability/GHSA-test"}},
-		{id: "brew is not covered by OSV", keys: []string{"a"}, want: []string{"OSV has no data for brew"}},
+		{id: "brew rows are checked by Homebrew", keys: []string{"a"}, want: []string{"✓ No known advisories for 0.2.89", "by Homebrew"}},
 		{id: "skills show their audits", keys: []string{"G", "a"}, want: []string{"Security audits", "Gen Agent Trust Hub", "Pass", "Snyk", "Warn", "https://www.skills.sh/someone/"}},
 		{id: "skills show SKILL.md", keys: []string{"G", "3"}, want: []string{"description Plan big work", "📄 SKILL.md", "Split the work into tickets."}},
 		{id: "skills show their README", keys: []string{"G", "4"}, want: []string{"Read me first", "How to use it."}, lacks: []string{"📄 SKILL.md"}},
@@ -1906,7 +1909,7 @@ func TestSecurityTab(t *testing.T) {
 	}{
 		{id: "a failed check says so", scan: "failed", pkg: "tidyup", want: []string{"", "security check failed: osv.dev answered 503", "R checks again."}},
 		{id: "one still out is still checking", scan: "pending", pkg: "tidyup", want: []string{"", "⣾ checking osv.dev…"}},
-		{id: "a source osv.dev has no data for", pkg: "anvil", want: []string{"", "🛡 OSV has no data for brew,", "so kho can't check this one yet."}},
+		{id: "a brew formula is checked by Homebrew", pkg: "anvil", want: []string{"", "✓ No known advisories for 0.2.89", "checked just now by Homebrew"}},
 		{id: "a clean package says when it was checked", pkg: "inkwell", want: []string{"", "✓ No known advisories for 9.0.2", "checked just now on osv.dev"}},
 		{id: "one with advisories in its dependencies lists them", pkg: "tidyup", want: []string{"SEV ID FIX",
 			"HIGH GO-TEST-0001 ≥ 0.52.0 via example.org/net@v0.50.0",
@@ -2716,5 +2719,27 @@ func TestSkillFrom(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBrewScanShowsFindingsAndWhatItCouldNotCheck(t *testing.T) {
+	m := loaded(t)
+	brew := vuln.Advisory{ID: "GHSA-brew", Summary: "Anvil loads a plugin from the build folder", Severity: "HIGH",
+		Package: "anvil", Versions: []string{"0.2.89"}, Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "0.2.94"}}}
+	var pkgs []provider.Package
+	for _, ps := range m.pkgs {
+		pkgs = append(pkgs, ps...)
+	}
+	m.db.MergeBrew(vuln.BrewResult{Checked: 3, Complete: false,
+		Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "0.2.89", Advisories: []vuln.Advisory{brew}}},
+		Skipped:  []string{"gust"},
+	}, provider.BrewQueries(pkgs), clock)
+	m.reindex()
+	if s := screen(m); !strings.Contains(s, "⚠ 1 known in 0.2.89") || !strings.Contains(s, "fixed in 0.2.94") {
+		t.Errorf("an anvil finding should show as one known advisory with its fix:\n%s", s)
+	}
+	m = press(t, m, "j", "a")
+	if s := screen(m); !strings.Contains(s, "Not covered: Homebrew found no source it") {
+		t.Errorf("gust was skipped, so its security tab must say why:\n%s", s)
 	}
 }

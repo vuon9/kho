@@ -166,6 +166,14 @@ type scanMsg struct {
 	err        error
 }
 
+// brewScanMsg is what Homebrew's own scan found. queries are the formulae the
+// scan covered, so a formula with no findings is marked fresh too.
+type brewScanMsg struct {
+	result  vuln.BrewResult
+	queries []vuln.Query
+	err     error
+}
+
 type historyMsg struct {
 	ecosystem, name string
 	advisories      []vuln.Advisory
@@ -333,6 +341,7 @@ var now = time.Now
 // The network lookups, swapped out in tests.
 var (
 	scanOSV      = vuln.Scan
+	scanBrew     = provider.ScanBrewVulns
 	fetchHistory = vuln.History
 	fetchAudits  = vuln.SkillAudits
 )
@@ -638,6 +647,19 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.save()
 		}
 		m.reindex()
+	case brewScanMsg:
+		m.scanning--
+		switch {
+		case errors.Is(msg.err, provider.ErrBrewVulnsUnsupported):
+			m.db.SetBrewUnsupported(msg.err.Error(), now())
+			m.save()
+		case msg.err != nil:
+			m.secErr = msg.err
+		default:
+			m.db.MergeBrew(msg.result, msg.queries, now())
+			m.save()
+		}
+		m.reindex()
 	case historyMsg:
 		delete(m.advising, msg.ecosystem+"/"+msg.name)
 		if msg.err == nil {
@@ -758,7 +780,8 @@ func (m model) save() {
 }
 
 // secure asks OSV about the packages and dependencies whose results are
-// missing or stale, and skills.sh about skills, unless force asks again.
+// missing or stale, Homebrew about formulae, and skills.sh about skills,
+// unless force asks again.
 func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 	var queries []vuln.Query
 	audits := map[string][]string{}
@@ -794,7 +817,34 @@ func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 			return auditMsg{audits, got, err}
 		})
 	}
+	if brew := provider.BrewQueries(pkgs); len(brew) > 0 && scanBrew != nil && (force || len(m.db.Stale(brew, now())) > 0) {
+		m.scanning++
+		cmds = append(cmds, func() tea.Msg {
+			result, err := scanBrew(context.Background())
+			return brewScanMsg{result, brew, err}
+		})
+	}
 	return tea.Batch(cmds...)
+}
+
+// securityQuery is where the cache keeps p's advisories: OSV for the
+// ecosystems it covers, Homebrew's own scan for formulae.
+func securityQuery(p provider.Package) (vuln.Query, bool) {
+	if q, ok := provider.Query(p); ok {
+		return q, true
+	}
+	return provider.BrewQuery(p)
+}
+
+// coverage says why kho has no advisories for p, or "" when it asked.
+func (m model) coverage(p provider.Package) string {
+	if p.Source != "brew" {
+		return provider.Coverage(p)
+	}
+	if note := m.db.BrewNote(); note != "" {
+		return note
+	}
+	return m.db.BrewSkip(p.Name)
 }
 
 // reindex works out, from the security cache, which advisories affect each
@@ -804,8 +854,8 @@ func (m *model) reindex() {
 	m.depVulns = map[string][]depAdvisory{}
 	for _, pkgs := range m.pkgs {
 		for _, p := range pkgs {
-			if q, ok := provider.Query(p); ok {
-				if advs := m.db.For(q); len(advs) > 0 {
+			if q, ok := securityQuery(p); ok {
+				if advs := m.db.For(q); len(advs) > 0 && m.coverage(p) == "" {
 					m.vulns[pkgKey(p)] = advs
 				}
 			}

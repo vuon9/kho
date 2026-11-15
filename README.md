@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 - **One list** of the machine's packages, the project's dependencies, and the images they name, with installed and latest versions.
 - **Find and install** a package the machine does not have yet, from the same package managers, without leaving the terminal.
-- **Advisory checks** from [OSV](https://osv.dev) and [skills.sh](https://skills.sh), plus the version that fixes each finding.
+- **Advisory checks** from [OSV](https://osv.dev), Homebrew's own scanner and [skills.sh](https://skills.sh), plus the version that fixes each finding.
 - **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
 - **Explicit changes**: install, upgrade, remove, each showing its command first.
 - **Agent-friendly**: JSON output, scriptable exit codes, and the `use-kho` skill.
@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 | Tool | Global | Project | Search | What kho reads | Latest version from | Security |
 |---|---|---|---|---|---|---|
-| Homebrew | ✓ |  | keyword | `brew info --json=v2 --installed` | Homebrew | not covered yet |
+| Homebrew | ✓ |  | keyword | `brew info --json=v2 --installed`; `brew vulns --json` | Homebrew | Homebrew's own scan, formulae only |
 | npm | ✓ | ✓ | keyword | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
 | Composer | ✓ | ✓ | keyword | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
 | pipx | ✓ |  | keyword, or exact name | `pipx list --json` | PyPI | OSV |
@@ -188,7 +188,7 @@ on this machine. Send me the report the skill describes. Never change anything
 from the task; I'll approve updates in a conversation.
 ```
 
-`--require uv,npm` fails only when one of the named sources could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped, an OSV or skills.sh lookup included. `kho help` lists the rest.
+`--require uv,npm` fails only when one of the named sources could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped, an OSV, Homebrew or skills.sh lookup included. `kho help` lists the rest.
 
 </details>
 
@@ -200,7 +200,7 @@ kho check --project . --prod-only --json
 
 ## What leaves your machine
 
-kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries, including GitHub for a Go keyword search and skills.sh for a skill search. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
+kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries, including GitHub for a Go keyword search and skills.sh for a skill search. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers version questions from its local copy of its package list. Its own scanner, `brew vulns`, asks OSV.dev about the source repository and tag of each installed formula and keeps Homebrew's advisory feed up to date.
 
 kho uses your GitHub token only for GitHub's API. It keeps the token in memory and never stores or prints it.
 
@@ -209,7 +209,7 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 
 | Where | What it learns | Asked by |
 |---|---|---|
-| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles | kho |
+| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles; and, through `brew vulns`, the source repository and tag of each installed Homebrew formula | kho |
 | PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name lookups, of the Python keyword searches that GitHub finds, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
 | GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes; repositories matching a Go or Python keyword search, their file trees, and a new skill's SKILL.md | kho |

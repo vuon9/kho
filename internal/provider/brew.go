@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 type Brew struct{}
@@ -140,6 +143,114 @@ func parseBrew(data []byte) ([]Package, error) {
 		pkgs = append(pkgs, p)
 	}
 	return pkgs, nil
+}
+
+// ErrBrewVulnsUnsupported says the brew on PATH predates the built-in vulns
+// command, which Homebrew added in 6.0.11.
+var ErrBrewVulnsUnsupported = errors.New("brew vulns needs Homebrew 6.0.11 or later")
+
+// ScanBrewVulns runs Homebrew's own scan over the installed formulae.
+// Homebrew resolves each formula's source repository and revision before it
+// asks OSV, and knows which findings its own patches already fix, so kho does
+// not have to guess an ecosystem for brew.
+func ScanBrewVulns(ctx context.Context) (vuln.BrewResult, error) {
+	out, err := run(ctx, "brew", "vulns", "--json")
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unknown command") {
+			return vuln.BrewResult{}, ErrBrewVulnsUnsupported
+		}
+		return vuln.BrewResult{}, err
+	}
+	return ParseBrewVulns(out)
+}
+
+// ParseBrewVulns reads `brew vulns --json`. Homebrew exits non-zero for
+// findings, for an incomplete scan, and for a failed one, so the JSON decides
+// what happened and the exit status is not read here.
+func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
+	var raw struct {
+		Findings []struct {
+			Formula         string     `json:"formula"`
+			Version         string     `json:"version"`
+			Vulnerabilities []brewVuln `json:"vulnerabilities"`
+		} `json:"findings"`
+		SkippedFormulae     []string          `json:"skipped_formulae"`
+		Checked             int               `json:"checked"`
+		Complete            bool              `json:"complete"`
+		OutdatedWithoutSBOM []string          `json:"outdated_without_sbom"`
+		Unscanned           map[string]string `json:"unscanned_formulae"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return vuln.BrewResult{}, fmt.Errorf("brew vulns: %w", err)
+	}
+	result := vuln.BrewResult{Checked: raw.Checked, Complete: raw.Complete}
+	if len(raw.SkippedFormulae) > 0 {
+		result.Skipped = raw.SkippedFormulae
+	}
+	if len(raw.OutdatedWithoutSBOM) > 0 {
+		result.OutdatedWithoutSBOM = raw.OutdatedWithoutSBOM
+	}
+	if len(raw.Unscanned) > 0 {
+		result.Unscanned = raw.Unscanned
+	}
+	for _, f := range raw.Findings {
+		finding := vuln.BrewFinding{Formula: f.Formula, Version: f.Version}
+		for _, v := range f.Vulnerabilities {
+			finding.Advisories = append(finding.Advisories, v.advisory(f.Formula, f.Version))
+		}
+		result.Findings = append(result.Findings, finding)
+	}
+	return result, nil
+}
+
+// brewVuln is one entry of a finding's vulnerabilities or patched lists.
+type brewVuln struct {
+	ID            string   `json:"id"`
+	Severity      string   `json:"severity"`
+	Summary       string   `json:"summary"`
+	Aliases       []string `json:"aliases"`
+	FixedVersions []string `json:"fixed_versions"`
+}
+
+func (v brewVuln) advisory(formula, version string) vuln.Advisory {
+	a := vuln.Advisory{
+		ID:       v.ID,
+		Severity: strings.ToUpper(v.Severity),
+		Summary:  v.Summary,
+		Package:  formula,
+		Versions: []string{version},
+	}
+	if len(v.Aliases) > 0 {
+		a.Aliases = v.Aliases
+	}
+	if fixed := brewFixed(v.FixedVersions, version); fixed != "" {
+		a.Ranges = []vuln.Range{{Introduced: "0"}, {Fixed: fixed}}
+	}
+	return a
+}
+
+// brewFixed is the lowest released version above the scanned one. Homebrew
+// also lists commit SHAs for patches, and tags that carry their project's
+// name; neither can be compared with a formula version, so they are left out
+// and the finding keeps no fixed version.
+func brewFixed(fixed []string, version string) string {
+	best := ""
+	for _, f := range fixed {
+		v := strings.TrimPrefix(f, "v")
+		if !brewVersion(v) || vuln.Compare(v, version) <= 0 {
+			continue
+		}
+		if best == "" || vuln.Compare(v, best) < 0 {
+			best = v
+		}
+	}
+	return best
+}
+
+var brewSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+
+func brewVersion(v string) bool {
+	return v != "" && v[0] >= '0' && v[0] <= '9' && !brewSHA.MatchString(v)
 }
 
 func (Brew) Deps(_ context.Context, p Package) ([]Dep, error) { return p.Deps, nil }
