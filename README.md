@@ -3,6 +3,7 @@
 [![ci](https://github.com/vuon9/kho/actions/workflows/ci.yml/badge.svg)](https://github.com/vuon9/kho/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/vuon9/kho?include_prereleases&sort=semver)](https://github.com/vuon9/kho/releases)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/vuon9/kho/badge)](https://scorecard.dev/viewer/?uri=github.com/vuon9/kho)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16741/badge)](https://www.bestpractices.dev/projects/16741)
 
 **Every package manager on your machine, one list, checked.**
 
