@@ -470,11 +470,15 @@ func sortedErrKeys(errs map[string]string) []string {
 func (m model) resultColumns() []column {
 	inner := m.layout().tableW - 4
 	if m.skillScope() {
-		// Skills have no version to show, so the repo takes that room and
-		// tells two skills with the same name apart.
-		statusW := min(max(inner/4, 11), 18)
-		fromW := min(max(inner*2/5, 10), 24)
-		nameW := max(inner-2-fromW-statusW, 8)
+		// Skill names are short and the repo is what tells two rows apart, so
+		// the name has a cap and FROM takes what it leaves. Status keeps room
+		// for "not installed" first.
+		statusW := min(max(inner/4, 14), 17)
+		nameW := min(max(inner*3/10, 12), 20)
+		fromW := max(inner-2-nameW-statusW, 10)
+		if nameW+fromW+statusW+2 > inner {
+			nameW = max(inner-2-fromW-statusW, 8)
+		}
 		return []column{{colName, nameW}, {colSource, fromW}, {colStatus, statusW}}
 	}
 	latestW := 8

@@ -1202,3 +1202,33 @@ func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
 		t.Error("the selected skill's SKILL.md was not read")
 	}
 }
+
+// Skill results give the repo the room a short name leaves, while keeping the
+// status readable, and still fit the narrow table.
+func TestSkillResultColumnsRebalance(t *testing.T) {
+	m, _ := searchable(t)
+	m = runSearch(t, m, "skills", "pdf")
+	widths := func() map[int]int {
+		out := map[int]int{}
+		for _, c := range m.resultColumns() {
+			out[c.id] = c.width
+		}
+		return out
+	}
+	w := widths()
+	if w[colName] > 20 || w[colSource] <= w[colName] || w[colStatus] < 14 {
+		t.Errorf("wide columns %v, want the repo wider than the capped name", w)
+	}
+	total := w[colName] + w[colSource] + w[colStatus] + 2
+	if table := m.layout().tableW - 2; total > table {
+		t.Errorf("columns take %d, want at most %d", total, table)
+	}
+	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
+	w = widths()
+	if w[colName] < 8 || w[colSource] < 10 || w[colStatus] < 14 {
+		t.Errorf("narrow columns %v are too small", w)
+	}
+	if total := w[colName] + w[colSource] + w[colStatus] + 2; total > m.layout().tableW-2 {
+		t.Errorf("narrow columns take %d, want at most %d", total, m.layout().tableW-2)
+	}
+}
