@@ -7,8 +7,9 @@ import "context"
 // limit rows, and never sets Version: these are packages the machine may not
 // have. Latest is set when the registry returned one.
 //
-// A manager that has no keyword search does not implement Searcher. pipx, uv
-// and go are exact-name only, and mise and skills are deferred.
+// A manager that has no keyword search does not implement Searcher. pipx and
+// uv are exact-name only, Go searches keywords through GitHub, and mise and
+// skills are deferred.
 type Searcher interface {
 	Search(ctx context.Context, query string, limit int) ([]Package, error)
 }
@@ -73,6 +74,7 @@ var (
 	_ Searcher = Brew{}
 	_ Searcher = Npm{}
 	_ Searcher = Composer{}
+	_ Searcher = GoBin{}
 
 	_ Finder = Brew{}
 	_ Finder = Npm{}

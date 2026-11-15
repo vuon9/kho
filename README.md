@@ -39,13 +39,13 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 | uv | ✓ | ✓ | exact name | `uv tool list`; `uv.lock` | PyPI | OSV |
 | pip |  | ✓ |  | `requirements*.txt` | PyPI | OSV |
 | Poetry |  | ✓ |  | `poetry.lock` | PyPI | OSV |
-| Go | ✓ | ✓ | exact path | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
+| Go | ✓ | ✓ | keyword, or exact path | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
 | Cargo |  | ✓ |  | `Cargo.lock` | crates.io | OSV |
 | mise | ✓ |  | not yet | `mise ls --json`, `mise outdated` | mise | not covered yet |
 | Agent skills | ✓ |  | not yet | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
 | Docker images | ✓ | ✓ |  | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
 
-Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm and Composer search by keyword; pipx and uv resolve an exact name through PyPI, and Go resolves an exact module path. mise and skills are not searchable yet.
+Search asks the managers' registries for packages the machine does not have. It is machine only: a project's dependencies stay read-only. Homebrew, npm, Composer and Go search by keyword; Go does it through GitHub's repository search, so it is best effort and wants a GitHub token. pipx and uv resolve an exact name through PyPI, and a Go search also accepts a module or package path, including a pasted pkg.go.dev URL. mise and skills are not searchable yet.
 
 kho reads all three, and changes only what is on the machine:
 
@@ -87,7 +87,7 @@ macOS or Linux. Everything else is optional, and kho skips what it can't find:
 - **The package managers you use.** One that isn't installed shows as skipped, not as an error.
 - **docker**, to see which images are on disk, and to pull or remove one.
 - **[trivy](https://trivy.dev)**, to list the CVEs inside an image. It runs when you open an image's Security tab. Install it with `brew install trivy`.
-- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list can use up.
+- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go keyword searches can use up. Go search uses GitHub's repository search, so a token keeps it reliable.
 - **Go 1.27 or later**, only to install with `go install`.
 
 ## Use it
@@ -142,7 +142,7 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 | `kho list` | every package as JSON |
 | `kho version`, `kho help` | the version, and every command |
 
-`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm` and `composer` answer keywords, and `pipx`, `uv` and `go` answer an exact name or path.
+`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer` and `go` answer keywords, and `pipx` and `uv` answer an exact name; a Go query can also be a package or module path.
 
 `kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
 
@@ -200,7 +200,7 @@ kho check --project . --prod-only --json
 
 ## What leaves your machine
 
-kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
+kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries, and a Go keyword search also sends them to GitHub. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers from its local copy of its package list, so it is asked nothing.
 
 kho uses your GitHub token only for GitHub's API. It keeps the token in memory and never stores or prints it.
 
@@ -212,7 +212,8 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 | OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles | kho |
 | PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name searches, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
-| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes | kho |
+| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes; repositories matching a Go keyword search, and their file trees | kho |
+| raw.githubusercontent.com | the `go.mod` of GitHub repositories matching a Go keyword search, for their module paths | kho |
 | skills.sh | skill names and their repositories | kho |
 | npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho for projects and search |
 | Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |

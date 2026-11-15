@@ -54,7 +54,7 @@ Files that matter:
 | composer | do not shell out: `composer search` loads the project's plugins. Use `packagist.org/search.json?q=` directly | name, description, url, downloads; no version | `composer global require vendor/name:version` |
 | pipx | none. PyPI has no search API, and the HTML search page is not to be scraped | PyPI JSON by exact name, already used by kho | `pipx install name==version` |
 | uv | none | same PyPI JSON | `uv tool install name==version` |
-| go | none | module proxy exact path; a package path needs `go doc pkg@version` on Go 1.27+, which writes the module cache | `go install path@version` |
+| go | GitHub repository search by keyword, then the root `go.mod` for the module path and the tree for main packages. Best effort, and rate limited without a token. pkg.go.dev's `/search?*` is disallowed by its robots.txt, so it is not scraped | module proxy; a package path is resolved by walking its parents to the module | `go install path@version` |
 | mise | `mise search`, text table, no JSON | tool name and description only | `mise install name@v`, but the tool is not on PATH until a config names it; `mise use` writes config |
 | skills | `npx skills find`, text, or the skills.sh `/api/search` endpoint the CLI uses (undocumented) | name, repo, install count; no description or version | different shape: `npx skills add owner/repo --skill name -g` |
 
@@ -65,8 +65,15 @@ Notes:
 - npm publishes no rate limit for its search endpoint. Treat 429 as possible.
 - Packagist asks for a `User-Agent` with a contact address and at most 10
   concurrent requests.
-- pipx, uv and go are exact-name only. There is no official keyword discovery for
-  any of them.
+- pipx and uv are exact-name only. There is no official keyword discovery for
+  either of them.
+- Go has no keyword API. A keyword search goes through GitHub's repository
+  search, reads each repository's `go.mod` and file tree, and keeps only
+  repositories the module proxy serves. A package path inside a module resolves
+  through its parent module, so `honnef.co/go/tools/cmd/staticcheck` installs.
+- Go keyword search costs a handful of GitHub API calls per repository and is
+  anonymous-rate-limited without a token. It is best effort: a Go package not
+  on GitHub, or not a module, is not found.
 - skills are identified by source repo plus skill name, not by a global package
   name, and they have no version to pick.
 
@@ -74,18 +81,18 @@ Notes:
 
 | # | Question | Decision | State |
 |---|---|---|---|
-| P1 | Which sources in v1 | Discovery for npm, brew/cask and composer. Exact-name install for pipx, uv and go. Defer mise and skills. | decided |
+| P1 | Which sources in v1 | Discovery for npm, brew/cask, composer and Go (best effort through GitHub). Exact-name install for pipx and uv. Defer mise and skills. | decided, Go keyword added in v1.1 |
 | P2 | Command surface | Add `kho search`, extend `kho install` to not-installed refs. Keep `@version` required, `latest` accepted. | decided |
-| P3 | Search scope | Search every ready source by default, `--source` narrows it, the report names what could not be searched, and an explicitly named name-only manager gets an exact-name lookup. | decided |
+| P3 | Search scope | Search every ready source by default, `--source` narrows it, the report names what could not be searched, and an explicitly named name-only manager gets an exact-name lookup. Go search accepts a keyword, a module path or a package path. | decided |
 | P4 | Result content | Keep each manager's order. Name, latest version, status; the installed version folded into status. A source tag when the row's source is not the panel's own. Cap 20 per source. Minimum 2 characters. | decided |
 | P5 | Search JSON | Object `{query, results, notSearched, skipped, errors}`. Exit 0 when a source answered, 1 when all failed, 2 on usage. | decided |
-| P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. Validate as `install` does today, best effort for go package paths. | decided |
+| P6 | Versions | The candidate's Versions tab chooses the version; `@version` in the CLI where the manager allows it. A Go package path resolves through its module, so it can be validated before the yes. | decided |
 | P7 | Advisories | Fetch history when a candidate's Versions or Security tab shows, warn in the confirm, never block. | decided |
 | P8 | Already installed | One install verb. Installed hits show `✓ installed` and upgrading behaves as today. A name installed under another manager is a warning in the confirm. | decided |
 | P9 | TUI shape | Search is scoped to the selected rail row: every package manager's panel has its own search, and All searches everything. The panel shows installed packages by default. | decided, UX-2 A |
 | P10 | Query timing | Explicit submit. Typing is a draft, and nothing is fetched until `enter`. | decided, UX-1 |
 | P11 | Projects | Machine only. Search works on machine package panels; project, part and image rows are read-only and ignore `n`. | decided, UX-4 |
-| P12 | Cache and privacy | No disk cache. In-memory only, per session. Package manager commands are logged as reads by the existing `Record` hook. The README gains the search endpoints and the fact that query words leave the machine. | decided |
+| P12 | Cache and privacy | No disk cache. In-memory only, per session. Package manager commands are logged as reads by the existing `Record` hook. The README gains the search endpoints and the fact that query words leave the machine, GitHub included for a Go keyword search. | decided |
 
 ## 5. UX design
 
@@ -430,8 +437,8 @@ that have answered so far.
 ```
 
 On All, the second line names every manager searched, and a faint third line
-says `pipx, uv and go install by exact name only`. On an exact-name manager:
-`no package named "zzzz" on PyPI` (or `on the Go proxy`).
+says `pipx and uv install by exact name only`. On an exact-name manager:
+`no package named "zzzz" on PyPI`.
 
 **Results, a source failed.** Rows that came back stay. The status bar's right
 side shows `⚠ brew: <short reason>`. With no rows, the body lists the failure
@@ -561,8 +568,8 @@ $ kho search yaml
 brew/yq        0.2.94  A lightweight and portable command-line YAML processor
 npm/yaml       2.8.1   JavaScript parser and stringifier for YAML
 
-searched brew, cask, npm, composer in 0.6s
-pipx, uv and go cannot search by keyword; install one by exact name, like kho install uv/ruff@latest
+searched brew, cask, npm, composer, go in 0.6s
+pipx and uv cannot search by keyword; install one by exact name, like kho install uv/ruff@latest
 ```
 
 - One row per result, `source/name` first, so the next command can be copied.
@@ -575,10 +582,10 @@ pipx, uv and go cannot search by keyword; install one by exact name, like kho in
   same words `kho check` uses.
 - Usage: no query, or a query under 2 characters, exit 2.
 
-Exact names. pipx, uv and go have no keyword search. With `--source uv`,
-`--source pipx` or `--source go`, the query is treated as an exact name or
-module path: zero or one row comes back. Without `--source`, those managers are
-listed under `notSearched`.
+Exact names. pipx and uv have no keyword search. With `--source uv` or
+`--source pipx`, the query is treated as an exact name: zero or one row comes
+back. Without `--source`, those managers are listed under `notSearched`. A Go
+query can be a keyword, a module path, a package path, or a pkg.go.dev URL.
 
 `kho install` for a package that is not installed:
 
@@ -649,8 +656,9 @@ Every UX decision is settled, and every product decision is decided.
   searches. Esc cancels. Nothing else reads the network.
 - `n` is ignored on project, part, docker and image rows. Search is transient:
   changing rail rows returns to installed.
-- The All row searches every manager. Every other panel searches its own. pipx,
-  uv and go resolve an exact name or path instead of keyword search.
+- The All row searches every manager. Every other panel searches its own. pipx
+  and uv resolve an exact name instead of keyword search; Go searches keywords
+  through GitHub and also accepts a module or package path.
 - Results include installed hits, marked `✓ installed` or `↑ newer`, so an
   upgrade happens from the same list.
 - Enter on a result opens it in the existing right sidebar. For a new package,
@@ -680,14 +688,20 @@ Small choices made while building, none of which changes the shape:
   That keeps the version history and changelog readable; picking an older row
   still shows the existing Homebrew refusal.
 - `notSearched` in the CLI names the ready managers that resolve an exact name
-  only (pipx, uv, go). mise and skills are deferred rather than unsearchable, so
+  only (pipx, uv). mise and skills are deferred rather than unsearchable, so
   they are not named there; asking for one with `--source` is a usage error.
+- Go keyword search is the one best effort source: GitHub's repository search
+  supplies repositories, then kho reads each root `go.mod` and file tree and
+  keeps the `cmd/<tool>` or root main packages the module proxy can serve. It
+  also normalises a pasted pkg.go.dev URL and walks a package path up to its
+  module, so subpackage tools install. Without a GitHub token it shares the
+  anonymous rate limit, and a rate limited source shows the usual failure line.
 - A deferred manager's panel answers `n` with `<manager> can't search yet` and
   stays on the installed list.
 - A name-only lookup that finds nothing (CLI or TUI) is a no-match, not a
   failed source: `kho search --source uv zzzz` exits 0 with no rows.
 - Exact-name errors cannot be told apart from network errors yet, so both read
-  as no match for pipx, uv and go.
+  as no match for pipx and uv.
 - The search bar says only `search`. Its glyph, cursor and the rule above it use
   the theme's second accent, so the mode reads without naming the manager. The
   installed filter keeps the first accent.
@@ -698,8 +712,10 @@ Small choices made while building, none of which changes the shape:
 
 ## 7. Build order
 
-1. Provider catalog: `Search` and `Find`, for npm, brew/cask and composer, and
-   `Find` for pipx, uv and go. Pure parse tests over captured output.
+1. Provider catalog: `Search` and `Find` for npm, brew/cask and composer, `Find`
+   for pipx, uv and go. Go keyword search through GitHub was added later on top:
+   repository search, root `go.mod`, main-package tree, proxy version. Pure
+   parse tests over captured output.
 2. CLI: `kho search`, install for not-installed refs, the exact-name `--source`
    path. `Usage`, README, `skills/use-kho/SKILL.md`, and the docs test.
 3. TUI: the three panel modes, the candidate sidebar, the confirm, the install
@@ -734,9 +750,10 @@ Rough size: 2 days, 1 day, 4 to 5 days, half a day of docs.
   control characters and ANSI, never render them as markup or follow them.
 - Composer search must not shell out, or it runs project plugins. Use Packagist
   directly, as the Latest path already does.
-- Go package paths are not module paths. Pre-checking a package path without
-  writing the module cache is not possible; accept the manager's error after the
-  yes for those, and say so in the dialog when the check is best effort.
+- Go keyword search depends on GitHub: rate limits, repositories that are not
+  modules, and main packages named without a `main.go` all affect what it finds.
+  It is best effort, and a missing result is not proof the package does not
+  exist. pkg.go.dev search stays off limits because its robots.txt disallows it.
 - npm search can lag new packages by up to two weeks and can be throttled, so a
   missing result is not proof the package does not exist.
 - mise new installs are awkward: no PATH until a config names the tool, and

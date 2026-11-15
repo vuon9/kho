@@ -153,24 +153,16 @@ func (GoBin) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "go" {
 		return Package{}, fmt.Errorf("go doesn't serve the %s source", source)
 	}
-	path := strings.TrimSpace(name)
-	if path == "" || strings.ContainsAny(path, " \t") {
+	target, ok := goPathQuery(name)
+	if !ok {
 		return Package{}, fmt.Errorf("a Go install needs a package or module path")
 	}
-	var r struct {
-		Version string `json:"Version"`
-		Origin  struct {
-			URL string `json:"URL"`
-		} `json:"Origin"`
+	module, version, repoURL, err := resolveGoModule(ctx, target)
+	if err != nil {
+		return Package{}, err
 	}
-	if err := getJSON(ctx, goProxy+"/"+escapeModule(path)+"/@latest", nil, &r); err != nil {
-		return Package{}, fmt.Errorf("no Go module at %s", path)
-	}
-	if r.Version == "" {
-		return Package{}, fmt.Errorf("no Go module at %s", path)
-	}
-	return Package{Source: "go", Name: goBinName(path), Latest: r.Version, Origin: path, Entry: path,
-		Repo: githubRepo(r.Origin.URL, path)}, nil
+	return Package{Source: "go", Name: goBinName(target), Latest: version, Origin: module, Entry: target,
+		Repo: githubRepo(repoURL, module)}, nil
 }
 
 // goBinName is the last path segment, or the one before a major version suffix:

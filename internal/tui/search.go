@@ -98,8 +98,8 @@ func (m model) searchWorking() bool {
 	return m.search != nil && (m.search.busy || m.search.finding)
 }
 
-// providerCanSearch says a manager's panel has a search at all. pipx, uv and
-// go have only an exact-name lookup; mise and skills are deferred.
+// providerCanSearch says a manager's panel has a search at all. pipx and uv
+// have only an exact-name lookup; mise and skills are deferred.
 func (m model) providerCanSearch(name string) bool {
 	p := m.provider(name)
 	if p == nil {
