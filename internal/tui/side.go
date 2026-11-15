@@ -142,7 +142,10 @@ func (m model) hasBottom() bool {
 	}
 	if m.isCandidate(p) {
 		// A candidate has no dependencies to read, so its Info tab is one
-		// piece; Versions and Security still have a detail worth reading.
+		// piece, except for a skill: its SKILL.md gets the lower half.
+		if p.Source == "skills" {
+			return true
+		}
 		return m.activeTab() != tabInfo
 	}
 	switch m.activeTab() {
@@ -862,6 +865,8 @@ func (m model) skillMetaLines(p provider.Package) []line {
 func (m model) skillDocView(p provider.Package, inner int) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
+	case d == nil && m.isCandidate(p) && m.focus != focusSide:
+		return plain(faint().Render(" press enter to read SKILL.md"))
 	case d == nil || !d.done:
 		return plain(m.spin() + faint().Render(" loading SKILL.md…"))
 	case d.err != nil:

@@ -2610,3 +2610,31 @@ func TestHomeURL(t *testing.T) {
 		})
 	}
 }
+
+// A skill's Info fields stay put while SKILL.md scrolls in the lower pane.
+func TestSkillInfoScrollsTheDocUnderTheFields(t *testing.T) {
+	m := loaded(t)
+	p := m.pkgs["skills"][0]
+	var body strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&body, "## Section %d\n\nA line of the skill body.\n\n", i)
+	}
+	os.WriteFile(filepath.Join(p.Path, "SKILL.md"), []byte("---\nname: pathmaker\ndescription: Plan big work\n---\n"+body.String()), 0o644)
+	m = press(t, m, "G")
+	sc := screen(m)
+	if !strings.Contains(sc, "version") || !strings.Contains(sc, "Section 0") {
+		t.Fatalf("skill Info lacks its fields or the doc:\n%s", sc)
+	}
+	before := m.bodyOffset
+	m = press(t, m, "J")
+	if m.bodyOffset == before {
+		t.Errorf("J did not scroll the SKILL.md pane, offset stayed %d", before)
+	}
+	sc = screen(m)
+	if !strings.Contains(sc, "version") || !strings.Contains(sc, "path") {
+		t.Errorf("the fields scrolled away:\n%s", sc)
+	}
+	if strings.Contains(sc, "Section 0") {
+		t.Errorf("the doc did not scroll:\n%s", sc)
+	}
+}

@@ -1123,11 +1123,19 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 	docDir := t.TempDir()
 	os.WriteFile(filepath.Join(docDir, "SKILL.md"), []byte("---\nname: pdf\n---\n# PDF\nUse it for documents.\n"), 0o644)
 	m.search.rows[0].Path = docDir
-	if sc := screen(m); !strings.Contains(sc, "skills/pdf") {
+	sc := screen(m)
+	if !strings.Contains(sc, "skills/pdf") {
 		t.Fatalf("the skill did not come back:\n%s", sc)
 	}
+	if !strings.Contains(sc, "press enter to read SKILL.md") {
+		t.Errorf("an unopened skill does not say how to read its SKILL.md:\n%s", sc)
+	}
 	m = press(t, m, "enter")
-	flat := strings.Join(strings.Fields(strings.ReplaceAll(screen(m), "│", "")), " ")
+	sc = screen(m)
+	if !strings.Contains(sc, "Use it for documents.") {
+		t.Fatalf("the candidate's SKILL.md is missing from Info:\n%s", sc)
+	}
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(sc, "│", "")), " ")
 	if !strings.Contains(flat, "npx -y skills add acme/skills --skill pdf -g -y --json") {
 		t.Fatalf("the skill's command is missing; flat:\n%s", flat)
 	}
@@ -1135,7 +1143,7 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 		t.Errorf("footer %q does not offer the install", footer)
 	}
 	m = press(t, m, "enter")
-	sc := screen(m)
+	sc = screen(m)
 	flat = strings.Join(strings.Fields(strings.ReplaceAll(sc, "│", "")), " ")
 	for _, want := range []string{"＋ Install pdf?", "installs the newest commit from acme/skills",
 		"runs npx -y skills add acme/skills --skill pdf -g -y --json"} {
