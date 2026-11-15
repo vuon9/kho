@@ -79,14 +79,10 @@ gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
   --signer-workflow vuon9/kho/.github/workflows/release.yml
 ```
 
-`checksums.txt` also carries a keyless cosign signature. With [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) installed, verify it:
+`checksums.txt` is signed with keyless cosign. Download it and `checksums.txt.sigstore.json` from the release, then verify:
 
 ```bash
-VERSION=0.1.16   # a release with a signature; use the one you downloaded
-curl -LO "https://github.com/vuon9/kho/releases/download/v${VERSION}/checksums.txt"
-curl -LO "https://github.com/vuon9/kho/releases/download/v${VERSION}/checksums.txt.sigstore.json"
-cosign verify-blob checksums.txt \
-  --bundle checksums.txt.sigstore.json \
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
   --certificate-identity "https://github.com/vuon9/kho/.github/workflows/release.yml@refs/heads/main" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
@@ -253,17 +249,11 @@ kho uses your GitHub token only for GitHub's API. It keeps the token in memory a
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem, propose a change and run the checks, and [AGENTS.md](AGENTS.md) for the reading order, the rules and the code layout. In short:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem and open a change. [AGENTS.md](AGENTS.md) has the code layout and the safety rules.
 
 ```bash
 gofmt -l . && go vet ./... && go test -race ./...
 ```
-
-Commits follow [Conventional Commits](https://www.conventionalcommits.org), which is how releases get their version and changelog.
-
-## Security
-
-Report a vulnerability privately through the repository's [Security tab](https://github.com/vuon9/kho/security), not in a public issue. [SECURITY.md](SECURITY.md) says what to include and when to expect a reply.
 
 ## License
 
