@@ -60,7 +60,8 @@ kho reads all three, and changes only what is on the machine:
 ## Install
 
 ```bash
-brew install --cask vuon9/tap/kho   # the fully qualified name trusts only this cask
+brew trust vuon9/tap
+brew install --cask vuon9/tap/kho
 ```
 
 or, with Go:
