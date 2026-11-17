@@ -8,13 +8,31 @@ import (
 const (
 	minWidth  = 100
 	minHeight = 16
+	// Below stackBelow columns the sidebar moves under the table, because
+	// three columns side by side leave each one too narrow to read. A short
+	// terminal keeps them side by side, since halves of it hold too few rows.
+	stackBelow     = 110
+	stackMinWidth  = 80
+	stackMinHeight = 30
 )
 
+func (m model) stacks() bool {
+	return m.width < stackBelow && m.height >= stackMinHeight
+}
+
+func (m model) tooSmall() bool {
+	return m.height < minHeight || m.width < stackMinWidth || (m.width < minWidth && !m.stacks())
+}
+
+// tableH and sideH are the two boxes' heights: bodyH each side by side, and
+// a share of bodyH each when stacked.
 type layout struct {
 	top                  int
 	railW, tableW, sideW int
-	tableX, sideX        int
+	tableX, sideX, sideY int
 	bodyH                int
+	tableH, sideH        int
+	stacked              bool
 	rows                 int
 	topRows, bottomRows  int
 }
@@ -30,26 +48,42 @@ const (
 
 func (m model) layout() layout {
 	var l layout
-	// The sidebar is sized from the width alone, so the rail's room comes out
-	// of the package list.
-	l.sideW = max(38, (m.width-30)*2/5)
-	l.railW = min(42, max(m.width-l.sideW-comfortTable, 24))
-	if m.railW > 0 {
-		l.railW = m.railW
-	}
-	l.railW = max(min(l.railW, m.width/3), minRail)
-	if m.sideW > 0 {
-		l.sideW = m.sideW
-	}
-	l.sideW = max(min(l.sideW, m.width-l.railW-minTable), minSide)
-	l.tableW = max(m.width-l.railW-l.sideW, 0)
-	l.tableX, l.sideX = l.railW, l.railW+l.tableW
 	l.top = 1
 	l.bodyH = max(m.height-4, 0)
-	l.rows = max(l.bodyH-5, 0)
-	l.topRows = max(l.bodyH-2, 0)
+	l.stacked = m.stacks()
+	if l.stacked {
+		l.railW = min(28, max(m.width/4, 20))
+		if m.railW > 0 {
+			l.railW = m.railW
+		}
+		l.railW = max(min(l.railW, m.width/3), minRail)
+		l.tableW = max(m.width-l.railW, 0)
+		l.sideW = l.tableW
+		l.tableX, l.sideX = l.railW, l.railW
+		l.tableH = max(l.bodyH/2, 6)
+		l.sideH = max(l.bodyH-l.tableH, 0)
+		l.sideY = l.top + l.tableH
+	} else {
+		// The sidebar is sized from the width alone, so the rail's room comes out
+		// of the package list.
+		l.sideW = max(38, (m.width-30)*2/5)
+		l.railW = min(42, max(m.width-l.sideW-comfortTable, 24))
+		if m.railW > 0 {
+			l.railW = m.railW
+		}
+		l.railW = max(min(l.railW, m.width/3), minRail)
+		if m.sideW > 0 {
+			l.sideW = m.sideW
+		}
+		l.sideW = max(min(l.sideW, m.width-l.railW-minTable), minSide)
+		l.tableW = max(m.width-l.railW-l.sideW, 0)
+		l.tableX, l.sideX = l.railW, l.railW+l.tableW
+		l.tableH, l.sideH, l.sideY = l.bodyH, l.bodyH, l.top
+	}
+	l.rows = max(l.tableH-5, 0)
+	l.topRows = max(l.sideH-2, 0)
 	if m.hasBottom() || m.imageHasBottom() {
-		l.topRows = max((l.bodyH-3)/2, 1)
+		l.topRows = max((l.sideH-3)/2, 1)
 		switch {
 		case m.split > 0:
 			l.topRows = m.split
@@ -60,8 +94,8 @@ func (m model) layout() layout {
 			// The Info fields stay put; SKILL.md below gets the rest of the pane.
 			l.topRows = max(min(len(m.topView(l.sideW-2)), l.topRows), 3)
 		}
-		l.topRows = max(min(l.topRows, l.bodyH-3-minHalf), minHalf)
-		l.bottomRows = max(l.bodyH-3-l.topRows, 0)
+		l.topRows = max(min(l.topRows, l.sideH-3-minHalf), minHalf)
+		l.bottomRows = max(l.sideH-3-l.topRows, 0)
 	}
 	return l
 }
@@ -69,6 +103,17 @@ func (m model) layout() layout {
 // 0 is the first line under the panels' top border, which is row -1.
 func (l layout) row(y int) int {
 	return y - l.top - 1
+}
+
+func (l layout) sideRow(y int) int {
+	return y - l.sideY - 1
+}
+
+func (l layout) inSide(x, y int) bool {
+	if l.stacked {
+		return x >= l.sideX && y >= l.sideY
+	}
+	return x >= l.sideX
 }
 
 type rect struct{ x, y, w, h int }
@@ -143,10 +188,10 @@ func (m *model) click(x, y int) tea.Cmd {
 		return nil
 	}
 	if m.showHistory {
-		m.clickHistory(x, r)
+		m.clickHistory(x, y)
 		return nil
 	}
-	if m.search != nil && r == l.bodyH-3 && x >= l.tableX && x < l.sideX {
+	if m.search != nil && r == l.tableH-3 && x >= l.tableX && !l.inSide(x, y) {
 		if m.inResults() {
 			m.search.editing, m.search.draft = true, m.search.query
 		}
@@ -159,13 +204,13 @@ func (m *model) click(x, y int) tea.Cmd {
 	switch {
 	case x == l.tableX-1 || x == l.tableX:
 		m.resizing, m.grab = resizeRail, l.railW-x
-	case x == l.sideX-1 || x == l.sideX:
+	case !l.stacked && (x == l.sideX-1 || x == l.sideX):
 		m.resizing, m.grab = resizeSide, l.sideW-(m.width-x)
-	case x > l.sideX && r == l.topRows && m.hasBottom():
-		m.resizing, m.grab = resizeSplit, l.topRows-r
+	case x > l.sideX && l.inSide(x, y) && l.sideRow(y) == l.topRows && m.hasBottom():
+		m.resizing, m.grab = resizeSplit, l.topRows-l.sideRow(y)
 	}
 	if m.resizing != resizeNone {
-		m.railW, m.sideW = l.railW, l.sideW
+		m.keepSizes(l)
 		return nil
 	}
 	if area, p, ok := m.textAt(x, y); ok {
@@ -184,7 +229,7 @@ func (m *model) click(x, y int) tea.Cmd {
 				m.projOpen = !m.projOpen
 			}
 		}
-	case x < l.sideX:
+	case !l.inSide(x, y):
 		focused := m.focus == focusTable
 		m.focus = focusTable
 		if m.search != nil {
@@ -203,7 +248,7 @@ func (m *model) click(x, y int) tea.Cmd {
 			} else {
 				m.sortBy(m.columnAt(x - l.tableX - 3))
 			}
-		case r == l.bodyH-3:
+		case r == l.tableH-3:
 			switch c := m.chipAt(x - l.tableX - 1); {
 			case c == -2:
 				m.filtering = true
@@ -222,7 +267,7 @@ func (m *model) click(x, y int) tea.Cmd {
 	default:
 		focused := m.focus == focusSide
 		m.focus = focusSide
-		return m.clickSide(x-l.sideX-1, r, focused)
+		return m.clickSide(x-l.sideX-1, l.sideRow(y), focused)
 	}
 	return nil
 }
@@ -358,12 +403,12 @@ func (m *model) wheel(x, y, delta int) {
 	switch {
 	case x < l.tableX:
 		m.setRail(m.rail + delta)
-	case x < l.sideX:
+	case !l.inSide(x, y):
 		m.cursor += delta
-	case l.row(y) < l.topRows && m.sideListLen() >= 0:
+	case l.sideRow(y) < l.topRows && m.sideListLen() >= 0:
 		m.sideCursor += delta
 		m.bodyOffset = 0
-	case l.row(y) < l.topRows:
+	case l.sideRow(y) < l.topRows:
 		m.sideOffset += delta
 	case m.depList() != nil:
 		m.depCursor += delta
@@ -387,24 +432,32 @@ func (m *model) resize(x, y int) {
 	case resizeSide:
 		m.sideW = max(m.width-x+m.grab, minSide)
 	case resizeSplit:
-		m.split = max(l.row(y)+m.grab, minHalf)
+		m.split = max(l.sideRow(y)+m.grab, minHalf)
 	}
-	l = m.layout()
-	m.railW, m.sideW = l.railW, l.sideW
+	m.keepSizes(m.layout())
+}
+
+// A stacked sidebar's width is the table's, so it is not kept: the next
+// side-by-side layout sizes the sidebar again.
+func (m *model) keepSizes(l layout) {
+	m.railW = l.railW
+	if !l.stacked {
+		m.sideW = l.sideW
+	}
 }
 
 func (m *model) grow(n int) {
 	l := m.layout()
-	switch m.focus {
-	case focusRail:
+	switch {
+	case m.focus == focusRail:
 		m.railW = l.railW + n
-	case focusTable:
+	case l.stacked:
+	case m.focus == focusTable:
 		m.sideW = l.sideW - n
-	case focusSide:
+	case m.focus == focusSide:
 		m.sideW = l.sideW + n
 	}
-	l = m.layout()
-	m.railW, m.sideW = l.railW, l.sideW
+	m.keepSizes(m.layout())
 }
 
 func (m *model) moveSplit(n int) {

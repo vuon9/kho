@@ -1,0 +1,10 @@
+{
+  "count": 3,
+  "next": "https://hub.docker.com/v2/search/repositories/?page=2&page_size=3&query=kettle",
+  "previous": "",
+  "results": [
+    {"repo_name": "kettle", "short_description": "Kettle boils water for every build.", "star_count": 1204, "pull_count": 51200000, "repo_owner": "", "is_automated": false, "is_official": true},
+    {"repo_name": "acme/kettle-tools", "short_description": "Extra tools for kettle", "star_count": 12, "pull_count": 4300, "repo_owner": "", "is_automated": false, "is_official": false},
+    {"repo_name": "", "short_description": "a row with no name", "star_count": 0, "pull_count": 0, "repo_owner": "", "is_automated": false, "is_official": false}
+  ]
+}

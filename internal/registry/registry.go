@@ -41,6 +41,8 @@ type Client struct {
 	mu      sync.Mutex
 	tokens  map[string]string
 	demands map[string]string
+	// In memory for this run only, like every other search.
+	searches map[string][]HubRepo
 }
 
 func (c *Client) base(host string) string {

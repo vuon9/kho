@@ -40,10 +40,10 @@ func (m model) textAt(x, y int) (int, point, bool) {
 	}
 	l := m.layout()
 	col := x - l.sideX - 1
-	if col < 0 || col >= l.sideW-2 || m.width == 0 {
+	if col < 0 || col >= l.sideW-2 || m.width == 0 || !l.inSide(x, y) {
 		return 0, point{}, false
 	}
-	row := l.row(y)
+	row := l.sideRow(y)
 	switch {
 	case row >= 0 && row < l.topRows && m.sideListLen() < 0:
 		return areaTop, point{m.sideOffset + row, col}, true
@@ -158,7 +158,7 @@ func (m *model) endSelect(x, y int) tea.Cmd {
 			return nil
 		}
 		l := m.layout()
-		return m.clickSide(x-l.sideX-1, l.row(y), s.focused)
+		return m.clickSide(x-l.sideX-1, l.sideRow(y), s.focused)
 	}
 	return m.copy(m.selectedText())
 }

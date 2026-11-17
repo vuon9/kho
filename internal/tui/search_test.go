@@ -14,7 +14,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
 	"github.com/vuon9/kho/internal/vuln"
@@ -762,31 +761,7 @@ func TestSearchCarriesFilter(t *testing.T) {
 	}
 }
 
-func TestSearchNotOnProjectOrImageRows(t *testing.T) {
-	m := loaded(t)
-	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
-	m.machineImgs = []image.Ref{{Image: "ghcr.io/example/api:1.0"}}
-	tests := []struct {
-		id   string
-		rail string
-	}{
-		{id: "a docker image row", rail: "docker"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.id, func(t *testing.T) {
-			mm := m
-			for i, r := range mm.railRows() {
-				if r.name == tt.rail {
-					mm.setRail(i)
-					break
-				}
-			}
-			mm = press(t, mm, "n")
-			if mm.search != nil {
-				t.Errorf("n opened a search on %q", tt.rail)
-			}
-		})
-	}
+func TestSearchNotOnProjectRows(t *testing.T) {
 	scan := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
 		{Path: "package-lock.json", Manager: "npm"},
 	}}}}

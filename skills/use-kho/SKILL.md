@@ -78,13 +78,16 @@ kho search yaml --json --limit 5      # JSON, at most 5 results per source
 kho search yaml --source npm,skills   # only these sources
 kho search staticcheck --source go    # a keyword, a module or package path, or a pkg.go.dev URL
 kho search "http client" --source uv  # a keyword, an exact name, or a pypi.org page
+kho search redis --source docker      # images on Docker Hub, alone, never mixed with package sources
 ```
 
-The query joins its arguments and needs at least 2 characters. Sources are brew, cask, npm, composer, pipx, uv, go and skills; mise can't search yet. A skill query can be an `owner/repo/skill` path. Without `--source`, every source is asked in parallel. A source that fails is named on stderr and in `errors`; the exit is 0 when any source answered, 1 when none did.
+The query joins its arguments and needs at least 2 characters. Sources are brew, cask, npm, composer, pipx, uv, go and skills; mise can't search yet. A skill query can be an `owner/repo/skill` path. Without `--source`, every package source is asked in parallel, and Docker Hub is not. A source that fails is named on stderr and in `errors`; the exit is 0 when any source answered, 1 when none did.
 
 The JSON is `{"query","results","notSearched","skipped","errors"}`. Each result has `source`, `name`, `version` (empty), `latest`, and when known `desc`, `homepage`, `repo` and `origin`.
 
-To install a result, follow the steps below with `<source>/<name>@latest`. A new install's JSON has `from: ""` and `new: true`.
+`--source docker` asks Docker Hub only, and naming another source with it is a usage error. Its JSON is `{"query","results","errors"}`, and each result has `source: "docker"`, `repository`, `tag` (the one `docker pull` fetches without a tag), `pulls`, `stars`, and when known `desc` and `official`. A hub.docker.com page as the query resolves to that repository. kho has no CLI pull: give the user the `docker pull <repository>:<tag>` command, or point them to the TUI.
+
+To install a package result, follow the steps below with `<source>/<name>@latest`. A new install's JSON has `from: ""` and `new: true`.
 
 ## Install, upgrade or downgrade
 

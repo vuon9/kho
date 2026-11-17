@@ -225,4 +225,7 @@ type Tag struct {
 	Name   string    `json:"name"`
 	Pushed time.Time `json:"pushed,omitzero"`
 	Digest string    `json:"digest,omitempty"`
+	// Docker Hub's web API gives these; a registry's tag list does not.
+	Size      int64    `json:"size,omitempty"`
+	Platforms []string `json:"platforms,omitempty"`
 }

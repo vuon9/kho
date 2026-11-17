@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/registry"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
@@ -50,7 +51,9 @@ type searchState struct {
 	errs     map[string]string
 	// Version stays empty until the row is installed: a search never turns an
 	// installed package into a candidate or the other way round by itself.
-	rows              []provider.Package
+	rows []provider.Package
+	// Docker Hub's answer, when the search is from the machine images row.
+	hub               []registry.HubRepo
 	installed         map[string]string
 	started           time.Time
 	took              time.Duration
@@ -64,6 +67,7 @@ type searchMsg struct {
 	gen     int
 	manager string
 	pkgs    []provider.Package
+	repos   []registry.HubRepo
 	err     error
 	// A name lookup for a manager without keyword search, where "not found"
 	// reads as no match rather than as a failed source.
@@ -108,11 +112,11 @@ func (m model) providerHasKeywordSearch(name string) bool {
 	return ok
 }
 
-// Ignored off machine package panels: kho never changes a project, and an
-// image is not a package.
+// Ignored off the machine's own panels: kho never changes a project. The
+// machine images row searches Docker Hub.
 func (m *model) openSearch() {
 	r := m.curRow()
-	if r.kind != rowAll && r.kind != rowProvider {
+	if r.kind != rowAll && r.kind != rowProvider && r.kind != rowMachineImages {
 		return
 	}
 	if r.kind == rowProvider && !m.providerCanSearch(r.name) {
@@ -128,8 +132,11 @@ func (m *model) openSearch() {
 }
 
 func (m model) searchScopeLabel() string {
-	if m.curRow().kind == rowAll {
+	switch m.curRow().kind {
+	case rowAll:
 		return "every package manager"
+	case rowMachineImages:
+		return hubName
 	}
 	return m.curRow().name
 }
@@ -146,6 +153,9 @@ func (m model) searchBar() string {
 		switch utf8.RuneCountInString(strings.TrimSpace(st.draft)) {
 		case 0:
 			hint = faint().Render("a name or keyword")
+			if m.hubScope() {
+				hint = faint().Render("an image name, keyword or Docker Hub link")
+			}
 		case 1:
 			hint = faint().Render("  type one more character")
 		}
@@ -191,7 +201,7 @@ func (m *model) submitSearch() tea.Cmd {
 		m.notice = "type one more character"
 		return nil
 	}
-	keep := st.mode == modeResults && len(st.rows) > 0
+	keep := st.mode == modeResults && len(st.rows)+len(st.hub) > 0
 	st.gen++
 	st.mode, st.query, st.draft, st.editing = modeResults, q, q, false
 	st.errs = map[string]string{}
@@ -201,7 +211,7 @@ func (m *model) submitSearch() tea.Cmd {
 	st.installedName, st.installedProvider = "", ""
 	st.started = now()
 	if !keep {
-		st.rows, m.cursor, m.offset = nil, 0, 0
+		st.rows, st.hub, m.cursor, m.offset = nil, nil, 0, 0
 	}
 	m.notice = ""
 	return m.searchRun(st.gen, q)
@@ -212,6 +222,9 @@ func (m *model) searchRun(gen int, q string) tea.Cmd {
 	r := m.curRow()
 	var cmds []tea.Cmd
 	switch r.kind {
+	case rowMachineImages:
+		st.asks = append(st.asks, hubName)
+		cmds = append(cmds, m.hubCmd(gen, q))
 	case rowAll:
 		for _, p := range provider.Searchers(m.providers) {
 			p := p
@@ -267,6 +280,16 @@ func (m *model) gotSearch(msg searchMsg) {
 		return
 	}
 	st.answered[msg.manager] = true
+	if msg.manager == hubName {
+		if msg.err != nil {
+			st.errs[hubName] = msg.err.Error()
+		} else {
+			st.hub = msg.repos[:min(len(msg.repos), searchLimit)]
+		}
+		st.busy, st.took = false, now().Sub(st.started)
+		m.cursor = min(m.cursor, max(len(st.hub)-1, 0))
+		return
+	}
 	// A refinement keeps the other managers' rows and replaces this manager's,
 	// so an old answer never sits beside a new one.
 	st.rows = rowsWithoutManager(st.rows, msg.manager)
@@ -387,7 +410,14 @@ func (m model) searchTitle() string {
 	case st.busy:
 		return title + m.spin() + " searching…"
 	}
-	return title + resultCount(len(st.rows))
+	return title + resultCount(m.resultLen())
+}
+
+func (m model) resultLen() int {
+	if m.hubScope() {
+		return len(m.search.hub)
+	}
+	return len(m.search.rows)
 }
 
 func resultCount(n int) string {
@@ -399,7 +429,7 @@ func resultCount(n int) string {
 
 func (m model) searchStatusBar() string {
 	st := m.search
-	left := " " + pillOn(resultCount(len(st.rows))+" · "+m.searchScopeLabel(), th.subtle, th.selFg)
+	left := " " + pillOn(resultCount(m.resultLen())+" · "+m.searchScopeLabel(), th.subtle, th.selFg)
 	var right []string
 	switch {
 	case st.busy:
@@ -461,6 +491,9 @@ func resultRow(cols []column, cells [5]string) string {
 }
 
 func (m model) searchLines() []string {
+	if m.hubScope() {
+		return m.hubLines()
+	}
 	cols := m.resultColumns()
 	var head [5]string
 	if m.skillScope() {
@@ -703,6 +736,10 @@ func (m *model) closeSearch() {
 // Resolving a missing newest version here is the row's first network step.
 func (m *model) openResult() tea.Cmd {
 	st := m.search
+	if m.hubResults() {
+		m.focus = focusSide
+		return m.wantTags()
+	}
 	p, ok := m.current()
 	if !ok {
 		return nil
@@ -734,6 +771,11 @@ func (m *model) openResult() tea.Cmd {
 }
 
 func (m *model) openCandidateHome() tea.Cmd {
+	if r, ok := m.currentImg(); ok && m.hubResults() {
+		if h, ok := m.hubCandidate(r); ok {
+			return open(h.URL())
+		}
+	}
 	p, ok := m.current()
 	if !ok {
 		return nil

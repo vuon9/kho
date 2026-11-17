@@ -22,8 +22,9 @@ func (m model) View() tea.View {
 	if m.width == 0 {
 		return v
 	}
-	if m.width < minWidth || m.height < minHeight {
-		v.SetContent(fmt.Sprintf("\n  🏮 kho needs at least %dx%d, this terminal is %dx%d.", minWidth, minHeight, m.width, m.height))
+	if m.tooSmall() {
+		v.SetContent(fmt.Sprintf("\n  🏮 kho needs at least %dx%d, or %dx%d, this terminal is %dx%d.",
+			minWidth, minHeight, stackMinWidth, stackMinHeight, m.width, m.height))
 		return v
 	}
 	l := m.layout()
@@ -31,11 +32,14 @@ func (m model) View() tea.View {
 	if m.showHistory {
 		body = m.historyBody()
 	} else {
-		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			box(icon("Machine")+" Machine", m.railBody(l.bodyH-2), l.railW, l.bodyH, m.focus == focusRail),
-			box(m.tableTitle(), m.tableLines(), l.tableW, l.bodyH, m.focus == focusTable),
-			m.sideBoxFor(l.sideW, l.bodyH, m.focus == focusSide),
-		)
+		rail := box(icon("Machine")+" Machine", m.railBody(l.bodyH-2), l.railW, l.bodyH, m.focus == focusRail)
+		table := box(m.tableTitle(), m.tableLines(), l.tableW, l.tableH, m.focus == focusTable)
+		side := m.sideBoxFor(l.sideW, l.sideH, m.focus == focusSide)
+		if l.stacked {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, rail, lipgloss.JoinVertical(lipgloss.Left, table, side))
+		} else {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, rail, table, side)
+		}
 	}
 	rule := edge(false).Render(strings.Repeat("─", m.width))
 	screen := m.titleBar() + "\n" + body + "\n" + ansi.Truncate(m.statusBar(), m.width, "…") + "\n" + rule + "\n" + ansi.Truncate(m.footer(), m.width, "…")
@@ -167,18 +171,34 @@ func (m model) statusBar() string {
 		pkgs, label = m.projPkgs(), "in "+m.projName()
 	}
 	t := m.count(pkgs)
-	parts := []string{" " + pillOn(fmt.Sprintf("%d %s", t.total, label), th.subtle, th.selFg)}
-	if t.vulnerable > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("⚠ %d vulnerable", t.vulnerable), th.red, th.selFg))
-	} else if len(m.db.Checked) > 0 {
-		parts = append(parts, pill("✓ no known vulns", th.green))
+	return m.fitStatus(func(short bool) []string {
+		say := func(long, brief string) string {
+			if short {
+				return brief
+			}
+			return long
+		}
+		parts := []string{" " + pillOn(fmt.Sprintf("%d %s", t.total, label), th.subtle, th.selFg)}
+		if t.vulnerable > 0 {
+			parts = append(parts, pillOn(fmt.Sprintf("⚠ %d%s", t.vulnerable, say(" vulnerable", "")), th.red, th.selFg))
+		} else if len(m.db.Checked) > 0 {
+			parts = append(parts, pill(say("✓ no known vulns", "✓"), th.green))
+		}
+		if t.depVulnerable > 0 {
+			parts = append(parts, pill(fmt.Sprintf("◆ %d%s", t.depVulnerable, say(" with vulnerable deps", "")), th.orange))
+		}
+		return append(parts, pill(fmt.Sprintf("↑ %d%s", t.outdated, say(" outdated", "")), th.yellow),
+			pill(fmt.Sprintf("⚑ %d%s", t.pinned, say(" pinned", "")), th.cyan))
+	}, m.activity()+faint().Render("🎨 "+th.name+" "))
+}
+
+// A status bar too wide for the screen drops its words and keeps each sign
+// and its count, which mean the same in the table and the rail.
+func (m model) fitStatus(parts func(short bool) []string, right string) string {
+	left := strings.Join(parts(false), " ")
+	if lipgloss.Width(left)+lipgloss.Width(right)+1 > m.width {
+		left = strings.Join(parts(true), " ")
 	}
-	if t.depVulnerable > 0 {
-		parts = append(parts, pill(fmt.Sprintf("◆ %d with vulnerable deps", t.depVulnerable), th.orange))
-	}
-	parts = append(parts, pill(fmt.Sprintf("↑ %d outdated", t.outdated), th.yellow), pill(fmt.Sprintf("⚑ %d pinned", t.pinned), th.cyan))
-	left := strings.Join(parts, " ")
-	right := m.activity() + faint().Render("🎨 "+th.name+" ")
 	return left + strings.Repeat(" ", max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)) + right
 }
 
@@ -247,6 +267,9 @@ func (m model) rowKeys() []string {
 	switch {
 	case isImageRow(m.curRow().kind):
 		pairs = append(pairs, "D", "remove", "i v a", "tabs", "s", "sort", "f", "state", "/", "filter", "w", "copy name")
+		if m.curRow().kind == rowMachineImages {
+			pairs = append(pairs, "n", "search Docker Hub")
+		}
 	case m.inProjectPkg():
 		pairs = append(pairs, "s", "sort", "f", "status", "/", "filter", "w", "home")
 	case m.inProject():
@@ -277,6 +300,8 @@ func (m model) enterLabel() string {
 	switch {
 	case m.focus == focusTable:
 		return "details"
+	case m.hubResults() && (m.imageTab() == tabInfo || m.imageTab() == tabVersions):
+		return "pull it"
 	case m.inResults() && m.isCandidate(p) && p.Source == "skills" && m.focus == focusSide:
 		return "install it"
 	case m.activeTab() == tabVersions && !m.inProjectPkg():

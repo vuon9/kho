@@ -1,0 +1,23 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "name": "2.4.1",
+      "full_size": 48210944,
+      "last_updated": "2031-04-02T08:15:00.123456Z",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "images": [
+        {"architecture": "amd64", "os": "linux", "variant": null, "size": 48210944},
+        {"architecture": "arm64", "os": "linux", "variant": "v8", "size": 46001152},
+        {"architecture": "unknown", "os": "unknown", "variant": null, "size": 1024}
+      ]
+    },
+    {
+      "name": "latest",
+      "full_size": 48210944,
+      "last_updated": "2031-03-30T10:00:00Z",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "images": [{"architecture": "amd64", "os": "linux", "variant": null, "size": 48210944}]
+    }
+  ]
+}

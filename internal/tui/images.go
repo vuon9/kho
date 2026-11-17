@@ -115,7 +115,7 @@ func (m *model) usersCmd() tea.Cmd {
 }
 
 func (m *model) wantUsers() tea.Cmd {
-	if m.imageTab() != tabInfo || !isImageRow(m.curRow().kind) {
+	if m.imageTab() != tabInfo || !isImageRow(m.curRow().kind) || m.hubResults() {
 		return nil
 	}
 	r, ok := m.currentImg()
@@ -129,8 +129,11 @@ func (m *model) wantUsers() tea.Cmd {
 	return m.usersCmd()
 }
 
+// A Docker Hub candidate's tags load once it is opened, so its Info can name
+// the tag a pull would fetch.
 func (m *model) wantTags() tea.Cmd {
-	if m.imageTab() != tabVersions || !isImageRow(m.curRow().kind) {
+	opened := m.hubResults() && m.focus == focusSide
+	if (m.imageTab() != tabVersions && !opened) || !isImageRow(m.curRow().kind) {
 		return nil
 	}
 	r, ok := m.currentImg()
@@ -151,6 +154,7 @@ func (m *model) tabTo(tab int) tea.Cmd {
 	if tab != tabVersions {
 		return nil
 	}
+	m.pointAtSuggested()
 	r, ok := m.currentImg()
 	if !ok || !isImageRow(m.curRow().kind) {
 		return nil
@@ -436,6 +440,9 @@ func (m model) sortImg(rows []image.Ref) {
 }
 
 func (m model) imgRows() []image.Ref {
+	if m.hubResults() {
+		return m.hubRefs()
+	}
 	var out []image.Ref
 	only := m.imgStatus() == imgStatusUntracked
 	for _, r := range m.imgList() {
@@ -673,6 +680,9 @@ func (m model) imageTableLines() []string {
 	head += " " + pad(label(imgColState, "STATE"), stateW)
 	lines := []string{faint().Render(ansi.Truncate(head, inner, "…"))}
 	bar := func() []string {
+		if m.inPrompt() {
+			return append(m.fitBody(lines), m.barRule(inner), m.searchBar())
+		}
 		return append(m.fitBody(lines), fg(th.subtle).Render(strings.Repeat("─", inner)), m.filterBar())
 	}
 	if m.imgErr != nil {
@@ -740,20 +750,26 @@ func (m model) imageStatusBar() string {
 			disk++
 		}
 	}
-	parts := []string{" " + pillOn(fmt.Sprintf("%d images", len(list)), th.subtle, th.selFg)}
-	if eol > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("%s %d EOL", image.EOL.Mark(), eol), th.red, th.selFg))
-	}
-	if gone > 0 {
-		parts = append(parts, pillOn(fmt.Sprintf("%s %d gone", image.Gone.Mark(), gone), th.red, th.selFg))
-	}
-	if stale > 0 {
-		parts = append(parts, pill(fmt.Sprintf("%s %d stale", image.Stale.Mark(), stale), th.yellow))
-	}
-	parts = append(parts, pill(fmt.Sprintf("%s %d on disk", image.OnDisk.Mark(), disk), th.cyan), pill(fmt.Sprintf("%s %d not pulled", image.NotPulled.Mark(), len(list)-disk), th.muted))
-	left := strings.Join(parts, " ")
-	right := m.activity() + faint().Render("🎨 "+th.name+" ")
-	return left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-ansi.StringWidth(right), 1)) + right
+	return m.fitStatus(func(short bool) []string {
+		say := func(long string) string {
+			if short {
+				return ""
+			}
+			return long
+		}
+		parts := []string{" " + pillOn(fmt.Sprintf("%d images", len(list)), th.subtle, th.selFg)}
+		if eol > 0 {
+			parts = append(parts, pillOn(fmt.Sprintf("%s %d%s", image.EOL.Mark(), eol, say(" EOL")), th.red, th.selFg))
+		}
+		if gone > 0 {
+			parts = append(parts, pillOn(fmt.Sprintf("%s %d%s", image.Gone.Mark(), gone, say(" gone")), th.red, th.selFg))
+		}
+		if stale > 0 {
+			parts = append(parts, pill(fmt.Sprintf("%s %d%s", image.Stale.Mark(), stale, say(" stale")), th.yellow))
+		}
+		return append(parts, pill(fmt.Sprintf("%s %d%s", image.OnDisk.Mark(), disk, say(" on disk")), th.cyan),
+			pill(fmt.Sprintf("%s %d%s", image.NotPulled.Mark(), len(list)-disk, say(" not pulled")), th.muted))
+	}, m.activity()+faint().Render("🎨 "+th.name+" "))
 }
 
 func (m model) imageSideBox(w, h int, focused bool) string {
@@ -862,7 +878,7 @@ func (m model) imageTabs() string { return m.tabBar() }
 // A failed scan waits on screen and runs again the next time the tab opens.
 func (m *model) autoScan() tea.Cmd {
 	r, ok := m.currentImg()
-	if !ok || m.imageTab() != tabSecurity {
+	if !ok || m.imageTab() != tabSecurity || m.hubResults() {
 		m.scanShown = ""
 		return nil
 	}
@@ -895,6 +911,10 @@ func (m *model) askPull() {
 	if !ok {
 		return
 	}
+	if m.hubResults() {
+		m.askHubPull(r, t)
+		return
+	}
 	target := r.CanonicalRepo() + ":" + t.Name
 	title := "⬇ Pull " + r.Name() + " as " + t.Name
 	lines := []string{
@@ -912,7 +932,7 @@ func (m *model) askPull() {
 
 func (m model) sortedTags(r image.Ref) []image.Tag {
 	tags := slices.Clone(m.imgTags[r.Canonical()])
-	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
+	if r.Tag != "" && !m.hubResults() && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
 		// The tag in use always shows, even when the repository lists more than kho asked for.
 		tags = append(tags, image.Tag{Name: r.Tag})
 	}
@@ -932,6 +952,12 @@ func (m *model) moveImageSide(key string, step int) {
 	switch {
 	case key == "enter" && m.imageTab() == tabVersions && n > 0:
 		m.askPull()
+	case key == "enter" && m.imageTab() == tabInfo && m.hubResults():
+		if r, ok := m.currentImg(); ok {
+			if t, ok := m.hubSuggested(r); ok {
+				m.askHubPull(r, t)
+			}
+		}
 	case key == "home" || key == "g":
 		m.sideCursor, m.sideOffset = 0, 0
 	case n > 0 && (key == "up" || key == "k" || key == "down" || key == "j" || key == "pgup" || key == "pgdown"):
@@ -988,7 +1014,7 @@ func (m model) imageTabLines(inner int) []line {
 	}
 	switch m.imageTab() {
 	case tabVersions:
-		return m.imageVersionLines(r)
+		return m.imageVersionLines(r, inner)
 	case tabSecurity:
 		return m.imageSecurityLines(r, inner)
 	}
@@ -996,6 +1022,9 @@ func (m model) imageTabLines(inner int) []line {
 }
 
 func (m model) imageLines(r image.Ref) []line {
+	if h, ok := m.hubCandidate(r); ok {
+		return m.hubInfoLines(h, r)
+	}
 	lines := plain(" "+icon("docker")+" "+accent().Render(r.Image), "")
 	add := func(label, value, url string) {
 		if value == "" {
@@ -1105,7 +1134,7 @@ func versionOf(name string) string {
 	return ""
 }
 
-func (m model) imageVersionLines(r image.Ref) []line {
+func (m model) imageVersionLines(r image.Ref, inner int) []line {
 	// The tag in use is always shown, so ask what the registry said before
 	// that: an empty answer must read as empty, not as one version.
 	if len(m.imgTags[r.Canonical()]) == 0 {
@@ -1121,23 +1150,37 @@ func (m model) imageVersionLines(r image.Ref) []line {
 		return plain(faint().Render(" press v again to ask " + r.Registry))
 	}
 	tags := m.sortedTags(r)
+	current := r.Tag
+	if _, ok := m.hubCandidate(r); ok {
+		t, _ := m.hubSuggested(r)
+		current = t.Name
+	}
+	// The date stays whole in a narrow sidebar, and the name gives way.
+	nameW := min(22, max(inner-3-12, 10))
 	var lines []line
 	for _, t := range tags {
 		mark := "  "
-		if t.Name == r.Tag {
+		if t.Name == current {
 			mark = accent().Render("→ ")
 		}
 		when := ""
 		if !t.Pushed.IsZero() {
 			when = "  " + faint().Render(t.Pushed.Format("2006-01-02"))
 		}
-		text := " " + mark + pad(ansi.Truncate(t.Name, 22, "…"), 22) + when
+		// A narrow sidebar keeps the date whole and drops the size.
+		if s := byteSize(t.Size); s != "" && inner >= 3+nameW+2+10+2+len(s) {
+			when += "  " + faint().Render(s)
+		}
+		text := " " + mark + pad(ansi.Truncate(printable(t.Name), nameW, "…"), nameW) + when
 		lines = append(lines, row(text))
 	}
 	return lines
 }
 
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
+	if _, ok := m.hubCandidate(r); ok {
+		return m.hubSecurityLines()
+	}
 	key := r.Canonical()
 	if m.imgScanning[key] {
 		return plain(m.spin() + faint().Render(" scanning with trivy, this takes a moment"))

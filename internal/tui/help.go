@@ -31,7 +31,7 @@ var helpSections = []struct {
 		{"pgup pgdn  space", "page"},
 		{"g G", "first or last"},
 		{"enter", "open the selection in the next panel, or open and close the project"},
-		{"n", "search this panel's registry for a package kho doesn't have"},
+		{"n", "search this panel's registry for a package kho doesn't have, or Docker Hub"},
 		{"D", "remove the selected package or image, after asking"},
 		{"", "an image says which containers still use it first"},
 	}},

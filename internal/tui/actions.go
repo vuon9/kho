@@ -34,6 +34,8 @@ type installedMsg struct {
 	provider, name, version string
 	err                     error
 	removed                 bool
+	// pulled marks an image fetched from a Docker Hub search; name is then name:tag.
+	pulled bool
 }
 
 type linkedMsg struct {
