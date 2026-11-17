@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg, pullPlanMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}

@@ -178,7 +178,7 @@ To check versions and advisories, kho asks the services below about the packages
 | crates.io | names of a project's direct Rust crates | kho |
 | mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |
 | Docker Hub API (`hub.docker.com`) | tag names, digests and push dates of an image's release line; the words you search for on the docker panel or with `--source docker`, and the tags of a result you open | kho |
-| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or the registry a reference names) | which image a reference points to: its manifest and config, never a layer | kho |
+| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or the registry a reference names) | which image a reference points to: its manifest and config, never a layer; and before a pull, whether a mirror has the tag, so docker pulls it from there instead of Docker Hub | kho, and `docker pull` |
 | endoflife.date | the product and release line of an image | kho |
 | trivy's sources | the image it scans, and its own vulnerability database | trivy, when you open an image's Security tab |
 

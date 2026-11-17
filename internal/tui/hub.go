@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"slices"
 	"strings"
 
@@ -255,15 +256,98 @@ func (m *model) askHubPull(r image.Ref, t image.Tag) {
 		lines = append(lines, faint().Render("platforms  ")+platformsText(t.Platforms))
 		lines = append(lines, faint().Render("           docker picks the one this machine runs"))
 	}
-	lines = append(lines, faint().Render("runs       ")+"docker pull "+target, "")
+	var tail []string
 	if slices.Contains(m.hubOnDisk(r), t.Name) {
-		lines = append(lines, yellow().Render("⚠ the machine has "+target+" already."),
-			faint().Render("pulling fetches what the tag points to now and moves the tag to it."), "")
+		tail = []string{"", yellow().Render("⚠ the machine has " + target + " already."),
+			faint().Render("pulling fetches what the tag points to now and moves the tag to it.")}
 	}
-	lines = append(lines, accent().Render("y")+faint().Render(" pull it   ")+accent().Render("n")+faint().Render(" cancel"))
-	title := "⬇ Pull " + target
-	m.confirm = &confirm{title: title + "?", lines: lines,
-		run: startInstall(title, pullCmd(target), m.log, installedMsg{provider: "docker", name: target, version: t.Name, pulled: true})}
+	m.planPull(&pullPlan{ref: image.Parse(target), tag: t, target: target, title: "⬇ Pull " + target,
+		head: lines, tail: tail, yes: "pull it",
+		done: installedMsg{provider: "docker", name: target, version: t.Name, pulled: true}})
+}
+
+var mirrorFor = func(ctx context.Context, ask image.Asker, r image.Ref, digest string) (string, bool) {
+	m, ok := ask.(interface {
+		MirrorRef(context.Context, image.Ref, string) (string, bool)
+	})
+	if !ok {
+		return "", false
+	}
+	return m.MirrorRef(ctx, r, digest)
+}
+
+var tagCmd = func(from, to string) *exec.Cmd { return exec.Command("docker", "tag", from, to) }
+
+// A pull from Docker Hub waits while kho asks the mirrors for the tag, and
+// then asks the person, so the dialog shows the commands that will run.
+type pullPlan struct {
+	// ref names the image as Docker Hub does, with the tag to pull.
+	ref    image.Ref
+	tag    image.Tag
+	target string
+	title  string
+	head   []string
+	tail   []string
+	yes    string
+	done   installedMsg
+	asked  bool
+}
+
+type pullPlanMsg struct {
+	plan   *pullPlan
+	mirror string
+	stale  bool
+}
+
+func (m *model) planPull(p *pullPlan) {
+	if p.ref.Registry != image.DockerHub {
+		m.confirmPull(p, "", false)
+		return
+	}
+	m.pulling = p
+	m.notice = "asking the mirrors for " + p.target
+}
+
+func (m *model) wantMirror() tea.Cmd {
+	p := m.pulling
+	if p == nil || p.asked {
+		return nil
+	}
+	p.asked = true
+	ask := m.imgAsk
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+		defer cancel()
+		ref, stale := mirrorFor(ctx, ask, p.ref, p.tag.Digest)
+		return pullPlanMsg{plan: p, mirror: ref, stale: stale}
+	}
+}
+
+// From a mirror the pull is two commands: the pull, then a tag that gives the
+// image the name it has on Docker Hub. The tag runs only after the pull worked.
+func (m *model) confirmPull(p *pullPlan, mirror string, stale bool) {
+	lines := slices.Clone(p.head)
+	var run tea.Cmd
+	switch {
+	case mirror != "":
+		host, _, _ := strings.Cut(mirror, "/")
+		lines = append(lines, faint().Render("runs       ")+"docker pull "+mirror,
+			faint().Render("then       ")+"docker tag "+mirror+" "+p.target,
+			faint().Render("           from "+host+", so Docker Hub's pull limit is left alone"))
+		name := startInstall(p.title, tagCmd(mirror, p.target), m.log, p.done)
+		run = startInstall(p.title, pullCmd(mirror), m.log, installedMsg{provider: "docker", name: mirror, version: p.tag.Name, then: name})
+	default:
+		lines = append(lines, faint().Render("runs       ")+"docker pull "+p.target)
+		switch {
+		case stale:
+			lines = append(lines, faint().Render("           the mirrors hold an older copy of this tag, so Docker Hub serves it"))
+		case p.ref.Registry == image.DockerHub:
+			lines = append(lines, faint().Render("           no mirror has this tag, so Docker Hub serves it"))
+		}
+		run = startInstall(p.title, pullCmd(p.target), m.log, p.done)
+	}
+	lines = append(append(lines, p.tail...), "", accent().Render("y")+faint().Render(" "+p.yes+"   ")+accent().Render("n")+faint().Render(" cancel"))
+	m.confirm = &confirm{title: p.title + "?", lines: lines, run: run}
 }
 
 // The pulled image is selected once the relisted machine images show it.

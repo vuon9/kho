@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -248,4 +249,29 @@ func Count(n int64) string {
 		return trim(fmt.Sprintf("%.1f", float64(n)/1e3)) + "k"
 	}
 	return fmt.Sprint(n)
+}
+
+// A pull from a mirror leaves Docker Hub's pull limit alone. MirrorRef names
+// the first mirror that has the tag. A mirror only holds what it has cached,
+// so when digest is known and its copy differs, it is skipped as stale.
+func (c *Client) MirrorRef(ctx context.Context, r image.Ref, digest string) (ref string, stale bool) {
+	if r.Registry != image.DockerHub || r.Tag == "" {
+		return "", false
+	}
+	for _, s := range sources(r) {
+		if s.host == dockerHubAPI {
+			continue
+		}
+		repo := s.prefix + r.RemoteRepo()
+		body, _, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(s.host), repo, r.Tag), s.host, repo)
+		if err != nil || status != http.StatusOK {
+			continue
+		}
+		if digest != "" && "sha256:"+hex.EncodeToString(sum(body)) != digest {
+			stale = true
+			continue
+		}
+		return s.host + "/" + repo + ":" + r.Tag, false
+	}
+	return "", stale
 }

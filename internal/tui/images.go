@@ -916,18 +916,12 @@ func (m *model) askPull() {
 		return
 	}
 	target := r.CanonicalRepo() + ":" + t.Name
-	title := "⬇ Pull " + r.Name() + " as " + t.Name
-	lines := []string{
-		bold().Render(r.Image) + faint().Render(" → ") + green().Render(t.Name),
-		"",
-		faint().Render("runs  ") + "docker pull " + target,
-		"",
-		faint().Render("the image on disk stays until you remove it"),
-		"",
-		accent().Render("y") + faint().Render(" run it   ") + accent().Render("n") + faint().Render(" cancel"),
-	}
-	m.confirm = &confirm{title: title + "?", lines: lines,
-		run: startInstall(title, pullCmd(target), m.log, installedMsg{provider: "docker", name: r.Image, version: t.Name})}
+	ref := r
+	ref.Tag, ref.Digest = t.Name, ""
+	m.planPull(&pullPlan{ref: ref, tag: t, target: target, title: "⬇ Pull " + r.Name() + " as " + t.Name,
+		head: []string{bold().Render(r.Image) + faint().Render(" → ") + green().Render(t.Name), ""},
+		tail: []string{"", faint().Render("the image on disk stays until you remove it")}, yes: "run it",
+		done: installedMsg{provider: "docker", name: r.Image, version: t.Name}})
 }
 
 func (m model) sortedTags(r image.Ref) []image.Tag {

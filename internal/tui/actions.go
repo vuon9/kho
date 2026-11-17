@@ -36,6 +36,8 @@ type installedMsg struct {
 	removed                 bool
 	// pulled marks an image fetched from a Docker Hub search; name is then name:tag.
 	pulled bool
+	// then is the next step of the same change, run only when this one worked.
+	then tea.Cmd
 }
 
 type linkedMsg struct {

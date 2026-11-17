@@ -281,6 +281,7 @@ type model struct {
 	imgBusy   bool
 	imgGen    int
 	imgAsk    image.Asker
+	pulling   *pullPlan
 	// pulledImg is the image a Docker Hub pull just fetched, selected once it lists.
 	pulledImg   string
 	imgStatuses map[string]int
@@ -488,6 +489,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ask := mm.wantUsers(); ask != nil {
 			cmd = tea.Batch(cmd, ask)
 		}
+		if ask := mm.wantMirror(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
 	}
 	return next, cmd
 }
@@ -682,6 +686,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.db.MergeAudits(msg.asked, msg.audits, msg.err, now())
 		m.save()
 		m.reindex()
+	case pullPlanMsg:
+		if m.pulling == msg.plan {
+			m.pulling, m.notice = nil, ""
+			m.confirmPull(msg.plan, msg.mirror, msg.stale)
+		}
 	case installStartedMsg:
 		m.inst = msg.installing
 		cmds = append(cmds, m.inst.next(), m.startTicking())
@@ -692,6 +701,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A rerun in the terminal comes back after its popup has closed.
 		if m.inst != nil {
 			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
+		}
+		if msg.err == nil && msg.then != nil {
+			m.notice = "pulled " + msg.name + ", now naming it"
+			cmds = append(cmds, msg.then)
+			break
 		}
 		switch {
 		case msg.err != nil && msg.removed:

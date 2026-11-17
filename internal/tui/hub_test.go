@@ -24,7 +24,7 @@ var hubRepos = []registry.HubRepo{
 
 var hubTags = map[string][]image.Tag{
 	"docker.io/library/kettle:latest": {
-		{Name: "2.4.1", Pushed: time.Date(2031, 4, 2, 0, 0, 0, 0, time.UTC), Size: 48 << 20, Platforms: []string{"linux/amd64", "linux/arm64/v8"}},
+		{Name: "2.4.1", Digest: "sha256:2041", Pushed: time.Date(2031, 4, 2, 0, 0, 0, 0, time.UTC), Size: 48 << 20, Platforms: []string{"linux/amd64", "linux/arm64/v8"}},
 		{Name: "latest", Pushed: time.Date(2031, 3, 30, 0, 0, 0, 0, time.UTC), Size: 48 << 20, Platforms: []string{"linux/amd64"}},
 	},
 	"docker.io/acme/kettle-tools:latest": {
@@ -38,7 +38,12 @@ type hubCalls struct {
 	searches []string
 	tags     []string
 	pulls    []string
+	named    []string
+	mirrors  []string
 	lists    int
+	// mirror and stale are what the mirrors answer.
+	mirror string
+	stale  bool
 }
 
 // The machine has kettle:1.0 on disk. Docker Hub answers with hubRepos, and
@@ -59,6 +64,14 @@ func hubbed(t *testing.T, width int) (model, *hubCalls) {
 		calls.pulls = append(calls.pulls, ref)
 		return exec.Command("docker", "pull", ref)
 	}
+	tagCmd = func(from, to string) *exec.Cmd {
+		calls.named = append(calls.named, to)
+		return exec.Command("docker", "tag", from, to)
+	}
+	mirrorFor = func(_ context.Context, _ image.Asker, r image.Ref, digest string) (string, bool) {
+		calls.mirrors = append(calls.mirrors, r.Canonical()+" "+digest)
+		return calls.mirror, calls.stale
+	}
 	onDisk := image.Ref{Image: "kettle:1.0", Registry: image.DockerHub, Repo: "kettle", Tag: "1.0", Presence: image.OnDisk, State: image.Fresh}
 	listImages = func(context.Context) ([]image.LocalImage, error) {
 		calls.lists++
@@ -66,7 +79,7 @@ func hubbed(t *testing.T, width int) (model, *hubCalls) {
 	}
 	machineImages = func(context.Context, []image.LocalImage, image.Asker) []image.Ref {
 		out := []image.Ref{onDisk}
-		for _, p := range calls.pulls {
+		for _, p := range append(slices.Clone(calls.pulls), calls.named...) {
 			r := image.Parse(p)
 			r.Presence, r.State = image.OnDisk, image.Fresh
 			out = append(out, r)
@@ -79,6 +92,8 @@ func hubbed(t *testing.T, width int) (model, *hubCalls) {
 		}
 		tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) { return nil, nil }
 		pullCmd = func(ref string) *exec.Cmd { return exec.Command("docker", "pull", ref) }
+		tagCmd = func(from, to string) *exec.Cmd { return exec.Command("docker", "tag", from, to) }
+		mirrorFor = func(context.Context, image.Asker, image.Ref, string) (string, bool) { return "", false }
 	})
 	m.machineImgs = []image.Ref{onDisk}
 	return searchRail(t, m, "docker"), calls
@@ -276,5 +291,91 @@ func TestHubPasteResolvesALink(t *testing.T) {
 	m = press(t, m, "enter")
 	if !slices.Equal(calls.searches, []string{"https://hub.docker.com/r/acme/kettle-tools"}) {
 		t.Errorf("asked %v, want the link as one query", calls.searches)
+	}
+}
+
+func TestHubPullTriesTheMirrorsFirst(t *testing.T) {
+	const mirrored = "mirror.gcr.io/library/kettle:2.4.1"
+	tests := []struct {
+		id      string
+		mirror  string
+		stale   bool
+		failing bool
+		dialog  []string
+		ran     []string
+		notice  string
+	}{
+		{id: "a mirror with the tag pulls from it, then names the image as Docker Hub does", mirror: mirrored,
+			dialog: []string{"docker pull " + mirrored, "docker tag " + mirrored + " kettle:2.4.1", "from mirror.gcr.io"},
+			ran:    []string{"docker pull " + mirrored, "docker tag " + mirrored + " kettle:2.4.1"}, notice: "pulled kettle:2.4.1"},
+		{id: "a stale copy on every mirror sends it to Docker Hub", stale: true,
+			dialog: []string{"docker pull kettle:2.4.1", "older copy"}, ran: []string{"docker pull kettle:2.4.1"}, notice: "pulled kettle:2.4.1"},
+		{id: "no mirror with the tag sends it to Docker Hub",
+			dialog: []string{"docker pull kettle:2.4.1", "no mirror has this tag"}, ran: []string{"docker pull kettle:2.4.1"}, notice: "pulled kettle:2.4.1"},
+		{id: "a failed pull from a mirror never names anything", mirror: mirrored, failing: true,
+			ran: []string{"docker pull " + mirrored}, notice: "failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m, calls := hubSearched(t, 160, "kettle")
+			calls.mirror, calls.stale = tt.mirror, tt.stale
+			if tt.failing {
+				installScript = "exit 1"
+			}
+			m = press(t, m, "enter", "v", "up", "enter")
+			if m.confirm == nil {
+				t.Fatal("no dialog after kho asked the mirrors")
+			}
+			if !slices.Equal(calls.mirrors, []string{"docker.io/library/kettle:2.4.1 sha256:2041"}) {
+				t.Errorf("asked the mirrors %v, want the tag and Docker Hub's digest for it", calls.mirrors)
+			}
+			dialog := ansi.Strip(strings.Join(m.confirm.lines, "\n"))
+			for _, want := range tt.dialog {
+				if !strings.Contains(dialog, want) {
+					t.Errorf("the dialog lacks %q:\n%s", want, dialog)
+				}
+			}
+			m = press(t, m, "y")
+			if !slices.Equal(ran, tt.ran) {
+				t.Errorf("ran %v, want %v", ran, tt.ran)
+			}
+			if !strings.Contains(m.notice, tt.notice) {
+				t.Errorf("notice %q, want %q", m.notice, tt.notice)
+			}
+		})
+	}
+}
+
+func TestVersionPullTriesTheMirrorsFirst(t *testing.T) {
+	_, calls := hubbed(t, 160)
+	calls.mirror = "mirror.gcr.io/library/python:3.13-slim"
+	m := onImages(t, withImages(t, sampleImages()...))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
+		"docker.io/library/python:3.9-slim": {{Name: "3.13-slim"}},
+	}})
+	m = press(t, m, "v")
+	m.focus = focusSide
+	m = press(t, m, "enter", "y")
+	want := []string{"docker pull mirror.gcr.io/library/python:3.13-slim",
+		"docker tag mirror.gcr.io/library/python:3.13-slim docker.io/library/python:3.13-slim"}
+	if !slices.Equal(ran, want) {
+		t.Errorf("ran %v, want %v", ran, want)
+	}
+}
+
+func TestOtherRegistriesSkipTheMirrors(t *testing.T) {
+	_, calls := hubbed(t, 160)
+	calls.mirror = "mirror.gcr.io/never"
+	r := image.Ref{Image: "ghcr.io/acme/kettle:1", Registry: "ghcr.io", Repo: "acme/kettle", Tag: "1", File: "Dockerfile", Line: 1, State: image.Fresh}
+	m := onImages(t, withImages(t, r))
+	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{"ghcr.io/acme/kettle:1": {{Name: "2"}}}})
+	m = press(t, m, "v")
+	m.focus = focusSide
+	m = press(t, m, "enter")
+	if len(calls.mirrors) != 0 || m.confirm == nil {
+		t.Fatalf("asked the mirrors %v for a ghcr.io image", calls.mirrors)
+	}
+	if dialog := ansi.Strip(strings.Join(m.confirm.lines, "\n")); !strings.Contains(dialog, "docker pull ghcr.io/acme/kettle:2") || strings.Contains(dialog, "mirror") {
+		t.Errorf("dialog:\n%s", dialog)
 	}
 }

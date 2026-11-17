@@ -264,3 +264,51 @@ func TestHubTagsFindANamedTagPastTheNewestPage(t *testing.T) {
 		t.Errorf("suggested %q, want latest", SuggestTag(tags))
 	}
 }
+
+func TestMirrorRef(t *testing.T) {
+	index := []byte(`{"manifests":[]}`)
+	old := []byte(`{"manifests":[{"digest":"sha256:0"}]}`)
+	serve := func(body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { w.Write(body) }
+	}
+	missing := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }
+	tests := []struct {
+		id        string
+		ref       string
+		digest    string
+		gcr, ecr  http.HandlerFunc
+		want      string
+		wantStale bool
+	}{
+		{id: "the first mirror with the tag", ref: "kettle:2.4.1", digest: digestOf(index), gcr: serve(index), ecr: serve(index),
+			want: "mirror.gcr.io/library/kettle:2.4.1"},
+		{id: "the next mirror when the first lacks it", ref: "kettle:2.4.1", gcr: missing, ecr: serve(index),
+			want: "public.ecr.aws/docker/library/kettle:2.4.1"},
+		{id: "a stale copy is skipped for a current one", ref: "kettle:latest", digest: digestOf(index), gcr: serve(old), ecr: serve(index),
+			want: "public.ecr.aws/docker/library/kettle:latest"},
+		{id: "only stale copies send it to Docker Hub", ref: "kettle:latest", digest: digestOf(index), gcr: serve(old), ecr: serve(old), wantStale: true},
+		{id: "no mirror has it", ref: "acme/kettle-tools:0.4", gcr: missing, ecr: missing},
+		{id: "a mirror that fails is passed over", ref: "kettle:2.4.1",
+			gcr: func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTooManyRequests) }, ecr: serve(index),
+			want: "public.ecr.aws/docker/library/kettle:2.4.1"},
+		{id: "another registry has no mirror", ref: "ghcr.io/acme/kettle:1", gcr: serve(index), ecr: serve(index)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			srv, asked := mirrorServer(t, map[string]http.HandlerFunc{
+				"/mirror.gcr.io/":  tt.gcr,
+				"/public.ecr.aws/": tt.ecr,
+			})
+			c := &Client{HTTP: srv.Client(), Base: byHost(srv)}
+			got, stale := c.MirrorRef(context.Background(), image.Parse(tt.ref), tt.digest)
+			if got != tt.want || stale != tt.wantStale {
+				t.Errorf("got %q, stale %v; want %q, %v", got, stale, tt.want, tt.wantStale)
+			}
+			for _, a := range *asked {
+				if strings.Contains(a, "registry-1.docker.io") {
+					t.Errorf("asked Docker Hub itself: %s", a)
+				}
+			}
+		})
+	}
+}
