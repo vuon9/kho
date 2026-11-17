@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.18](https://github.com/vuon9/kho/compare/v0.1.17...v0.1.18) (2026-11-17)
+
+
+### Features
+
+* search Docker Hub and pull an image, and stack the sidebar on narrow screens ([#73](https://github.com/vuon9/kho/issues/73)) ([bfaea65](https://github.com/vuon9/kho/commit/bfaea65897079d489bc76f18a8f40bee8fe85017))
+
+
+### Bug Fixes
+
+* match Homebrew tap names, guard search inputs, and trim comments and docs ([#72](https://github.com/vuon9/kho/issues/72)) ([b71f2fe](https://github.com/vuon9/kho/commit/b71f2fe4c7b0c8ef9a6387f9224e1086558b5f80))
+
 ## [0.1.17](https://github.com/vuon9/kho/compare/v0.1.16...v0.1.17) (2026-11-16)
 
 
