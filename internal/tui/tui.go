@@ -656,7 +656,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err != nil:
 			m.secErr = msg.err
 		default:
-			m.db.MergeBrew(msg.result, msg.queries, now())
+			m.db.MergeBrewScanned(context.Background(), msg.result, msg.queries, now())
 			m.save()
 		}
 		m.reindex()

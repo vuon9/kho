@@ -20,7 +20,8 @@ func TestParseBrewVulns(t *testing.T) {
 					"aliases":["GHSA-test"],"fixed_versions":["v1.2.10","v1.2.4"]}],"patched":[]}],
 				"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`,
 			want: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{
-				Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{{
+				Formula: "anvil", Version: "1.2.3", RepoURL: "https://github.com/example/anvil", Tag: "v1.2.3",
+				Advisories: []vuln.Advisory{{
 					ID: "CVE-0000-0001", Aliases: []string{"GHSA-test"}, Severity: "HIGH",
 					Summary: "Anvil runs a command twice", Package: "anvil", Versions: []string{"1.2.3"},
 					Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "1.2.4"}},
@@ -39,7 +40,8 @@ func TestParseBrewVulns(t *testing.T) {
 				"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`,
 			want: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{
 				Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{
-					{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file", Package: "anvil", Versions: []string{"1.2.3"}},
+					{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file", Package: "anvil", Versions: []string{"1.2.3"},
+						CommitFixes: []string{"2dae3024897e1898d389835151f4e9606227721d"}},
 					{ID: "CVE-0000-0003", Severity: "LOW", Summary: "Anvil logs a secret", Package: "anvil", Versions: []string{"1.2.3"}},
 					{ID: "CVE-0000-0004", Severity: "MEDIUM", Summary: "Anvil writes early", Package: "anvil", Versions: []string{"1.2.3"}},
 				},

@@ -172,6 +172,8 @@ func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
 		Findings []struct {
 			Formula         string     `json:"formula"`
 			Version         string     `json:"version"`
+			RepoURL         string     `json:"repo_url"`
+			Tag             string     `json:"tag"`
 			Vulnerabilities []brewVuln `json:"vulnerabilities"`
 		} `json:"findings"`
 		SkippedFormulae     []string          `json:"skipped_formulae"`
@@ -194,7 +196,7 @@ func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
 		result.Unscanned = raw.Unscanned
 	}
 	for _, f := range raw.Findings {
-		finding := vuln.BrewFinding{Formula: f.Formula, Version: f.Version}
+		finding := vuln.BrewFinding{Formula: f.Formula, Version: f.Version, RepoURL: f.RepoURL, Tag: f.Tag}
 		for _, v := range f.Vulnerabilities {
 			finding.Advisories = append(finding.Advisories, v.advisory(f.Formula, f.Version))
 		}
@@ -225,6 +227,14 @@ func (v brewVuln) advisory(formula, version string) vuln.Advisory {
 	}
 	if fixed := brewFixed(v.FixedVersions, version); fixed != "" {
 		a.Ranges = []vuln.Range{{Introduced: "0"}, {Fixed: fixed}}
+	}
+	// Homebrew also lists fix commits, which a version cannot be compared with.
+	// They are kept apart so the caller can check them against the tag instead
+	// of reporting a fix nobody can install.
+	for _, f := range v.FixedVersions {
+		if brewSHA.MatchString(f) {
+			a.CommitFixes = append(a.CommitFixes, f)
+		}
 	}
 	return a
 }

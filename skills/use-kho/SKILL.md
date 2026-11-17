@@ -44,6 +44,7 @@ The report has:
 - `vulnerableDeps[]`: advisories in a package's dependencies. OSV matches these by module, so the vulnerable code may never run. Report them as "worth a look", not as an emergency.
 - `riskySkills[]`: skills an auditor failed, with the `report` link on skills.sh.
 - `outdated[]`, `notCovered[]`, and `errors`, keyed by what failed: a manager's name when it could not be listed, `<manager> latest` when only its latest versions are unknown (its packages were still checked), and `security` when OSV, Homebrew or skills.sh could not be asked. `notCovered[]` names each Homebrew formula the scan could not check, with the reason (`brew/<formula> (reason)`), and names casks because Homebrew scans formulae only.
+- `resolved`: advisories Homebrew listed whose fix it gives as a commit rather than a release, and whose commit the scanned tag already contains, keyed by formula. They are not counted as vulnerable, because the installed build carries the fix. A commit the tag does not contain stays a finding, and so does one that could not be checked at all.
 - `skipped`: the package managers this machine does not have, with what was looked for, such as `{"uv": "uv not on PATH"}`. A manager that is skipped is not read at all, so nothing it holds was checked. `complete` is false whenever this or `errors` is non-empty, so a script can tell a full scan from a partial one.
 
 ## Report

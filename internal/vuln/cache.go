@@ -22,6 +22,10 @@ type DB struct {
 	HistoryAt map[string]time.Time `json:"historyAt"`
 	// Brew is the last machine-wide Homebrew scan and what it could not check.
 	Brew Brew `json:"brew"`
+	// Containment caches whether a tag already contains a fix commit, keyed
+	// "repo@ref@sha". Tags and commits are immutable, so an answer never
+	// changes and never needs asking twice.
+	Containment map[string]bool `json:"containment,omitempty"`
 }
 
 // MaxAge is how long a result stays fresh. New advisories appear daily, so
@@ -30,7 +34,7 @@ const MaxAge = 12 * time.Hour
 
 // format changes whenever what kho stores changes, so a cache from an older
 // build is dropped instead of misread.
-const format = 4
+const format = 5
 
 // stored is the shape format holds: each JSON path with the type its value
 // decodes to. formats keeps a checksum of stored for every format, so stored
@@ -38,6 +42,8 @@ const format = 4
 // edit an old one. TestStoredShapeMatchesFormat checks both.
 var stored = []string{
 	"advisories.*.aliases[] string",
+	"advisories.*.commitFixes[] string",
+	"advisories.*.containedIn string",
 	"advisories.*.details string",
 	"advisories.*.id string",
 	"advisories.*.package string",
@@ -57,8 +63,10 @@ var stored = []string{
 	"brew.at string",
 	"brew.complete bool",
 	"brew.note string",
+	"brew.resolved.*[] string",
 	"brew.skipped.* string",
 	"checked.* string",
+	"containment.* bool",
 	"format float64",
 	"history.*[] string",
 	"historyAt.* string",
@@ -68,18 +76,20 @@ var stored = []string{
 var formats = map[int]string{
 	3: "21601456804166155faf4d9de5de86a90d6f46b0ca8f263fe6a214cf176ee11c",
 	4: "ea4648fa7adbecb99299174bafb87274fbf1088eda90509b8c7fd62cab810df8",
+	5: "3075015c2033cbf480944fe2852ef9ff8909529c0d74a4e028f6127d4cd2bccd",
 }
 
 func NewDB() *DB {
 	return &DB{
-		Format:     format,
-		Checked:    map[string]time.Time{},
-		Hits:       map[string][]string{},
-		Advisories: map[string]Advisory{},
-		Audits:     map[string]SkillAudit{},
-		AuditedAt:  map[string]time.Time{},
-		History:    map[string][]string{},
-		HistoryAt:  map[string]time.Time{},
+		Format:      format,
+		Checked:     map[string]time.Time{},
+		Hits:        map[string][]string{},
+		Advisories:  map[string]Advisory{},
+		Audits:      map[string]SkillAudit{},
+		AuditedAt:   map[string]time.Time{},
+		History:     map[string][]string{},
+		HistoryAt:   map[string]time.Time{},
+		Containment: map[string]bool{},
 	}
 }
 

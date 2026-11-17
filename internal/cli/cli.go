@@ -280,7 +280,7 @@ func (env Env) brew(ctx context.Context, pkgs []provider.Package, refresh bool) 
 	case err != nil:
 		return fmt.Errorf("brew vulns: %w", err)
 	}
-	env.DB.MergeBrew(result, queries, env.Now())
+	env.DB.MergeBrewScanned(ctx, result, queries, env.Now())
 	return nil
 }
 
@@ -366,19 +366,23 @@ type Summary struct {
 // only for what was checked: Skipped names the managers this machine does not
 // have, so a reader can see what the verdict does not cover.
 type Report struct {
-	Kho            string            `json:"kho"`
-	CheckedAt      time.Time         `json:"checkedAt"`
-	Safe           bool              `json:"safe"`
-	Summary        Summary           `json:"summary"`
-	Vulnerable     []Finding         `json:"vulnerable"`
-	VulnerableDeps []Finding         `json:"vulnerableDeps"`
-	RiskySkills    []RiskySkill      `json:"riskySkills"`
-	Outdated       []Outdated        `json:"outdated"`
-	NotCovered     []string          `json:"notCovered"`
-	Skipped        map[string]string `json:"skipped,omitempty"`
-	Complete       bool              `json:"complete"`
-	Errors         map[string]string `json:"errors,omitempty"`
-	Project        *ProjectReport    `json:"project,omitempty"`
+	Kho            string       `json:"kho"`
+	CheckedAt      time.Time    `json:"checkedAt"`
+	Safe           bool         `json:"safe"`
+	Summary        Summary      `json:"summary"`
+	Vulnerable     []Finding    `json:"vulnerable"`
+	VulnerableDeps []Finding    `json:"vulnerableDeps"`
+	RiskySkills    []RiskySkill `json:"riskySkills"`
+	Outdated       []Outdated   `json:"outdated"`
+	NotCovered     []string     `json:"notCovered"`
+	// Resolved names advisories Homebrew listed whose fix commit the installed
+	// build already contains. They are not open findings, but they are named
+	// so a reader can see they were considered and why they were cleared.
+	Resolved map[string][]string `json:"resolved,omitempty"`
+	Skipped  map[string]string   `json:"skipped,omitempty"`
+	Complete bool                `json:"complete"`
+	Errors   map[string]string   `json:"errors,omitempty"`
+	Project  *ProjectReport      `json:"project,omitempty"`
 	// Images are the container images the project names. kho reads their
 	// references and their registry metadata, never their contents.
 	Images []image.Ref `json:"images,omitempty"`
@@ -523,6 +527,9 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 		}
 	}
 	r.NotCovered = slices.DeleteFunc(r.NotCovered, func(s string) bool { return covered[s] })
+	if resolved := env.DB.BrewResolved(); len(resolved) > 0 {
+		r.Resolved = resolved
+	}
 	r.Summary.Vulnerable, r.Summary.RiskySkills = len(r.Vulnerable), len(r.RiskySkills)
 	r.Safe = len(r.Vulnerable) == 0 && len(r.RiskySkills) == 0
 	// Complete is false when a manager was skipped, a source failed, or
@@ -876,6 +883,13 @@ func (env Env) printReport(r Report) {
 	}
 	for _, s := range r.RiskySkills {
 		fmt.Fprintf(w, "\nskill %s (%s): Gen %s, Socket %s, Snyk %s\n  report: %s\n", s.Name, s.Repo, s.Gen, s.Socket, s.Snyk, s.Report)
+	}
+	if len(r.Resolved) > 0 {
+		names := slices.Sorted(maps.Keys(r.Resolved))
+		for _, name := range names {
+			fmt.Fprintf(w, "\nbrew/%s: already fixed in the installed build\n  %s\n",
+				name, strings.Join(r.Resolved[name], ", "))
+		}
 	}
 	if len(r.Images) > 0 {
 		fmt.Fprintf(w, "\n%d images · %d stale · %d past their line · %d gone\n", len(r.Images), r.Summary.ImagesStale, r.Summary.ImagesEOL, r.Summary.ImagesGone)

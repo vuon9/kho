@@ -62,6 +62,13 @@ type Advisory struct {
 	Package   string    `json:"package"`
 	Ranges    []Range   `json:"ranges,omitempty"`
 	Versions  []string  `json:"versions,omitempty"`
+	// CommitFixes are fix commits a source published instead of released
+	// versions, which Homebrew does for formulae it tracks by git. They cannot
+	// be compared with a version, so they are checked against the tag instead.
+	CommitFixes []string `json:"commitFixes,omitempty"`
+	// ContainedIn is the tag found to already contain every CommitFixes
+	// commit, which means the installed build carries the fix already.
+	ContainedIn string `json:"containedIn,omitempty"`
 }
 
 func (a Advisory) URL() string {

@@ -1,6 +1,9 @@
 package vuln
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Homebrew is the ecosystem name kho uses in its cache for the scan Homebrew
 // runs itself. OSV has no such ecosystem, so a query with it must never go to
@@ -18,10 +21,14 @@ type BrewResult struct {
 	Unscanned           map[string]string
 }
 
-// BrewFinding is one formula Homebrew reported open advisories for.
+// BrewFinding is one formula Homebrew reported open advisories for. RepoURL and
+// Tag describe the source Homebrew matched the formula against, which is what
+// lets kho check whether an advisory's fix commit is already in the build.
 type BrewFinding struct {
 	Formula    string
 	Version    string
+	RepoURL    string
+	Tag        string
 	Advisories []Advisory
 }
 
@@ -32,6 +39,37 @@ type Brew struct {
 	Complete bool              `json:"complete"`
 	Note     string            `json:"note,omitempty"`
 	Skipped  map[string]string `json:"skipped,omitempty"`
+	// Resolved names the advisories Homebrew listed whose fix commit the
+	// installed tag already contains, by formula. They are not open findings.
+	Resolved map[string][]string `json:"resolved,omitempty"`
+}
+
+// MergeBrewScanned resolves commit fixes and then stores the scan. Homebrew
+// reports some formulae with fix commits instead of fix versions, and those
+// cannot be compared with a version: for them the tag Homebrew matched is
+// checked against each fix commit, and an advisory the build already contains
+// is recorded as resolved instead of staying a finding forever.
+func (db *DB) MergeBrewScanned(ctx context.Context, result BrewResult, checked []Query, now time.Time) {
+	db.resolveBrewFixes(ctx, &result)
+	db.MergeBrew(result, checked, now)
+}
+
+// resolveBrewFixes marks every advisory whose fix commits are already in the
+// tag Homebrew scanned. A commit that cannot be resolved stays as it was, so
+// an unreachable API never pretends a finding is fixed.
+func (db *DB) resolveBrewFixes(ctx context.Context, result *BrewResult) {
+	for i := range result.Findings {
+		f := &result.Findings[i]
+		for j := range f.Advisories {
+			a := &f.Advisories[j]
+			if len(a.CommitFixes) == 0 {
+				continue
+			}
+			if ref, ok := db.containsFix(ctx, f.RepoURL, f.Tag, a.CommitFixes); ok {
+				a.ContainedIn = ref
+			}
+		}
+	}
 }
 
 // MergeBrew stores a Homebrew scan. Every checked formula is marked fresh,
@@ -40,7 +78,7 @@ type Brew struct {
 // keeps the reason, and findings for it are dropped because Homebrew assessed
 // another version.
 func (db *DB) MergeBrew(result BrewResult, checked []Query, now time.Time) {
-	db.Brew = Brew{At: now, Complete: result.Complete, Skipped: map[string]string{}}
+	db.Brew = Brew{At: now, Complete: result.Complete, Skipped: map[string]string{}, Resolved: map[string][]string{}}
 	for _, name := range result.Skipped {
 		db.Brew.Skipped[name] = "Homebrew found no source it could match"
 	}
@@ -77,6 +115,13 @@ func (db *DB) MergeBrew(result BrewResult, checked []Query, now time.Time) {
 		}
 		var ids []string
 		for _, a := range f.Advisories {
+			if a.ContainedIn != "" {
+				// Homebrew lists the fix commit; the scanned tag already
+				// contains it, so this build carries the fix.
+				db.Brew.Resolved[f.Formula] = append(db.Brew.Resolved[f.Formula], a.ID)
+				db.Advisories[brewKey(a.ID)] = a
+				continue
+			}
 			if !a.Affects(q.Version) {
 				continue
 			}
@@ -111,3 +156,7 @@ func (db *DB) BrewNote() string { return db.Brew.Note }
 
 // BrewSkip is why Homebrew left one formula out, or "".
 func (db *DB) BrewSkip(name string) string { return db.Brew.Skipped[name] }
+
+// BrewResolved names the advisories Homebrew listed whose fix commit the
+// installed tag already contains, by formula. They are not open findings.
+func (db *DB) BrewResolved() map[string][]string { return db.Brew.Resolved }
