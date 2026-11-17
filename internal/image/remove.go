@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-// Users lists the containers made from this image, running or stopped, so a
-// person can see what removing it would break before saying yes.
 func Users(ctx context.Context, r Ref) ([]Container, error) {
 	all, err := ListContainers(ctx)
 	if err != nil {
@@ -22,13 +20,11 @@ func Users(ctx context.Context, r Ref) ([]Container, error) {
 	return out, nil
 }
 
-// RemoveCmd is docker's own removal of one image. It never forces: an image a
-// container still uses is refused by docker, and that refusal is the answer.
+// Never forces: docker refuses an image a container still uses, and that refusal is the answer.
 func RemoveCmd(r Ref) *exec.Cmd {
 	return exec.Command("docker", "rmi", r.Image)
 }
 
-// ContainerLine says what a container is doing, in the words docker uses.
 func ContainerLine(c Container) string {
 	state := strings.TrimSpace(c.State)
 	if state == "" {

@@ -23,8 +23,7 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// confirm is a dialog that asks before kho changes anything. A dialog with no
-// run only explains why there is nothing to do.
+// A confirm with no run only explains why there is nothing to do.
 type confirm struct {
 	title string
 	lines []string
@@ -34,8 +33,7 @@ type confirm struct {
 type installedMsg struct {
 	provider, name, version string
 	err                     error
-	// removed is an uninstall, which has no version to land on.
-	removed bool
+	removed                 bool
 }
 
 type linkedMsg struct {
@@ -43,7 +41,7 @@ type linkedMsg struct {
 	err  error
 }
 
-// The actions that change the machine, swapped out in tests.
+// Swapped out in tests.
 var (
 	runExec        = tea.Exec
 	installProcess = func(c *exec.Cmd) *exec.Cmd { return c }
@@ -52,8 +50,6 @@ var (
 	unlinkSkill    = provider.UnlinkSkill
 )
 
-// askInstall offers to move the selected package to the selected version, or
-// to install the candidate the search opened.
 func (m *model) askInstall() {
 	p, ok := m.current()
 	if !ok {
@@ -114,8 +110,7 @@ func (m *model) askInstall() {
 	m.confirm = &confirm{title: title + "?", lines: lines, run: startInstall(title, cmd, m.log, installedMsg{provider: provider.ProviderOf(p), name: p.Name, version: r.Version})}
 }
 
-// askRemove offers to uninstall the selected package. Like an install, it asks
-// first: kho changes the machine only after a person says yes.
+// kho changes the machine only after a person says yes.
 func (m *model) askRemove() {
 	p, ok := m.current()
 	if !ok {
@@ -136,14 +131,9 @@ func (m *model) askRemove() {
 		run: startInstall(title, cmd, m.log, installedMsg{provider: provider.ProviderOf(p), name: p.Name, removed: true})}
 }
 
-// installing is a package manager running in a popup. cmd is the command as
-// kho asked for it, which t runs again in the terminal, and lines are the
-// output the popup shows.
-//
-// The output is read as fast as the command writes it, whatever the
-// screen's pace: the reader keeps the lines a terminal would show in shown,
-// and says so on changed. Once the install is logged, logged closes and its
-// installedMsg comes on over.
+// cmd is the command as kho asked for it, which t runs again in the terminal.
+// The output is read as fast as the command writes it, whatever the screen's
+// pace. Once the install is logged, logged closes and its installedMsg comes on over.
 type installing struct {
 	title      string
 	cmd        *exec.Cmd
@@ -163,21 +153,19 @@ type installing struct {
 
 type installStartedMsg struct{ *installing }
 
-// outputMsg is the output the popup shows, newest last.
 type outputMsg []string
 
-// live is the install kho started last. serve stops it if it is still going
-// when kho leaves, even if the screen never heard it started. Starting one
-// holds the lock, so serve can't miss one on its way, and once kho is
-// leaving none starts.
+// serve stops the install kho started last if it is still going when kho
+// leaves, even if the screen never heard it started. Starting one holds the
+// lock, so serve can't miss one on its way, and once kho is leaving none starts.
 var live struct {
 	sync.Mutex
 	in      *installing
 	leaving bool
 }
 
-// startInstall runs cmd in a popup. A command that can't even start leaves
-// nothing to watch or stop, so it comes back as a failed installedMsg.
+// A command that can't even start leaves nothing to watch or stop, so it
+// comes back as a failed installedMsg.
 func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedMsg) tea.Cmd {
 	return func() tea.Msg {
 		live.Lock()
@@ -200,8 +188,7 @@ func startInstall(title string, cmd *exec.Cmd, log *history.Log, done installedM
 	}
 }
 
-// next waits for new output or the result, which brings the last lines on
-// its own.
+// The result brings the last lines on its own.
 func (in *installing) next() tea.Cmd {
 	return func() tea.Msg {
 		select {
@@ -219,8 +206,6 @@ func (in *installing) screen() []string {
 	return slices.Clone(in.shown)
 }
 
-// show adds a line to the output, or puts it over the last one when a \r
-// went back over that.
 func (in *installing) show(text string, redraw bool) {
 	in.mu.Lock()
 	if n := len(in.shown); redraw && n > 0 {
@@ -238,8 +223,6 @@ func (in *installing) show(text string, redraw bool) {
 	}
 }
 
-// The phases of an install. Its popup, its keys and the footer all go by
-// them.
 const (
 	instRunning = iota
 	instStopping
@@ -259,22 +242,18 @@ func (in *installing) phase() int {
 	return instDone
 }
 
-// running is whether the package manager is still going, so ctrl+c must stop
-// it before kho can quit.
+// ctrl+c must stop a running install before kho can quit.
 func (in *installing) running() bool {
 	return in != nil && in.phase() <= instStopping
 }
 
-// again is a new command like c, which has run and can't be started twice.
+// An exec.Cmd that has run can't be started twice.
 func again(c *exec.Cmd) *exec.Cmd {
 	r := exec.Command(c.Path, c.Args[1:]...)
 	r.Args, r.Env, r.Dir = c.Args, c.Env, c.Dir
 	return r
 }
 
-// stop interrupts the install and everything it started, or when an
-// interrupt didn't do it, kills them and stops reading what a child out of
-// reach still writes.
 func (in *installing) stop() {
 	if !in.stopping {
 		in.stopping = true
@@ -288,8 +267,6 @@ func (in *installing) stop() {
 	}
 }
 
-// finish stops an install kho is leaving, and kills it when it is still
-// going after patience. It returns once the install is logged.
 func (in *installing) finish(patience time.Duration) {
 	in.stop()
 	select {
@@ -319,15 +296,11 @@ func detach(cmd *exec.Cmd) (*os.File, error) {
 	return r, nil
 }
 
-// After the command exits, kho stops reading its output once it has been
-// quiet for outputGrace, or at the latest after outputLimit.
 const (
 	outputGrace = time.Second
 	outputLimit = 10 * time.Second
 )
 
-// run reads cmd's output while it runs, and sends its installedMsg once it
-// has exited and is logged.
 func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done installedMsg) {
 	var output tail
 	var got counter
@@ -351,8 +324,6 @@ func (in *installing) run(cmd *exec.Cmd, out *os.File, log *history.Log, done in
 	in.over <- done
 }
 
-// quiet waits until the output ends, nothing has come on it for grace, limit
-// has passed, or the install is cut short.
 func quiet(read, cut <-chan struct{}, got *counter, grace, limit time.Duration) {
 	end := time.After(limit)
 	for {
@@ -379,13 +350,11 @@ func (c *counter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// stream reads what the command prints until the output ends or is closed,
-// and shows it as a terminal would after each read, the line still being
-// written included. A \r goes back to the start of the line, so the text
-// after it draws the line again, as a progress bar does.
+// A \r goes back to the start of the line, so the text after it draws the
+// line again, as a progress bar does.
 func (in *installing) stream(r io.Reader) {
-	// line is the line being written. shown says it is on screen, back that
-	// a \r went back over it, and drawn that it changed since it was shown.
+	// shown says line is on screen, back that a \r went back over it, and drawn
+	// that it changed since it was shown.
 	var line []byte
 	shown, back, drawn := false, false, false
 	buf := make([]byte, 32<<10)
@@ -422,9 +391,7 @@ func (in *installing) stream(r io.Reader) {
 	}
 }
 
-// printable is a line of output as wide as the popup measures it: no
-// styles, tabs as spaces, and no other control characters, which ansi.Strip
-// keeps and the popup would count as no width at all.
+// ansi.Strip keeps control characters, which the popup would count as no width at all.
 func printable(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -434,8 +401,6 @@ func printable(s string) string {
 	}, expandTabs(ansi.Strip(s)))
 }
 
-// tidy is what an install printed as its popup showed it: each line as a
-// terminal leaves it after its last \r, then printable.
 func tidy(output string) string {
 	lines := strings.Split(output, "\n")
 	for i, l := range lines {
@@ -445,7 +410,6 @@ func tidy(output string) string {
 	return strings.Join(lines, "\n")
 }
 
-// askLink offers to add or remove the selected agent's link to a skill.
 func (m *model) askLink() {
 	p, ok := m.current()
 	l, ok2 := at(m.links, m.sideCursor)
@@ -485,8 +449,6 @@ func (m *model) askLink() {
 	}
 }
 
-// logged records a change kho makes without a command of its own, like a
-// symlink, as the shell command that would do the same.
 func (m model) logged(command []string, run func() tea.Msg) tea.Cmd {
 	log := m.log
 	return func() tea.Msg {
@@ -505,7 +467,6 @@ func entry(kind string, command []string, took time.Duration, err error, output 
 	return e
 }
 
-// tail keeps the last history.MaxOutput bytes written to it.
 type tail struct{ buf []byte }
 
 func (t *tail) Write(p []byte) (int, error) {
@@ -525,9 +486,8 @@ func tilde(path string) string {
 	return path
 }
 
-// terminalRun runs a failed install again in the terminal kho hands over, so
-// the package manager can ask for a password, shows its output, and waits for
-// enter so the output can be read before kho comes back.
+// Runs a failed install again in the terminal, so the package manager can ask
+// for a password, and waits for enter so the output can be read.
 type terminalRun struct {
 	cmd    *exec.Cmd
 	log    *history.Log

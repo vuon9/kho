@@ -443,12 +443,19 @@ func TestFind(t *testing.T) {
 				"proj/build/go.mod":                             goMod,
 				"proj/testdata/go.mod":                          goMod,
 				"proj/fixtures/go.mod":                          goMod,
-				"proj/Library/app/go.mod":                       goMod,
 				"proj/.cache/go.mod":                            goMod,
 			},
 			start:    "proj",
 			root:     "proj",
 			projects: []Project{{Dir: "app", Lockfiles: []Lockfile{{Path: "app/go.mod", Manager: "go"}}}},
+		},
+		{
+			id: "skips the OS Library in home, and reads a Library folder anywhere else",
+			files: map[string]string{
+				"Library/Caches/app/go.mod": goMod,
+				"code/Library/app/go.mod":   goMod,
+			},
+			projects: []Project{{Dir: "code/Library/app", Lockfiles: []Lockfile{{Path: "code/Library/app/go.mod", Manager: "go"}}}},
 		},
 		{
 			id: "stops below the depth cap and names the folders it did not enter",

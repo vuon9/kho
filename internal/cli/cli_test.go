@@ -458,8 +458,7 @@ func TestInstallStillRefusesAVersionNowhere(t *testing.T) {
 }
 
 // A scoped npm package carries an @ of its own, so the version separator has to
-// be the last one. Splitting on the first tore the ref in half and kho answered
-// "npm/ is not installed" about a package it could see.
+// be the last one.
 func TestInstallReadsScopedNames(t *testing.T) {
 	tests := []struct {
 		id   string
@@ -511,9 +510,7 @@ func TestInstallIsRecorded(t *testing.T) {
 	}
 }
 
-// Usage, SKILL.md and AGENTS.md are kept in step with the code by hand, so
-// this reads the commands and exit codes from cli.go, asks each command for
-// its flags, and looks for every one of them in the docs.
+// Usage, SKILL.md and AGENTS.md are kept in step with the code by hand.
 func TestDocsKeepUpWithTheCLI(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, 0)
 	if err != nil {
@@ -613,8 +610,7 @@ func TestDocsKeepUpWithTheCLI(t *testing.T) {
 	}
 }
 
-// projectKho runs kho against a made-up project scan. The machine's providers
-// fail if anything lists them, since --project must not read the machine.
+// The machine's providers fail if anything lists them, since --project must not read the machine.
 func projectKho(t *testing.T, scan project.Scan, hits map[string][]string, args ...string) (run, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -653,8 +649,6 @@ func projectKho(t *testing.T, scan project.Scan, hits map[string][]string, args 
 	return r, asked
 }
 
-// projectImagesKho runs kho against a made-up project scan and a made-up set
-// of images, which carry the states the registries would have given them.
 func projectImagesKho(t *testing.T, scan project.Scan, refs []image.Ref, args ...string) run {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -934,6 +928,8 @@ func TestCheckBrewScan(t *testing.T) {
 		Package: "anvil", Versions: []string{"1.2.3"}, Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "1.2.4"}}}
 	unfixed := vuln.Advisory{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file",
 		Package: "anvil", Versions: []string{"1.2.3"}}
+	spanned := vuln.Advisory{ID: "CVE-0000-0003", Severity: "UNKNOWN", Summary: "anvil 1.0.0 through 1.2.3 reads past the file",
+		Package: "anvil", Versions: []string{"1.2.3"}, Ranges: []vuln.Range{{Introduced: "1.0.0"}, {LastAffected: "1.2.3"}}}
 	tests := []struct {
 		id     string
 		pkgs   []provider.Package
@@ -960,6 +956,15 @@ func TestCheckBrewScan(t *testing.T) {
 			check: func(r Report) bool {
 				f := r.Vulnerable[0]
 				return f.FixedIn == "" && f.LatestIsClear != nil && !*f.LatestIsClear && f.Fix == ""
+			},
+		},
+		{
+			id: "a span that ends before the newest formula offers the upgrade", pkgs: []provider.Package{anvil},
+			result: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{spanned}}}},
+			scanOK: true, code: ExitAtRisk,
+			check: func(r Report) bool {
+				f := r.Vulnerable[0]
+				return f.FixedIn == "" && *f.LatestIsClear && f.Fix == "kho install brew/anvil@1.2.4 --yes"
 			},
 		},
 		{

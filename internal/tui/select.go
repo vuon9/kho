@@ -17,8 +17,7 @@ const (
 
 type point struct{ line, col int }
 
-// textSel is a drag selection in one of the sidebar's reading areas. It
-// never crosses into another panel or the other half.
+// A selection never crosses into another panel or the other half.
 type textSel struct {
 	area     int
 	a, b     point
@@ -30,8 +29,7 @@ type textSel struct {
 
 var copyText = tea.SetClipboard
 
-// textAt finds the reading area under the mouse, and the line and column in
-// it. List rows are not text to read, so a list half has no area.
+// List rows are not text to read, so a list half has no area.
 func (m model) textAt(x, y int) (int, point, bool) {
 	if m.popup() == popDep {
 		t := popupText(m.depRect())
@@ -73,7 +71,6 @@ func (m model) areaWidth(area int) int {
 	return m.layout().sideW - 2
 }
 
-// span is the selection's columns on line i of area, if any.
 func (s *textSel) span(area, i, width int) (int, int, bool) {
 	if s == nil || s.area != area {
 		return 0, 0, false
@@ -110,8 +107,6 @@ func (m model) selectedText() string {
 	return strings.Join(out, "\n")
 }
 
-// copyArea copies the whole reading area: the detail below, or the sidebar
-// when the tab has no bottom.
 func (m *model) copyArea() tea.Cmd {
 	area := areaTop
 	switch {
@@ -148,7 +143,7 @@ func (m *model) dragSelect(x, y int) {
 	}
 }
 
-// endSelect copies a drag. A press and release on the same cell is a click.
+// A press and release on the same cell is a click.
 func (m *model) endSelect(x, y int) tea.Cmd {
 	if m.sel == nil || !m.sel.dragging {
 		return nil

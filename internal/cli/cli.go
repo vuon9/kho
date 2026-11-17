@@ -1,5 +1,3 @@
-// Package cli is kho without the screen: commands that print JSON or plain
-// text, so scripts and agents can read the same state the TUI shows.
 package cli
 
 import (
@@ -30,7 +28,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Exit codes. An agent can branch on them without parsing the output.
 const (
 	ExitOK         = 0
 	ExitError      = 1
@@ -39,7 +36,6 @@ const (
 	ExitIncomplete = 4
 )
 
-// Env is everything the commands touch, so tests can swap the machine out.
 type Env struct {
 	Version   string
 	Providers []provider.Provider
@@ -51,29 +47,18 @@ type Env struct {
 	Scan      func(context.Context, []vuln.Query, map[string]bool) (map[string][]string, map[string]vuln.Advisory, error)
 	Audits    func(context.Context, map[string][]string) (map[string]vuln.SkillAudit, error)
 	History   func(context.Context, string, string) ([]vuln.Advisory, error)
-	// BrewScan runs Homebrew's own vulnerability scan over the installed
-	// formulae. main fills it.
-	BrewScan func(context.Context) (vuln.BrewResult, error)
-	// Run runs an install. It gets the command as built by the provider and
-	// returns its combined output.
-	Run func(*exec.Cmd) (string, error)
-	// Skipped names the providers this machine is not set up for, with what
-	// was looked for. main fills it from provider.Detect.
+	BrewScan  func(context.Context) (vuln.BrewResult, error)
+	Run       func(*exec.Cmd) (string, error)
+	// Skipped maps each provider this machine is not set up for to what was looked for.
 	Skipped map[string]string
 	// Major names a higher major module path that serves a version, so a Go
 	// tool that moved to /v2 is reported instead of "no published version".
-	Major func(context.Context, string, string) string
-	// FindProject reads a folder's lockfiles, and Latest looks up the newest
-	// version of a project's direct packages. main fills them.
-	FindProject func(context.Context, string) (project.Scan, error)
-	Latest      func(context.Context, []provider.Package) []provider.Package
-	// FindImages reads the images a folder's Dockerfiles and compose files
-	// name, LocalImages lists what docker holds, and InspectImages fills in
-	// what the registries and lifecycle pages say. main fills them.
+	Major         func(context.Context, string, string) string
+	FindProject   func(context.Context, string) (project.Scan, error)
+	Latest        func(context.Context, []provider.Package) []provider.Package
 	FindImages    func(context.Context, string) (image.Scan, error)
 	LocalImages   func(context.Context) ([]image.LocalImage, error)
 	InspectImages func(context.Context, []image.Ref, []image.LocalImage, bool) []image.Ref
-	// RefreshImages drops what the registries said before, for --refresh.
 	RefreshImages func()
 }
 
@@ -142,8 +127,7 @@ func Main(env Env, args []string) int {
 	return ExitUsage
 }
 
-// IsCommand says whether name is one of Main's commands, so a folder with
-// the same name never shadows it.
+// A folder with the same name as a command never shadows it.
 func IsCommand(name string) bool {
 	return slices.Contains([]string{"version", "check", "show", "search", "install", "remove", "history", "list", "help"}, name) || strings.HasPrefix(name, "-")
 }
@@ -170,9 +154,8 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// inventory lists every provider with latest versions, in parallel. A failed
-// list is filed under the provider's name, and a failed latest lookup under
-// "<name> latest", since its packages were still read and can be checked.
+// A failed list is filed under the provider's name, and a failed latest lookup
+// under "<name> latest", since its packages were still read and can be checked.
 func (env Env) inventory(ctx context.Context) ([]provider.Package, map[string]string) {
 	return env.gather(ctx, true)
 }
@@ -214,9 +197,6 @@ func (env Env) gather(ctx context.Context, latest bool) ([]provider.Package, map
 	return all, errs
 }
 
-// secure brings the security cache up to date for pkgs: OSV for packages and
-// their known dependencies, Homebrew for formulae, skills.sh for skills.
-// refresh ignores the cache.
 func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool) error {
 	var queries []vuln.Query
 	bySource := map[string][]string{}
@@ -262,8 +242,7 @@ func (env Env) secure(ctx context.Context, pkgs []provider.Package, refresh bool
 	return errors.Join(errs...)
 }
 
-// brew scans the installed formulae with Homebrew's own scanner. A brew too
-// old for `brew vulns` is recorded as a coverage gap, not as an error.
+// A brew too old for `brew vulns` is recorded as a coverage gap, not as an error.
 func (env Env) brew(ctx context.Context, pkgs []provider.Package, refresh bool) error {
 	queries := provider.BrewQueries(pkgs)
 	if len(queries) == 0 || env.BrewScan == nil {
@@ -294,25 +273,22 @@ type Advisory struct {
 }
 
 type Finding struct {
-	Source        string `json:"source"`
-	Name          string `json:"name"`
-	Version       string `json:"version"`
-	Latest        string `json:"latest,omitempty"`
-	Status        string `json:"status"`
-	Pinned        bool   `json:"pinned,omitempty"`
-	Dependency    string `json:"dependency,omitempty"`
-	FixedIn       string `json:"fixedIn,omitempty"`
-	LatestIsClear *bool  `json:"latestIsClear,omitempty"`
-	Fix           string `json:"fix,omitempty"`
-	// Lockfile, Dev and Via describe a project package: where it was read,
-	// whether only development needs it, and what pulls it in.
-	Lockfile   string     `json:"lockfile,omitempty"`
-	Dev        bool       `json:"dev,omitempty"`
-	Via        []string   `json:"via,omitempty"`
-	Advisories []Advisory `json:"advisories"`
+	Source        string     `json:"source"`
+	Name          string     `json:"name"`
+	Version       string     `json:"version"`
+	Latest        string     `json:"latest,omitempty"`
+	Status        string     `json:"status"`
+	Pinned        bool       `json:"pinned,omitempty"`
+	Dependency    string     `json:"dependency,omitempty"`
+	FixedIn       string     `json:"fixedIn,omitempty"`
+	LatestIsClear *bool      `json:"latestIsClear,omitempty"`
+	Fix           string     `json:"fix,omitempty"`
+	Lockfile      string     `json:"lockfile,omitempty"`
+	Dev           bool       `json:"dev,omitempty"`
+	Via           []string   `json:"via,omitempty"`
+	Advisories    []Advisory `json:"advisories"`
 }
 
-// ProjectReport is what `kho check --project` read.
 type ProjectReport struct {
 	Root      string           `json:"root"`
 	Lockfiles []LockfileReport `json:"lockfiles"`
@@ -351,20 +327,17 @@ type Summary struct {
 	RiskySkills        int `json:"riskySkills"`
 	Outdated           int `json:"outdated"`
 	Pinned             int `json:"pinned"`
-	// Images counts the container images a project names, and how many of
-	// them are behind or past their line. Zero on the machine report.
-	Images      int `json:"images,omitempty"`
-	ImagesStale int `json:"imagesStale,omitempty"`
-	ImagesEOL   int `json:"imagesEol,omitempty"`
-	ImagesGone  int `json:"imagesGone,omitempty"`
+	Images             int `json:"images,omitempty"`
+	ImagesStale        int `json:"imagesStale,omitempty"`
+	ImagesEOL          int `json:"imagesEol,omitempty"`
+	ImagesGone         int `json:"imagesGone,omitempty"`
 }
 
-// Report is what `kho check --json` prints. Safe is false when an installed
-// package has a known advisory or a skill failed an audit. Advisories in
-// dependencies are listed for review but don't decide Safe, since OSV
-// matches them by module and the vulnerable code may never run. Safe speaks
-// only for what was checked: Skipped names the managers this machine does not
-// have, so a reader can see what the verdict does not cover.
+// Safe is false when an installed package has a known advisory or a skill
+// failed an audit. Advisories in dependencies are listed for review but don't
+// decide Safe, since OSV matches them by module and the vulnerable code may
+// never run. Safe speaks only for what was checked: Skipped names the managers
+// this machine does not have, so a reader can see what the verdict does not cover.
 type Report struct {
 	Kho            string            `json:"kho"`
 	CheckedAt      time.Time         `json:"checkedAt"`
@@ -379,8 +352,7 @@ type Report struct {
 	Complete       bool              `json:"complete"`
 	Errors         map[string]string `json:"errors,omitempty"`
 	Project        *ProjectReport    `json:"project,omitempty"`
-	// Images are the container images the project names. kho reads their
-	// references and their registry metadata, never their contents.
+	// kho reads image references and registry metadata, never their contents.
 	Images []image.Ref `json:"images,omitempty"`
 }
 
@@ -392,8 +364,6 @@ func advisories(advs []vuln.Advisory, version string) []Advisory {
 	return out
 }
 
-// fixFor is the lowest version that fixes every advisory, or "" when one of
-// them has no fix yet.
 func fixFor(advs []vuln.Advisory, version string) string {
 	best := ""
 	for _, a := range advs {
@@ -434,10 +404,12 @@ func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
 				clear = false
 			}
 		}
-		// Homebrew reports a finding without the ranges OSV uses, so a
-		// finding with no released fix cannot say the newest formula is clear.
-		if p.Source == "brew" && f.FixedIn == "" {
-			clear = false
+		// A Homebrew finding with no fix, commit or span to read has no range,
+		// so it cannot say the newest formula is clear.
+		for _, a := range advs {
+			if p.Source == "brew" && len(a.Ranges) == 0 {
+				clear = false
+			}
 		}
 		f.LatestIsClear = &clear
 		if clear && !p.Pinned {
@@ -532,7 +504,6 @@ func (env Env) report(pkgs []provider.Package, errs map[string]string) Report {
 	return r
 }
 
-// coverage says why kho has no advisories for p, or "" when it asked.
 func (env Env) coverage(p provider.Package) string {
 	if p.Source != "brew" {
 		return provider.Coverage(p)
@@ -608,10 +579,8 @@ func (env Env) check(args []string) int {
 	return ExitOK
 }
 
-// images reads the images a folder's Dockerfiles and compose files name, and
-// asks the registries and lifecycle pages about them. It never pulls, builds
-// or runs anything, so a state here is never a claim about what is inside an
-// image.
+// It never pulls, builds or runs anything, so a state here is never a claim
+// about what is inside an image.
 func (env Env) images(ctx context.Context, dir string) ([]image.Ref, map[string]string) {
 	errs := map[string]string{}
 	if env.FindImages == nil {
@@ -641,9 +610,8 @@ func (env Env) images(ctx context.Context, dir string) ([]image.Ref, map[string]
 	return env.InspectImages(ctx, scan.Refs, local, asked), errs
 }
 
-// imageRisk splits what images say into what makes a scan unsafe and what
-// makes it incomplete. A closed line or an unpublished tag is a real
-// problem; a stale tag is a hint, unless the caller asked for it to count.
+// A closed line or an unpublished tag is a real problem; a stale tag is a
+// hint, unless the caller asked for it to count.
 func imageRisk(refs []image.Ref, staleCounts bool) (atRisk, incomplete bool) {
 	for _, r := range refs {
 		switch {
@@ -660,10 +628,9 @@ func imageRisk(refs []image.Ref, staleCounts bool) (atRisk, incomplete bool) {
 	return atRisk, incomplete
 }
 
-// checkProject is `kho check --project`: the packages in a folder's
-// lockfiles, checked the same way as the machine's. A lockfile that could not
-// be read, a manifest with no lockfile, or a scan that stopped early leaves
-// the report incomplete, so a clean verdict never covers what wasn't read.
+// A lockfile that could not be read, a manifest with no lockfile, or a scan
+// that stopped early leaves the report incomplete, so a clean verdict never
+// covers what wasn't read.
 func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireComplete, requireImages bool) int {
 	dir := "."
 	if len(args) > 0 {
@@ -753,7 +720,6 @@ func (env Env) checkProject(args []string, refresh, prodOnly, asJSON, requireCom
 	return ExitOK
 }
 
-// whyProjectIncomplete names what kept a project check from reading it all.
 func whyProjectIncomplete(r Report, unread []string) string {
 	reasons := slices.Clone(unread)
 	for _, src := range slices.Sorted(maps.Keys(r.Errors)) {
@@ -784,7 +750,6 @@ func splitSources(list string) (known, unknown []string) {
 	return known, unknown
 }
 
-// unreadable names the required sources this scan could not read, with why.
 func unreadable(r Report, required []string) []string {
 	var missing []string
 	for _, name := range required {
@@ -797,7 +762,6 @@ func unreadable(r Report, required []string) []string {
 	return missing
 }
 
-// whyIncomplete names what stopped a scan from reading the whole machine.
 func whyIncomplete(r Report) string {
 	var reasons []string
 	for _, src := range slices.Sorted(maps.Keys(r.Skipped)) {
@@ -912,8 +876,6 @@ func (env Env) printReport(r Report) {
 	}
 }
 
-// where says, for a project package, which lockfile it is from and what
-// pulls it in.
 func where(f Finding) string {
 	if f.Lockfile == "" {
 		return ""
@@ -928,7 +890,6 @@ func where(f Finding) string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-// stateWord is what a person reads for an image state.
 func stateWord(r image.Ref) string {
 	switch r.State {
 	case image.Fresh:
@@ -960,7 +921,6 @@ func plural(n int, thing string) string {
 	return fmt.Sprintf("%d %ss", n, thing)
 }
 
-// find looks up an installed package by "source/name".
 func find(pkgs []provider.Package, ref string) (provider.Package, error) {
 	source, name, ok := strings.Cut(ref, "/")
 	if !ok {
@@ -1043,9 +1003,8 @@ const searchTimeout = 20 * time.Second
 // something instead of dropping the source silently.
 const noProvider = "not on this machine"
 
-// SearchReport is what `kho search --json` prints. Version is empty in every
-// result, because search lists what the machine does not have. Latest is the
-// newest version the registry gave, or empty when it gave none.
+// Version is empty in every result, because search lists what the machine does
+// not have. Latest is empty when the registry gave none.
 type SearchReport struct {
 	Query       string             `json:"query"`
 	Results     []provider.Package `json:"results"`
@@ -1054,7 +1013,6 @@ type SearchReport struct {
 	Errors      map[string]string  `json:"errors"`
 }
 
-// searchTask is one source a search asks, and what it may answer for.
 type searchTask struct {
 	manager  string
 	labels   []string
@@ -1064,15 +1022,13 @@ type searchTask struct {
 	fail     error
 }
 
-// searchAnswer is one source's answer: its packages, or why it failed.
 type searchAnswer struct {
 	pkgs []provider.Package
 	err  error
 }
 
-// search finds packages the machine does not have. One source that fails never
-// hides the ones that answered: its error goes to stderr and into the JSON, and
-// the exit is 1 only when nothing answered.
+// One source that fails never hides the ones that answered: its error goes to
+// stderr and into the JSON, and the exit is 1 only when nothing answered.
 func (env Env) search(args []string) int {
 	fs := env.flags("search")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
@@ -1148,8 +1104,6 @@ func (env Env) search(args []string) int {
 	return ExitError
 }
 
-// searchLabels reads --source as source labels and says whether each one can be
-// searched. An empty list means no narrowing, so every ready source is asked.
 func (env Env) searchLabels(list string) ([]string, bool) {
 	if strings.TrimSpace(list) == "" {
 		return nil, true
@@ -1166,9 +1120,6 @@ func (env Env) searchLabels(list string) ([]string, bool) {
 			}
 			continue
 		}
-		// The label is a source kho knows. A deferred manager is a usage
-		// error; anything else is accepted and the plan says whether it can
-		// search, resolve an exact name, or is skipped on this machine.
 		manager := provider.ProviderOf(provider.Package{Source: label})
 		if provider.DeferredSource(manager) {
 			if !slices.Contains(deferred, label) {
@@ -1195,9 +1146,6 @@ func (env Env) searchLabels(list string) ([]string, bool) {
 	return labels, true
 }
 
-// searchPlan says what one search will ask. No --source asks every ready
-// searcher. A --source narrows to the managers it names, and a name-only
-// manager resolves the query as an exact name instead of searching for words.
 func (env Env) searchPlan(labels []string) ([]searchTask, map[string]string) {
 	skipped := map[string]string{}
 	if labels == nil {
@@ -1226,7 +1174,6 @@ func (env Env) searchPlan(labels []string) ([]searchTask, map[string]string) {
 		}
 		p := provider.ProviderNamed(env.Providers, manager)
 		if p == nil {
-			// Not in Providers means this machine is not set up for it.
 			if why, ok := env.Skipped[manager]; ok {
 				skipped[manager] = why
 			} else {
@@ -1236,7 +1183,6 @@ func (env Env) searchPlan(labels []string) ([]searchTask, map[string]string) {
 		}
 		one := searchTask{manager: manager, labels: group, provider: p}
 		if _, ok := p.(provider.Searcher); ok {
-			// keyword search
 		} else if _, ok := p.(provider.Finder); ok {
 			one.find, one.label = true, group[0]
 		} else {
@@ -1247,8 +1193,8 @@ func (env Env) searchPlan(labels []string) ([]searchTask, map[string]string) {
 	return ones, skipped
 }
 
-// runSearch asks every source at once under one deadline, so a single slow
-// manager cannot hold the command open. Answers keep the plan's order.
+// One deadline for every source, so a single slow manager cannot hold the
+// command open. Answers keep the plan's order.
 func runSearch(ones []searchTask, query string, limit int) []searchAnswer {
 	ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
 	defer cancel()
@@ -1267,9 +1213,8 @@ func runSearch(ones []searchTask, query string, limit int) []searchAnswer {
 	return answers
 }
 
-// askSource asks one manager. A keyword manager may return packages for more
-// than one label, as brew does for formulae and casks, so its answer is
-// narrowed to the labels this search asked for.
+// A keyword manager may return packages for more than one label, as brew does
+// for formulae and casks, so its answer is narrowed to the labels asked for.
 func askSource(ctx context.Context, one searchTask, query string, limit int) searchAnswer {
 	if one.find {
 		f, ok := one.provider.(provider.Finder)
@@ -1301,8 +1246,6 @@ func askSource(ctx context.Context, one searchTask, query string, limit int) sea
 	return searchAnswer{pkgs: out}
 }
 
-// sourceLabels names every label a manager answers for, so a full search says
-// brew and cask when brew answered.
 func sourceLabels(manager string) []string {
 	if manager == "brew" {
 		return []string{"brew", "cask"}
@@ -1310,8 +1253,6 @@ func sourceLabels(manager string) []string {
 	return []string{manager}
 }
 
-// printSearch is the text form: one copyable source/name row, then what was
-// searched, then the managers that can only install by exact name.
 func (env Env) printSearch(r SearchReport, searched []string, took time.Duration) {
 	if len(searched) > 0 {
 		if len(r.Results) > 0 {
@@ -1347,8 +1288,6 @@ func (env Env) printSearchRows(pkgs []provider.Package) {
 	}
 }
 
-// printNotOnMachine names the named sources this machine does not have, so a
-// narrowed search that could not ask says why instead of only failing.
 func (env Env) printNotOnMachine(labels []string, skipped map[string]string) {
 	seen := map[string]bool{}
 	for _, label := range labels {
@@ -1369,12 +1308,10 @@ func (env Env) printNotOnMachine(labels []string, skipped map[string]string) {
 	}
 }
 
-// secs is a duration the way a person reads a wait: one decimal and a unit.
 func secs(d time.Duration) string {
 	return strconv.FormatFloat(d.Seconds(), 'f', 1, 64) + "s"
 }
 
-// joinWords joins names the way a sentence does: "a, b and c".
 func joinWords(names []string) string {
 	switch len(names) {
 	case 0:
@@ -1400,7 +1337,6 @@ func oneLine(s string) string {
 		case r == '\n' || r == '\r' || r == '\t':
 			b.WriteByte(' ')
 		case unicode.IsControl(r):
-			// drop it
 		default:
 			b.WriteRune(r)
 		}
@@ -1420,9 +1356,8 @@ type InstallResult struct {
 	New bool `json:"new,omitempty"`
 }
 
-// install moves an installed package to a published version. It checks the
-// version against what the registry lists, so nothing but a real version
-// reaches the package manager, and runs only with --yes.
+// Nothing but a version the registry lists reaches the package manager, and
+// it runs only with --yes.
 func (env Env) install(args []string) int {
 	fs := env.flags("install")
 	yes := fs.Bool("yes", false, "run it; without this kho only prints what it would run")
@@ -1464,8 +1399,6 @@ func (env Env) install(args []string) int {
 		}
 		res = InstallResult{Package: ref, From: p.Version, To: version, Command: cmd.Args}
 	} else {
-		// Not installed: this is a new package, resolved through its registry
-		// rather than through the machine's inventory.
 		var code int
 		res, cmd, code = env.installNew(ctx, ref, version, errs)
 		if code != ExitOK {
@@ -1496,10 +1429,8 @@ func (env Env) install(args []string) int {
 	return ExitOK
 }
 
-// installNew resolves a ref the machine does not have through its registry and
-// builds the command that installs it. The version is resolved and checked
-// before the command is printed, as for an installed package. It prints its own
-// reason and returns the exit code to use when the ref cannot be resolved.
+// The version is resolved and checked before the command is printed, as for
+// an installed package.
 func (env Env) installNew(ctx context.Context, ref, version string, errs map[string]string) (InstallResult, *exec.Cmd, int) {
 	res := InstallResult{Package: ref, New: true}
 	source, name, ok := strings.Cut(ref, "/")
@@ -1581,9 +1512,8 @@ type RemoveResult struct {
 	Notes   []string `json:"notes,omitempty"`
 }
 
-// remove uninstalls one package through its own package manager. Like install,
-// it changes nothing without --yes, and a package it cannot see is an error
-// rather than a silent success.
+// Like install, it changes nothing without --yes, and a package it cannot see
+// is an error rather than a silent success.
 func (env Env) remove(args []string) int {
 	fs := env.flags("remove")
 	// The flag package would print its own error and a flag dump to stderr;
@@ -1614,7 +1544,6 @@ func (env Env) remove(args []string) int {
 	case *force && source != "brew":
 		return env.removeFail(*asJSON, ref, "", fmt.Sprintf("--force is for Homebrew formulae; %s has no dependency check to override", source), ExitUsage)
 	}
-	// Only what is installed matters here, so the registries are not asked.
 	packages, errs := env.inventoryList(context.Background())
 	p, err := find(packages, ref)
 	if err != nil {
@@ -1720,8 +1649,7 @@ func hasFlag(args []string, name string) bool {
 	return false
 }
 
-// removeFail says why nothing was removed, as JSON when that was asked for, so
-// a caller reading stdout never has to parse prose.
+// A failure is JSON when that was asked for, so a caller never parses prose.
 func (env Env) removeFail(asJSON bool, ref, version, reason string, code int) int {
 	if asJSON {
 		env.printJSON(RemoveResult{Package: ref, Version: version, Error: reason})
@@ -1747,10 +1675,9 @@ func joinArgs(args []string) string {
 	return strings.Join(out, " ")
 }
 
-// removeMiss says why a ref did not resolve. A manager that failed or is not
-// on this machine is not the same as a package that isn't installed, a version
-// in the ref is a usage error rather than a missing package, and a name that is
-// installed under another manager is worth naming.
+// A manager that failed or is not on this machine is not the same as a package
+// that isn't installed, a version in the ref is a usage error rather than a
+// missing package, and a name installed under another manager is worth naming.
 func (env Env) removeMiss(ref string, packages []provider.Package, errs map[string]string) (string, int) {
 	source, name, _ := strings.Cut(ref, "/")
 	manager := provider.ProviderOf(provider.Package{Source: source})
@@ -1834,8 +1761,6 @@ func (env Env) history(args []string) int {
 	return ExitOK
 }
 
-// ListedPackage is a package as `kho list` prints it: the package itself, and
-// the status word the table shows, so a caller does not have to infer it.
 type ListedPackage struct {
 	provider.Package
 	Status string `json:"status"`
@@ -1860,8 +1785,6 @@ func (env Env) list() int {
 	return ExitOK
 }
 
-// RunCommand runs an install for real, streaming its output to w and keeping
-// the last 64KB for the history.
 func RunCommand(w io.Writer) func(*exec.Cmd) (string, error) {
 	return func(cmd *exec.Cmd) (string, error) {
 		pr, pw := io.Pipe()

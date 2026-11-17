@@ -41,6 +41,8 @@ func TestAffects(t *testing.T) {
 		{"after last_affected", lastAffected, "1.10", false, ""},
 		{"before introduced", lastAffected, "0.9", false, ""},
 		{"explicit version list", listed, "2.0.1", true, ""},
+		{"a tag named for its project", redos, "openssl-22.12.0", true, "24.3.0"},
+		{"a listed version under a project tag", listed, "anvil-2.0.1", true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -49,6 +51,27 @@ func TestAffects(t *testing.T) {
 			}
 			if got := tt.adv.FixedAfter(tt.version); got != tt.fixed {
 				t.Errorf("FixedAfter(%s) = %q, want %q", tt.version, got, tt.fixed)
+			}
+		})
+	}
+}
+
+func TestClean(t *testing.T) {
+	tests := []struct{ tag, want string }{
+		{"openssl-4.1.0", "4.1.0"},
+		{"v0.74.5", "0.74.5"},
+		{"n7.1", "7.1"},
+		{"curl-8_11_0", "8.11.0"},
+		{"OpenSSL_1_1_1w", "1.1.1w"},
+		{"9.0.2_1", "9.0.2_1"},
+		{"1.2.3", "1.2.3"},
+		{"release-candidate", "release-candidate"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			if got := Clean(tt.tag); got != tt.want {
+				t.Errorf("Clean(%q) = %q, want %q", tt.tag, got, tt.want)
 			}
 		})
 	}
@@ -185,9 +208,8 @@ func TestSkillAuditCache(t *testing.T) {
 	}
 }
 
-// MergeAudits reads a nil answer as "nothing was asked", so the opt-outs must
-// return nil. The context is already cancelled, so a regression fails here
-// instead of reaching skills.sh.
+// MergeAudits reads nil as "nothing was asked", so the opt-outs must return nil. The
+// context is already cancelled, so a regression fails here instead of reaching skills.sh.
 func TestSkillAuditsAskNothingWhenTelemetryIsOff(t *testing.T) {
 	for _, opt := range []string{"DISABLE_TELEMETRY", "DO_NOT_TRACK"} {
 		t.Run(opt, func(t *testing.T) {
@@ -260,9 +282,8 @@ func TestOldCacheIsDropped(t *testing.T) {
 	}
 }
 
-// A cache from an older build that still loads reads as clean wherever a
-// field moved or changed kind, so the shape must never change under an old
-// format.
+// An older cache that still loads reads as clean wherever a field moved or changed kind,
+// so the shape must never change under an old format.
 func TestStoredShapeMatchesFormat(t *testing.T) {
 	if got := shape(t, NewDB()); !slices.Equal(got, stored) {
 		t.Errorf("the cache now stores\n\t%s\nbut stored in cache.go says\n\t%s\nbump format, set stored to the new paths and add the new format to formats",
@@ -274,8 +295,8 @@ func TestStoredShapeMatchesFormat(t *testing.T) {
 	}
 }
 
-// Fields JSON never writes cannot change the stored shape, so filling them
-// would only make the shape test fail for nothing, or panic.
+// Fields JSON never writes cannot change the stored shape; filling them would only make
+// the shape test fail for nothing, or panic.
 type embedded struct {
 	Note string `json:"note,omitempty"`
 }
@@ -312,7 +333,6 @@ func TestShapeSkipsWhatJSONSkips(t *testing.T) {
 	}
 }
 
-// shape fills v, which points to a struct, and returns its sorted JSON paths.
 func shape(t *testing.T, v any) []string {
 	fill(t, reflect.ValueOf(v).Elem())
 	data, err := json.Marshal(v)
@@ -329,9 +349,8 @@ func shape(t *testing.T, v any) []string {
 	return paths
 }
 
-// fill gives every field a value, so omitempty hides none of them, and every
-// map one entry under "*". A kind it does not know fails the test, so a new
-// field cannot slip past it.
+// Every field gets a value so omitempty hides none. An unknown kind fails the test, so a
+// new field cannot slip past.
 func fill(t *testing.T, v reflect.Value) {
 	switch {
 	case v.Type() == reflect.TypeFor[time.Time]():
@@ -370,8 +389,7 @@ func fill(t *testing.T, v reflect.Value) {
 	}
 }
 
-// jsonPaths lists every leaf with the Go type JSON decodes it to, so a field
-// that changes kind changes its path.
+// A field that changes kind changes its path.
 func jsonPaths(v any, path string, out *[]string) {
 	switch v := v.(type) {
 	case map[string]any:

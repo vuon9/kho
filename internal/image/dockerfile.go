@@ -5,10 +5,8 @@ import (
 	"strings"
 )
 
-// ParseDockerfile reads every image a Dockerfile builds on, in file order.
-// ARG defaults are resolved the way docker resolves them, an ARG with no
-// default leaves the reference unresolved, and FROM naming an earlier stage
-// is not an image at all.
+// ARG defaults resolve the way docker resolves them, an ARG with no default leaves
+// the reference unresolved, and FROM naming an earlier stage is not an image.
 func ParseDockerfile(file string, src []byte) []Ref {
 	var refs []Ref
 	args := map[string]string{}
@@ -62,8 +60,6 @@ func ParseDockerfile(file string, src []byte) []Ref {
 	return refs
 }
 
-// withParts re-splits a reference whose variables were just resolved, keeping
-// where it was read.
 func withParts(r Ref) Ref {
 	p := Parse(r.Image)
 	p.File, p.Line, p.Source, p.Stage, p.Raw = r.File, r.Line, r.Source, r.Stage, r.Raw
@@ -72,8 +68,7 @@ func withParts(r Ref) Ref {
 
 var fromFlags = regexp.MustCompile(`^--\S+\s+`)
 
-// parseFrom splits "ref AS name" and drops the --platform flag docker allows
-// in front of the image.
+// Docker allows a --platform flag in front of the image.
 func parseFrom(s string) (ref, stage string) {
 	for fromFlags.MatchString(s) {
 		s = fromFlags.ReplaceAllString(s, "")
@@ -91,8 +86,7 @@ type logicalLine struct {
 	number int
 }
 
-// logicalLines joins backslash continuations and keeps the first line number,
-// so a report can point at the line a person sees.
+// Keeps the first line number, so a report points at the line a person sees.
 func logicalLines(src string) []logicalLine {
 	raw := strings.Split(src, "\n")
 	var out []logicalLine
@@ -108,8 +102,6 @@ func logicalLines(src string) []logicalLine {
 	return out
 }
 
-// expand replaces the variables docker would replace, in order. It returns
-// the first variable it met, and the first one the file gives no value for.
 func expand(s string, args map[string]string) (out, via string, ok bool) {
 	var b strings.Builder
 	for i := 0; i < len(s); {

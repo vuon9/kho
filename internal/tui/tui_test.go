@@ -45,8 +45,8 @@ func (f fake) Latest(_ context.Context, p []provider.Package) ([]provider.Packag
 }
 func (f fake) Deps(_ context.Context, p provider.Package) ([]provider.Dep, error) { return p.Deps, nil }
 
-// Versions lists the releases given for the package, or else only its
-// newest, as Homebrew does for a formula with no repo.
+// Only the newest when no releases are given, as Homebrew does for a formula
+// with no repo.
 func (f fake) Versions(_ context.Context, p provider.Package) ([]provider.Release, error) {
 	if rels, ok := f.versions[p.Name]; ok {
 		return rels, nil
@@ -96,8 +96,6 @@ func fakes(t *testing.T) []provider.Provider {
 	}
 }
 
-// update applies a message, then runs the commands it returns the way the
-// program would, for the messages the model makes for itself.
 func update(t *testing.T, m model, msg tea.Msg) model {
 	tm, cmd := m.Update(msg)
 	var drain func(tea.Cmd)
@@ -110,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -121,15 +119,11 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 
 var opened, ran, copied, toggled []string
 
-// installScript stands in for the package manager an install runs, and
-// reran is the command t last ran in the terminal.
 var (
 	installScript string
 	reran         *exec.Cmd
 )
 
-// linkReads counts the times kho read a skill's links, and appeared puts a
-// newly installed agent first in what it reads next.
 var (
 	linkReads int
 	appeared  bool
@@ -177,7 +171,7 @@ func loaded(t *testing.T) model {
 	}
 	unlinkSkill = func(l provider.SkillLink) error { toggled = append(toggled, "unlink "+l.Agent); return nil }
 	now = func() time.Time { return clock }
-	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+	settleTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
 		return func() tea.Msg { return fn(clock) }
 	}
 	openURL = func(url string) error { opened = append(opened, url); return nil }
@@ -201,6 +195,9 @@ func loaded(t *testing.T) model {
 		return map[string]vuln.SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "safe", Snyk: "medium"}}, nil
 	}
 	scanBrew = func(context.Context) (vuln.BrewResult, error) { return brewScanResult, nil }
+	scanFormula = func(context.Context, string) (vuln.BrewResult, error) {
+		return vuln.BrewResult{Checked: 1, Complete: true}, nil
+	}
 	ps := fakes(t)
 	m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
 	for _, p := range ps {
@@ -439,8 +436,6 @@ func TestMouse(t *testing.T) {
 	outdatedChip := l.tableX + 1
 	for m := loaded(t); m.chipAt(outdatedChip-l.tableX-1) != statusOutdated; outdatedChip++ {
 	}
-	// tap is a press and release on one cell, which the sidebar's text takes
-	// as a click.
 	tap := func(x, y int) []tea.Msg {
 		return []tea.Msg{click(x, y), tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft}}
 	}
@@ -514,8 +509,6 @@ func TestMouse(t *testing.T) {
 	}
 }
 
-// The package cursor is a row number, so a listing or a security result that
-// adds or moves rows must not swap the selected package for another.
 func TestKeepSelection(t *testing.T) {
 	ps := fakes(t)
 	listed := func(i int, extra ...provider.Package) tea.Msg {
@@ -528,8 +521,7 @@ func TestKeepSelection(t *testing.T) {
 	withAwl := []string{"anvil", "awl", "gust", "bramble", "inkwell", "pathmaker"}
 	l := loaded(t).layout()
 	tests := []struct {
-		id string
-		// fresh starts from a kho that has listed nothing yet.
+		id     string
 		fresh  bool
 		keys   []string
 		msgs   []tea.Msg
@@ -584,10 +576,9 @@ func TestDefaultRail(t *testing.T) {
 
 func TestResize(t *testing.T) {
 	tests := []struct {
-		id   string
-		deps bool
-		keys []string
-		// split are what a split-pane width must still show.
+		id    string
+		deps  bool
+		keys  []string
 		split []string
 	}{
 		{id: "a dependency popup with two advisories", deps: true, keys: pick("tidyup", "j", "j", "enter")},
@@ -636,9 +627,7 @@ func TestActions(t *testing.T) {
 		ran     []string
 		toggled []string
 		notice  string
-		// after are keys pressed once the screen is drawn and a new agent
-		// has appeared.
-		after []string
+		after   []string
 	}{
 		{id: "y runs the upgrade", keys: []string{"l", "v", "enter", "y"}, ran: []string{"brew upgrade anvil"}, notice: "anvil is now v0.2.94"},
 		{id: "n runs nothing", keys: []string{"l", "v", "enter", "n"}},
@@ -696,24 +685,18 @@ func TestLinkReads(t *testing.T) {
 	}
 }
 
-// TestLinkStates shows the skill to one agent at a time and reads what each
-// part of kho says: the count on the Info tab, the agent's row and detail on
-// the Links tab, the dialog enter opens, and what y then changes.
 func TestLinkStates(t *testing.T) {
 	unlink := func(name string) []string {
 		return []string{"✂ Unlink pathmaker from " + name + "?", "removes  /h/.config/" + strings.ToLower(name) + "/skills/pathmaker",
 			"the skill itself stays in {real}", "", "y remove the link   n cancel"}
 	}
-	// at starts a detail: the agent's path, then the skill's folder.
 	at := func(path string, rest ...string) []string {
 		return append([]string{"path: " + path, "skill: {real}"}, rest...)
 	}
 	const removes = "enter removes this link. The skill's files stay where they are."
 	tests := []struct {
-		id   string
-		link provider.SkillLink
-		// atHome makes the skill's home HOME, so it is listed from
-		// ~/.agents/skills. Otherwise HOME is an empty folder.
+		id      string
+		link    provider.SkillLink
 		atHome  bool
 		seen    string
 		row     string
@@ -953,7 +936,6 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-// A drag lights the text it covers before it is let go and copied.
 func TestHighlight(t *testing.T) {
 	lit := regexp.MustCompile("\x1b\\[7m([^\x1b]*)")
 	l := loaded(t).layout()
@@ -1060,8 +1042,7 @@ func TestHistory(t *testing.T) {
 		lacks  []string
 		copied []string
 		opened []string
-		// like are keys whose screen this row's must be, key for key.
-		like []string
+		like   []string
 	}{
 		{id: "enter opens no dependency behind the history", keys: []string{"l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"◆ openssl@4"}},
 		{id: "nor an install", keys: []string{"v", "l", "H", "enter"}, want: []string{"🕘 History · 3"}, lacks: []string{"Upgrade anvil?"}},
@@ -1257,21 +1238,17 @@ func TestInstall(t *testing.T) {
 	pkgtool.Env, pkgtool.Dir = []string{"PKGTOOL_NO_AUTO_UPDATE=1"}, t.TempDir()
 	tests := []struct {
 		id string
-		// script stands in for the command; {pids} in it is a file for the
-		// pids of children it leaves behind, killed once the row is done.
-		script string
-		// missing makes the command one that can't start.
+		// {pids} in script is a file for the pids of children it leaves behind,
+		// killed once the row is done.
+		script  string
 		missing bool
-		// cmd starts the install with this command instead of through the
-		// dialog.
-		cmd   *exec.Cmd
-		keys  []string
-		ran   []string
-		shows []string
-		hides string
-		open  bool
-		// logged is the history entry: its kind, command, error and output.
-		logged []string
+		cmd     *exec.Cmd
+		keys    []string
+		ran     []string
+		shows   []string
+		hides   string
+		open    bool
+		logged  []string
 	}{
 		{id: "a command that can't start says so, with nothing left to stop", missing: true, keys: upgrade, ran: []string{brew},
 			shows: []string{"anvil v0.2.94 failed: fork/exec"}, hides: "ctrl+c", logged: []string{`change brew upgrade anvil: fork/exec {missing}: no such file or directory ""`}},
@@ -1346,8 +1323,6 @@ func TestInstall(t *testing.T) {
 	}
 }
 
-// selectPkg puts the cursor on a package by name, so a test does not depend on
-// the order the fakes list them in.
 func selectPkg(t *testing.T, m model, name string) model {
 	t.Helper()
 	m = press(t, m, "g")
@@ -1361,8 +1336,6 @@ func selectPkg(t *testing.T, m model, name string) model {
 	return m
 }
 
-// D asks before it removes anything, and a refusal explains itself instead of
-// leaving a person guessing.
 func TestRemoveAsks(t *testing.T) {
 	tests := []struct {
 		id    string
@@ -1413,8 +1386,6 @@ func TestRemoveAsks(t *testing.T) {
 	}
 }
 
-// A removal that ran is logged like an install, and the notice says what
-// happened rather than which version it landed on.
 func TestRemoveIsLogged(t *testing.T) {
 	m := selectPkg(t, loaded(t), "anvil")
 	m = press(t, m, "D", "y")
@@ -1427,8 +1398,6 @@ func TestRemoveIsLogged(t *testing.T) {
 	}
 }
 
-// reap kills the children a test's script left behind on purpose, and their
-// process groups, from the pids it wrote to path.
 func reap(path string) {
 	data, _ := os.ReadFile(path)
 	for _, f := range strings.Fields(string(data)) {
@@ -1475,7 +1444,6 @@ func TestStopInstall(t *testing.T) {
 			if s := screen(tm.(model)); !strings.Contains(s, "started") || !strings.Contains(s, "ctrl+c stop it") {
 				t.Fatalf("running popup:\n%s", s)
 			}
-			// A command that has exited is gone once it is reaped.
 			for pid := tm.(model).inst.pid; tt.err == "" && syscall.Kill(pid, 0) == nil; {
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -1545,11 +1513,9 @@ func TestRunningInstall(t *testing.T) {
 // A progress bar redraws its line after a \r. The popup shows each state as
 // it comes, rather than nothing until the line ends.
 func TestProgress(t *testing.T) {
-	// Each printf lands on its own, so each shows as a state of its own.
 	tests := []struct {
 		id, script string
-		// states are the popup's output lines after each message.
-		states [][]string
+		states     [][]string
 	}{
 		{"a progress bar shows each state as it redraws", `printf 'step 1\r'; sleep 0.1; printf 'step 2\r'; sleep 0.1; printf 'step 3\n'; sleep 0.1; echo done`,
 			[][]string{{"step 1"}, {"step 2"}, {"step 3"}, {"step 3", "done"}}},
@@ -1579,14 +1545,11 @@ func TestProgress(t *testing.T) {
 	}
 }
 
-// stream shows the output as a terminal would, each write as soon as it is
-// read, even a line that hasn't ended yet.
 func TestStream(t *testing.T) {
 	tests := []struct {
 		id     string
 		writes []string
-		// screens are the output lines after each write, or nil for a write
-		// that changes nothing on screen.
+		// nil for a write that changes nothing on screen.
 		screens [][]string
 	}{
 		{"a bar drawn after its \\r shows as soon as it is drawn", []string{"downloading\n", "\r[#   ] 10%", "\r[##  ] 20%", "\n", "done\n"},
@@ -1633,17 +1596,12 @@ func TestStream(t *testing.T) {
 	}
 }
 
-// Once the command has exited, kho reads on until the output ends, goes
-// quiet, has run on too long, or the install is cut short.
 func TestQuiet(t *testing.T) {
 	const grace, limit = 50 * time.Millisecond, 300 * time.Millisecond
 	tests := []struct {
-		id string
-		// ended closes the output, writing keeps bytes coming, and cut cuts
-		// the install short.
+		id                  string
 		ended, writing, cut bool
-		// within is how long quiet may take, at least the first and less
-		// than the second.
+		// within: at least the first, less than the second.
 		within [2]time.Duration
 	}{
 		{id: "a child that writes on and on is let go at the limit", writing: true, within: [2]time.Duration{limit, 3 * limit}},
@@ -1683,18 +1641,12 @@ func TestQuiet(t *testing.T) {
 	}
 }
 
-// The screen takes a while to draw each update, but the output is read as
-// fast as the command writes it, so none is lost, on screen or in the
-// history.
 func TestSlowScreen(t *testing.T) {
 	tests := []struct {
 		id, script string
-		// draw is how long the screen takes per update. never is a screen
-		// that takes no update until the result.
-		draw  time.Duration
-		never bool
-		// last are the popup's last lines, and logged how the history entry
-		// ends.
+		// never is a screen that takes no update until the result.
+		draw   time.Duration
+		never  bool
 		last   []string
 		logged string
 	}{
@@ -1741,17 +1693,15 @@ func TestSignal(t *testing.T) {
 		// unseen starts the install without the screen hearing of it, as
 		// when a signal comes right after y.
 		unseen bool
-		// crash runs a screen that panics.
-		crash bool
+		crash  bool
 		// patience is how long kho waits on an interrupted install before
 		// it kills it; 0 leaves kho through serve, as a hangup does.
 		patience time.Duration
-		// late asks for an install once kho has left.
-		late   bool
-		said   string
-		ran    []string
-		logged []string
-		err    error
+		late     bool
+		said     string
+		ran      []string
+		logged   []string
+		err      error
 	}{
 		{id: "an install asked for once kho is leaving never starts", late: true, err: ErrHangup},
 		{id: "a signal mid-install stops it and logs it before kho leaves", script: "echo started; sleep 30", said: "kho: stopping brew upgrade anvil\n",
@@ -1840,7 +1790,6 @@ func TestListen(t *testing.T) {
 	}
 }
 
-// panics is a screen that crashes on the first message.
 type panics struct{}
 
 func (panics) Init() tea.Cmd                       { return nil }
@@ -1900,8 +1849,6 @@ func TestOverlay(t *testing.T) {
 	}
 }
 
-// The Security tab's list says what osv.dev knows about the package, or why
-// it doesn't know yet.
 func TestSecurityTab(t *testing.T) {
 	tests := []struct {
 		id, scan, pkg string
@@ -1930,13 +1877,9 @@ func TestSecurityTab(t *testing.T) {
 	}
 }
 
-// The Info tab lists the selected package's dependencies, flagging those with
-// advisories.
 func TestDependencyList(t *testing.T) {
 	upgraded := provider.Package{Source: "go", Name: "tidyup", Version: "v1.3.0", Latest: "v1.3.0", Origin: "example.com/tidyup",
 		Deps: []provider.Dep{{Name: "example.org/text", Version: "v0.31.0"}}}
-	// brew lists again after an install with anvil's openssl@4 moved on,
-	// and gust's newest version too, while their own versions stay.
 	brew := slices.Clone(fakes(t)[0].(fake).pkgs)
 	brew[0].Deps = []provider.Dep{{Name: "openssl@4", Version: "4.2.0", Direct: true}, {Name: "ca-certificates", Version: "2026-10-20"}}
 	brew[2].Latest = "1.27.3"
@@ -1945,7 +1888,6 @@ func TestDependencyList(t *testing.T) {
 		id   string
 		keys []string
 		msgs []tea.Msg
-		// top reads the top half, as the Versions tab lists them there.
 		top  bool
 		want []string
 	}{
@@ -1988,8 +1930,6 @@ func TestDependencyList(t *testing.T) {
 	}
 }
 
-// With more dependencies than the Info tab's bottom half shows, the keys and
-// the wheel that scroll the detail move through the list.
 func TestDependencyScroll(t *testing.T) {
 	var deps []provider.Dep
 	for i := range 30 {
@@ -2033,8 +1973,6 @@ func TestDependencyScroll(t *testing.T) {
 	}
 }
 
-// TestFooter reads the key hints under the panels, which change with what
-// has focus and what is open.
 func TestFooter(t *testing.T) {
 	tests := []struct {
 		id   string
@@ -2075,10 +2013,8 @@ func TestChrome(t *testing.T) {
 	}
 }
 
-// withDeps adds a go binary with a clean dependency, one with an advisory, one
-// with two and one with no release version, and a uv tool whose dependencies
-// kho never asks osv.dev about. scan is how osv.dev answers for them:
-// "" answers, "failed" fails, and "pending" hasn't come back yet.
+// scan is how osv.dev answers: "" answers, "failed" fails, and "pending"
+// hasn't come back yet. The uv tool's dependencies are never asked about.
 func withDeps(t *testing.T, scan string) model {
 	m := loaded(t)
 	loop := vuln.Advisory{ID: "GO-TEST-0001", Summary: "Header parsing can loop forever", Severity: "HIGH", Package: "example.org/net",
@@ -2121,8 +2057,6 @@ func withDeps(t *testing.T, scan string) model {
 	return m
 }
 
-// pick filters the packages down to name, moves to the sidebar, then presses
-// keys.
 func pick(name string, keys ...string) []string {
 	ks := []string{"/"}
 	for _, r := range name {
@@ -2131,7 +2065,6 @@ func pick(name string, keys ...string) []string {
 	return append(append(ks, "enter", "l"), keys...)
 }
 
-// depPopupLines is the dependency popup's title, then its lines as drawn.
 func depPopupLines(m model) []string {
 	if m.depPop == nil {
 		return nil
@@ -2189,12 +2122,11 @@ func TestDependencyPopup(t *testing.T) {
 		id, scan string
 		msgs     []tea.Msg
 		keys     []string
-		// after are messages that arrive once the popup is open.
-		after  []tea.Msg
-		text   []string
-		top    int
-		copied []string
-		opened []string
+		after    []tea.Msg
+		text     []string
+		top      int
+		copied   []string
+		opened   []string
 	}{
 		{id: "a listing that adds rows ahead leaves the popup on its package", keys: pick("tidyup", "j", "enter"),
 			after: []tea.Msg{listedMsg{"brew", []provider.Package{{Source: "brew", Name: "tidyup", Version: "3.0.0"}}, nil}}, text: netAdvisory},
@@ -2323,8 +2255,6 @@ func TestHiddenDependencies(t *testing.T) {
 	}
 }
 
-// withProject is the loaded model opened on a made-up project, with its
-// scan already back unless pending.
 func withProject(t *testing.T, scan project.Scan, pending bool) model {
 	m := loaded(t)
 	watchEvery = time.Millisecond
@@ -2627,8 +2557,6 @@ func TestWorkingCountsEveryLoad(t *testing.T) {
 	}
 }
 
-// With no homepage or repo, w opens the package's page on its registry,
-// whichever tool put a Python package there.
 func TestHomeURL(t *testing.T) {
 	tests := []struct {
 		id   string
@@ -2653,7 +2581,6 @@ func TestHomeURL(t *testing.T) {
 	}
 }
 
-// A skill's Info fields stay put while SKILL.md scrolls in the lower pane.
 func TestSkillInfoScrollsTheDocUnderTheFields(t *testing.T) {
 	m := loaded(t)
 	p := m.pkgs["skills"][0]
@@ -2681,8 +2608,6 @@ func TestSkillInfoScrollsTheDocUnderTheFields(t *testing.T) {
 	}
 }
 
-// The skills table names the repo a skill came from instead of repeating
-// "skills" in every row.
 func TestSkillsTableNamesSourceRepo(t *testing.T) {
 	m := loaded(t)
 	for i, r := range m.railRows() {

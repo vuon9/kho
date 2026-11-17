@@ -41,7 +41,6 @@ func (m model) sort(rows []provider.Package) {
 	})
 }
 
-// statusRank puts what needs attention first, known vulnerabilities above all.
 func (m model) statusRank(p provider.Package) int {
 	switch {
 	case len(m.vulns[pkgKey(p)]) > 0:
@@ -64,10 +63,8 @@ func (m model) statusRank(p provider.Package) int {
 	return rankOK
 }
 
-// rankOK is the rank of a package with nothing to report.
 const rankOK = 8
 
-// riskyAudit is a skill that an auditor on skills.sh failed.
 func (m model) riskyAudit(p provider.Package) bool {
 	a, ok := m.audit(p)
 	return ok && vuln.Verdict(a.Worst()) == vuln.Fail

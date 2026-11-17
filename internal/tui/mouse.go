@@ -10,9 +10,6 @@ const (
 	minHeight = 16
 )
 
-// layout is the screen geometry: the title line, the three panels, then the
-// status bar and the key hints. The sidebar is one box whose halves meet at
-// a divider.
 type layout struct {
 	top                  int
 	railW, tableW, sideW int
@@ -22,8 +19,6 @@ type layout struct {
 	topRows, bottomRows  int
 }
 
-// The sizes a panel can be dragged or keyed to. The package panel takes what
-// the other two leave.
 const (
 	minRail  = 16
 	minSide  = 30
@@ -36,8 +31,7 @@ const (
 func (m model) layout() layout {
 	var l layout
 	// The sidebar is sized from the width alone, so the rail's room comes out
-	// of the package list. By default the rail grows to 42 columns only while
-	// the list keeps a comfortable width.
+	// of the package list.
 	l.sideW = max(38, (m.width-30)*2/5)
 	l.railW = min(42, max(m.width-l.sideW-comfortTable, 24))
 	if m.railW > 0 {
@@ -72,8 +66,7 @@ func (m model) layout() layout {
 	return l
 }
 
-// row turns a screen row into a row inside the panels: 0 is the first line
-// under their top border, which is row -1.
+// 0 is the first line under the panels' top border, which is row -1.
 func (l layout) row(y int) int {
 	return y - l.top - 1
 }
@@ -107,7 +100,6 @@ func (m model) helpRect() rect {
 	return m.centered(min(m.width-8, 96), min(len(helpLines())+popupFrame, m.height-2))
 }
 
-// helpHidden is how many lines of help don't fit on the screen.
 func (m model) helpHidden() int {
 	return len(helpLines()) - popupText(m.helpRect()).h
 }
@@ -155,8 +147,6 @@ func (m *model) click(x, y int) tea.Cmd {
 		return nil
 	}
 	if m.search != nil && r == l.bodyH-3 && x >= l.tableX && x < l.sideX {
-		// The bottom bar is the prompt, or the query in results: a click
-		// there starts editing.
 		if m.inResults() {
 			m.search.editing, m.search.draft = true, m.search.query
 		}
@@ -237,9 +227,6 @@ func (m *model) click(x, y int) tea.Cmd {
 	return nil
 }
 
-// clickSide handles a click inside the sidebar at an x offset from its left
-// edge and a row counted from its first content line: the tab bar, a link,
-// a list row, or the bottom half.
 func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 	if isImageRow(m.curRow().kind) {
 		return m.clickImageSide(x, row, focused)
@@ -290,8 +277,6 @@ func (m *model) clickSide(x, row int, focused bool) tea.Cmd {
 	return nil
 }
 
-// clickImageSide is clickSide for an image: the tab bar, a link in the
-// fields, a list row, or a link in the finding under the split.
 func (m *model) clickImageSide(x, row int, focused bool) tea.Cmd {
 	l := m.layout()
 	if row == -1 {
@@ -340,7 +325,6 @@ func (m *model) sortBy(col int) {
 	}
 }
 
-// columnAt maps an x offset within the table rows to the column under it.
 func (m model) columnAt(x int) int {
 	if x < 0 {
 		return -1
@@ -395,7 +379,6 @@ const (
 	resizeSplit
 )
 
-// resize follows a border being dragged to x, y.
 func (m *model) resize(x, y int) {
 	l := m.layout()
 	switch m.resizing {
@@ -410,8 +393,6 @@ func (m *model) resize(x, y int) {
 	m.railW, m.sideW = l.railW, l.sideW
 }
 
-// grow widens the focused panel by n columns, or narrows it when n is
-// negative. The package panel grows by narrowing the sidebar.
 func (m *model) grow(n int) {
 	l := m.layout()
 	switch m.focus {

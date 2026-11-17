@@ -26,8 +26,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Run opens the TUI on dir, whose project kho reads alongside the machine.
-// ask answers the registries about the project's images.
 func Run(log *history.Log, version, dir string, ask image.Asker) error {
 	ready, _ := provider.Detect()
 	m := newModel(ready, vuln.Path())
@@ -59,12 +57,10 @@ func listen() chan os.Signal {
 	return sigs
 }
 
-// ErrHangup is what Run returns when the terminal went away, so kho can
-// exit the way a hung-up program does.
 var ErrHangup = errors.New("the terminal hung up")
 
-// serve runs the program until it quits, which a hangup on sigs makes it
-// do, then stops an install still running and waits until it is logged.
+// A hangup on sigs quits the program; an install still running is stopped
+// and logged before serve returns.
 func serve(m tea.Model, sigs <-chan os.Signal, stderr io.Writer, opts ...tea.ProgramOption) error {
 	p := tea.NewProgram(m, opts...)
 	var hung atomic.Bool
@@ -146,19 +142,27 @@ type docMsg struct {
 	err error
 }
 
-// skillDocDueMsg says a selected skill has been quiet long enough to read its
-// remote SKILL.md.
 type skillDocDueMsg struct {
 	gen int
 	key string
 }
 
-// skillDocTick is tea.Tick, shortened in tests.
-var skillDocTick = tea.Tick
+// Swapped in tests.
+var settleTick = tea.Tick
 
-// skillDocDelay is how long a selected skill waits before its SKILL.md is
-// read, so arrowing through results does not ask GitHub for each row.
-const skillDocDelay = 300 * time.Millisecond
+// So arrowing through results does not ask GitHub, or Homebrew, for each row.
+const settleDelay = 300 * time.Millisecond
+
+type brewCheckDueMsg struct {
+	gen  int
+	name string
+}
+
+type brewCheckMsg struct {
+	name  string
+	check brewCheck
+	err   error
+}
 
 type scanMsg struct {
 	hits       map[string][]string
@@ -166,8 +170,8 @@ type scanMsg struct {
 	err        error
 }
 
-// brewScanMsg is what Homebrew's own scan found. queries are the formulae the
-// scan covered, so a formula with no findings is marked fresh too.
+// queries are the formulae the scan covered, so a formula with no findings is
+// marked fresh too.
 type brewScanMsg struct {
 	result  vuln.BrewResult
 	queries []vuln.Query
@@ -199,22 +203,23 @@ type lazy[T any] struct {
 	done bool
 }
 
-// depAdvisory is an advisory against one of a package's dependencies.
 type depAdvisory struct {
 	dep provider.Dep
 	adv vuln.Advisory
 }
 
 type model struct {
-	providers []provider.Provider
-	pkgs      map[string][]provider.Package
-	busy      map[string]string
-	errs      map[string]error
-	deps      map[string]*lazy[[]provider.Dep]
-	versions  map[string]*lazy[[]provider.Release]
-	docs      map[string]*lazy[provider.SkillDoc]
-	// links are the selected skill's agents as the Links tab lists them,
-	// read again by readLinks when linksOf stops naming the selection.
+	providers    []provider.Provider
+	pkgs         map[string][]provider.Package
+	busy         map[string]string
+	errs         map[string]error
+	deps         map[string]*lazy[[]provider.Dep]
+	versions     map[string]*lazy[[]provider.Release]
+	docs         map[string]*lazy[provider.SkillDoc]
+	brewChecks   map[string]*lazy[brewCheck]
+	brewCheckFor string
+	brewCheckGen int
+	// Read again by readLinks when linksOf stops naming the selection.
 	links   []provider.SkillLink
 	linksOf string
 
@@ -230,9 +235,8 @@ type model struct {
 	focus int
 	tab   int
 	rail  int
-	// railKey is the selected rail row's key, so the selection follows the
-	// row when rows above it come and go. railTop is the first rail line
-	// shown when they don't all fit.
+	// A key, not an index, so the selection follows the row when rows above it
+	// come and go.
 	railKey string
 	railTop int
 	cursor  int
@@ -246,8 +250,7 @@ type model struct {
 	sideCursor int
 	sideOffset int
 	bodyOffset int
-	// skillDocFor is the skill candidate whose SKILL.md waits for a quiet
-	// moment; skillDocGen drops the timer of a selection that moved on.
+	// skillDocGen drops the timer of a selection that moved on.
 	skillDocFor string
 	skillDocGen int
 
@@ -256,8 +259,6 @@ type model struct {
 	filters  map[string]string
 	statuses map[string]int
 
-	// images are the container images the project names, and imgBusy says a
-	// scan is still running. imgAsk is what answers the registries.
 	images       []image.Ref
 	machineImgs  []image.Ref
 	localImgs    []image.LocalImage
@@ -282,8 +283,7 @@ type model struct {
 	imgAsk      image.Asker
 	imgStatuses map[string]int
 	filtering   bool
-	// search is the selected machine panel's transient search: nil in the
-	// installed mode, the prompt or results otherwise. It never joins pkgs.
+	// Nil in the installed mode. It never joins pkgs.
 	search    *searchState
 	showDeps  bool
 	help      bool
@@ -301,9 +301,7 @@ type model struct {
 	grab      int
 
 	version string
-	// dir is the folder kho was opened on, whose project it reads. proj is
-	// what the last scan found, nil until one comes back. projGen counts
-	// scans, so an answer for an older one is dropped.
+	// projGen counts scans, so an answer for an older one is dropped.
 	dir         string
 	proj        *project.Scan
 	projErr     error
@@ -338,10 +336,11 @@ var openURL = func(url string) error {
 
 var now = time.Now
 
-// The network lookups, swapped out in tests.
+// Swapped out in tests.
 var (
 	scanOSV      = vuln.Scan
 	scanBrew     = provider.ScanBrewVulns
+	scanFormula  = provider.ScanBrewFormula
 	fetchHistory = vuln.History
 	fetchAudits  = vuln.SkillAudits
 )
@@ -360,8 +359,7 @@ func newModel(ps []provider.Provider, dbPath string) model {
 	return m
 }
 
-// Init lists every provider and starts the spinner, which newModel already
-// counts as ticking.
+// newModel already counts the spinner as ticking.
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.scan(), tick(), tea.RequestBackgroundColor, m.imagesCmd()}
 	if m.projBusy == projReading {
@@ -381,6 +379,7 @@ func (m *model) reset() {
 	m.deps = map[string]*lazy[[]provider.Dep]{}
 	m.versions = map[string]*lazy[[]provider.Release]{}
 	m.docs = map[string]*lazy[provider.SkillDoc]{}
+	m.brewChecks = map[string]*lazy[brewCheck]{}
 	m.advising = map[string]bool{}
 	m.picked = false
 	for _, p := range m.providers {
@@ -389,7 +388,6 @@ func (m *model) reset() {
 	m.reindex()
 }
 
-// relist scans one provider again after kho changed something it manages.
 func (m *model) relist(name string) tea.Cmd {
 	p := m.provider(name)
 	if p == nil {
@@ -431,7 +429,6 @@ func (m model) working() bool {
 		loading(m.deps) || loading(m.versions) || loading(m.docs)
 }
 
-// loading says whether any sidebar load is still on its way.
 func loading[T any](set map[string]*lazy[T]) bool {
 	for _, l := range set {
 		if !l.done {
@@ -441,7 +438,6 @@ func loading[T any](set map[string]*lazy[T]) bool {
 	return false
 }
 
-// anyOf says whether any entry of a per-image map is on.
 func (m model) anyOf(set map[string]bool) bool {
 	for _, on := range set {
 		if on {
@@ -451,7 +447,6 @@ func (m model) anyOf(set map[string]bool) bool {
 	return false
 }
 
-// startTicking runs the spinner while something is loading.
 func (m *model) startTicking() tea.Cmd {
 	if m.ticking {
 		return nil
@@ -478,15 +473,10 @@ func pkgKey(p provider.Package) string {
 	return p.Source + "\x00" + p.Name
 }
 
-// cacheKey names what kho loaded about one version of a package: its
-// dependencies, releases and skill files.
 func cacheKey(p provider.Package) string {
 	return pkgKey(p) + "\x00" + p.Version
 }
 
-// Update runs the handler, then asks for the selected image's tags if the
-// Versions tab is showing and this image has not been asked about yet, so
-// moving down the table fills the panel in without a keypress.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
 	if mm, ok := next.(model); ok {
@@ -625,6 +615,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gotFind(msg)
 	case docMsg:
 		m.docs[msg.key] = &lazy[provider.SkillDoc]{msg.doc, msg.err, true}
+	case brewCheckDueMsg:
+		p, ok := m.current()
+		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "brew" ||
+			msg.gen != m.brewCheckGen || msg.name != p.Name || m.brewChecks[p.Name] != nil {
+			break
+		}
+		cmds = append(cmds, m.startBrewCheck(p.Name))
+	case brewCheckMsg:
+		m.brewChecks[msg.name] = &lazy[brewCheck]{msg.check, msg.err, true}
 	case skillDocDueMsg:
 		p, ok := m.current()
 		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "skills" ||
@@ -696,8 +695,6 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
 		if msg.err == nil && !msg.removed {
-			// A results row installed from its candidate sidebar becomes an
-			// installed hit at once, before the relist brings the package.
 			m.gotInstalled(msg)
 		}
 		cmds = append(cmds, m.relist(msg.provider))
@@ -779,9 +776,6 @@ func (m model) save() {
 	}
 }
 
-// secure asks OSV about the packages and dependencies whose results are
-// missing or stale, Homebrew about formulae, and skills.sh about skills,
-// unless force asks again.
 func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 	var queries []vuln.Query
 	audits := map[string][]string{}
@@ -827,8 +821,6 @@ func (m *model) secure(pkgs []provider.Package, force bool) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// securityQuery is where the cache keeps p's advisories: OSV for the
-// ecosystems it covers, Homebrew's own scan for formulae.
 func securityQuery(p provider.Package) (vuln.Query, bool) {
 	if q, ok := provider.Query(p); ok {
 		return q, true
@@ -836,7 +828,6 @@ func securityQuery(p provider.Package) (vuln.Query, bool) {
 	return provider.BrewQuery(p)
 }
 
-// coverage says why kho has no advisories for p, or "" when it asked.
 func (m model) coverage(p provider.Package) string {
 	if p.Source != "brew" {
 		return provider.Coverage(p)
@@ -847,8 +838,6 @@ func (m model) coverage(p provider.Package) string {
 	return m.db.BrewSkip(p.Name)
 }
 
-// reindex works out, from the security cache, which advisories affect each
-// installed package and its dependencies.
 func (m *model) reindex() {
 	m.vulns = map[string][]vuln.Advisory{}
 	m.depVulns = map[string][]depAdvisory{}
@@ -874,8 +863,6 @@ func (m model) audit(p provider.Package) (vuln.SkillAudit, bool) {
 	return a, ok
 }
 
-// load fetches what the sidebar needs for the selected package, unless it is
-// cached or already on the way.
 func (m *model) load() tea.Cmd {
 	p, ok := m.current()
 	if !ok {
@@ -885,8 +872,6 @@ func (m *model) load() tea.Cmd {
 		m.skillDocFor = ""
 	}
 	if m.inResults() && m.isCandidate(p) {
-		// A candidate reads only what its visible tab needs, like an installed
-		// package; Info stays quiet until the row is opened.
 		return m.loadCandidate(p)
 	}
 	prov, key := m.provider(provider.ProviderOf(p)), cacheKey(p)
@@ -1183,7 +1168,6 @@ func (m model) popup() int {
 	return popNone
 }
 
-// setTheme switches to the i-th theme and remembers it for next time.
 func (m *model) setTheme(i int) {
 	th = themes[(i+len(themes))%len(themes)]
 	m.themePicked = true
@@ -1201,7 +1185,6 @@ func (m *model) setTab(t int) {
 	}
 }
 
-// move handles the keys that act on the focused panel.
 func (m *model) move(key string) {
 	page := max(m.layout().rows-1, 1)
 	step := map[string]int{"up": -1, "k": -1, "down": 1, "j": 1, "pgup": -page, "pgdown": page, "space": page}[key]
@@ -1237,9 +1220,6 @@ func (m *model) move(key string) {
 	}
 }
 
-// moveSide scrolls the sidebar. In a list tab the arrows move through the
-// list and enter acts on the selection: install a version, toggle a link, or
-// step down into an advisory.
 func (m *model) moveSide(key string, step int) {
 	if isImageRow(m.curRow().kind) {
 		m.moveImageSide(key, step)
@@ -1282,9 +1262,7 @@ func (m *model) moveSide(key string, step int) {
 	}
 }
 
-// scrollDetail scrolls the sidebar's reading area: the bottom half, or the
-// whole sidebar for a tab that has no bottom. A dependency list scrolls with
-// its cursor, so the cursor moves instead.
+// A dependency list scrolls with its cursor, so the cursor moves instead.
 func (m *model) scrollDetail(n int) {
 	n = max(abs(n), 1) * sign(n)
 	switch {
@@ -1360,8 +1338,6 @@ func homeURL(p provider.Package) string {
 
 func repoURL(repo string) string { return "https://github.com/" + repo }
 
-// openReleasePage opens the selected version's page when kho has no notes
-// to show for it.
 func (m *model) openReleasePage() tea.Cmd {
 	if m.activeTab() != tabVersions {
 		return nil
@@ -1373,9 +1349,8 @@ func (m *model) openReleasePage() tea.Cmd {
 	return open(r.URL)
 }
 
-// clamp pulls every cursor and offset back in range after a move. The
-// package cursor goes first, since the layout and the links depend on what
-// it selects.
+// The package cursor goes first, since the layout and the links depend on
+// what it selects.
 func (m *model) clamp() {
 	m.clampHistory()
 	m.keepRail()
@@ -1409,9 +1384,8 @@ func (m *model) clamp() {
 	}
 }
 
-// reselect puts the cursor back on the selected package after a listing or a
-// security result has added or moved rows. The cursor is a row number, so
-// otherwise it would land on whichever package took that row.
+// The cursor is a row number, so without this it would land on whichever
+// package took that row.
 func (m *model) reselect() {
 	for i, p := range m.rows() {
 		if pkgKey(p) == m.selected {
@@ -1421,7 +1395,6 @@ func (m *model) reselect() {
 	}
 }
 
-// at is s[i], or false when i is out of range.
 func at[T any](s []T, i int) (T, bool) {
 	if i < 0 || i >= len(s) {
 		var zero T
@@ -1430,7 +1403,6 @@ func at[T any](s []T, i int) (T, bool) {
 	return s[i], true
 }
 
-// scroll keeps cursor inside a window of h rows that starts at offset.
 func scroll(offset, cursor, h int) int {
 	if cursor < offset {
 		return cursor
@@ -1484,7 +1456,6 @@ func (m model) currentVersions() []provider.Release {
 	return m.versions[cacheKey(p)].val
 }
 
-// visible applies the dependency, status and keyword filters.
 func (m model) visible(pkgs []provider.Package) []provider.Package {
 	var out []provider.Package
 	for _, p := range pkgs {

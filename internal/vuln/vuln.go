@@ -1,6 +1,3 @@
-// Package vuln finds published security advisories for installed packages
-// through OSV (osv.dev) and audits for agent skills through skills.sh, and
-// keeps what it learns in a local cache.
 package vuln
 
 import (
@@ -26,7 +23,7 @@ const (
 	skillsSH = "https://www.skills.sh"
 )
 
-// The OSV ecosystems kho asks about, spelled the way OSV spells them.
+// Spelled the way OSV spells them.
 const (
 	NPM       = "npm"
 	PyPI      = "PyPI"
@@ -35,7 +32,6 @@ const (
 	Packagist = "Packagist"
 )
 
-// Query names one installed package version in an OSV ecosystem.
 type Query struct {
 	Ecosystem string `json:"ecosystem"`
 	Name      string `json:"name"`
@@ -68,10 +64,13 @@ func (a Advisory) URL() string {
 	return "https://osv.dev/vulnerability/" + a.ID
 }
 
-// Affects reports whether the advisory covers version. Ranges are read as
-// OSV writes them: each event opens or closes the affected span in order.
+// OSV ranges: each event opens or closes the affected span, in order.
 func (a Advisory) Affects(version string) bool {
 	if slices.Contains(a.Versions, version) || slices.Contains(a.Versions, strings.TrimPrefix(version, "v")) {
+		return true
+	}
+	version = Clean(version)
+	if slices.Contains(a.Versions, version) {
 		return true
 	}
 	affected := false
@@ -94,9 +93,39 @@ func (a Advisory) Affects(version string) bool {
 	return affected
 }
 
-// FixedAfter is the lowest fixed version above version, or "" when no fix
-// has been published.
+// Clean reads a release tag as the version it names. Projects prefix tags with
+// their name or a letter ("openssl-4.1.0", "n7.1", "v0.74.5") and some write
+// dots as underscores ("curl-8_11_0", "OpenSSL_1_1_1w").
+func Clean(tag string) string {
+	tag = strings.TrimSpace(tag)
+	i := strings.IndexFunc(tag, func(r rune) bool { return r < 'A' || r > 'z' || (r > 'Z' && r < 'a') })
+	if i > 0 && strings.ContainsRune("-_.", rune(tag[i])) {
+		i++
+	}
+	if i < 0 || i >= len(tag) || tag[i] < '0' || tag[i] > '9' {
+		return tag
+	}
+	tag = tag[i:]
+	if !strings.Contains(tag, ".") {
+		tag = strings.ReplaceAll(tag, "_", ".")
+	}
+	return tag
+}
+
+// For an advisory that names where the span ends but no fixed release.
+func (a Advisory) ClearAfter(version string) string {
+	version = Clean(version)
+	best := ""
+	for _, r := range a.Ranges {
+		if r.LastAffected != "" && Compare(r.LastAffected, version) >= 0 && (best == "" || Compare(r.LastAffected, best) < 0) {
+			best = r.LastAffected
+		}
+	}
+	return best
+}
+
 func (a Advisory) FixedAfter(version string) string {
+	version = Clean(version)
 	best := ""
 	for _, r := range a.Ranges {
 		if r.Fixed != "" && Compare(r.Fixed, version) > 0 && (best == "" || Compare(r.Fixed, best) < 0) {
@@ -106,7 +135,6 @@ func (a Advisory) FixedAfter(version string) string {
 	return best
 }
 
-// Rank orders severities from most to least urgent.
 func Rank(severity string) int {
 	switch severity {
 	case "CRITICAL":
@@ -121,8 +149,7 @@ func Rank(severity string) int {
 	return 4
 }
 
-// Compare orders version strings so that 1.10 sorts after 1.9 and "v1.2"
-// equals "1.2".
+// 1.10 sorts after 1.9, and "v1.2" equals "1.2".
 func Compare(a, b string) int {
 	a, b = strings.TrimPrefix(a, "v"), strings.TrimPrefix(b, "v")
 	for a != "" && b != "" {
@@ -152,8 +179,6 @@ func run(s string) string {
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
-// Scan asks OSV which advisories affect each query, then fetches the
-// details of every advisory not in known.
 func Scan(ctx context.Context, queries []Query, known map[string]bool) (map[string][]string, map[string]Advisory, error) {
 	hits := map[string][]string{}
 	for chunk := range slices.Chunk(queries, 1000) {
@@ -312,9 +337,8 @@ func (r osvRecord) advisory() Advisory {
 	return a
 }
 
-// firstSentences stands in for a missing summary. Some databases leave it
-// empty and put a whole paragraph in the details, often opening with what the
-// project is, so it keeps whole sentences up to 160 characters.
+// Some databases leave the summary empty and put a paragraph in the details, often
+// opening with what the project is, so this keeps whole sentences up to 160 characters.
 func firstSentences(s string) string {
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
 	if len(s) <= 160 {
@@ -326,8 +350,7 @@ func firstSentences(s string) string {
 	return s[:159] + "…"
 }
 
-// Dedupe drops advisories that are aliases of one already kept, preferring
-// GitHub's GHSA records, which carry a severity.
+// Prefers GitHub's GHSA records, which carry a severity.
 func Dedupe(advs []Advisory) []Advisory {
 	slices.SortStableFunc(advs, func(a, b Advisory) int {
 		return cmp.Or(
@@ -358,8 +381,6 @@ func boolRank(b bool) int {
 	return 0
 }
 
-// SkillAudit is what skills.sh reports for one skill: a risk level from each
-// of three auditors, and Socket's alert count.
 type SkillAudit struct {
 	Gen          string    `json:"gen,omitempty"`
 	Socket       string    `json:"socket,omitempty"`
@@ -368,7 +389,6 @@ type SkillAudit struct {
 	Analyzed     time.Time `json:"analyzed,omitzero"`
 }
 
-// Worst is the highest risk any auditor gave.
 func (a SkillAudit) Worst() string {
 	worst := ""
 	for _, r := range []string{a.Gen, a.Socket, a.Snyk} {
@@ -383,14 +403,12 @@ func riskRank(risk string) int {
 	return map[string]int{"safe": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}[risk]
 }
 
-// The verdicts skills.sh shows for an audit.
 const (
 	Pass = "Pass"
 	Warn = "Warn"
 	Fail = "Fail"
 )
 
-// Verdict turns a risk level into the Pass, Warn or Fail that skills.sh shows.
 func Verdict(risk string) string {
 	switch risk {
 	case "safe", "low":
@@ -403,9 +421,8 @@ func Verdict(risk string) string {
 	return "--"
 }
 
-// SkillAudits fetches skills.sh audits for skills by GitHub source. It uses
-// the same endpoint as the skills CLI and honors the same opt-outs, returning
-// nil without asking, and a non-nil map whenever it did ask.
+// Same endpoint and opt-outs as the skills CLI. Returns nil without asking, and a
+// non-nil map whenever it did ask: MergeAudits relies on that.
 func SkillAudits(ctx context.Context, bySource map[string][]string) (map[string]SkillAudit, error) {
 	if os.Getenv("DISABLE_TELEMETRY") != "" || os.Getenv("DO_NOT_TRACK") != "" {
 		return nil, nil
@@ -436,16 +453,12 @@ func SkillAudits(ctx context.Context, bySource map[string][]string) (map[string]
 	return out, nil
 }
 
-// AuditKey is where DB.Audits keeps the audit of one skill.
 func AuditKey(source, slug string) string { return source + "/" + slug }
 
-// SkillPage is the skill's page on skills.sh, which shows the full audits.
 func SkillPage(source, slug string) string {
 	return skillsSH + "/" + source + "/" + slug
 }
 
-// History lists every advisory OSV has for a package, whatever the version,
-// so versions ahead of the installed one can be checked too.
 func History(ctx context.Context, ecosystem, name string) ([]Advisory, error) {
 	var advs []Advisory
 	token := ""

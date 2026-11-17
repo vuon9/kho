@@ -1,8 +1,6 @@
-// Package image reads the container images a project refers to and the ones
-// a machine holds. It reads files and registry metadata. It never pulls,
-// builds or runs an image, and it never reads inside one, so nothing here
-// can say whether an image is vulnerable: only whether it is current, past
-// its upstream life, or built here.
+// Package image never pulls, builds, runs or reads inside an image, so it cannot
+// say whether one is vulnerable: only whether it is current, past its upstream
+// life, or built here.
 package image
 
 import (
@@ -11,8 +9,6 @@ import (
 	"time"
 )
 
-// State is what kho can say about an image. None of these mean "safe": kho
-// does not read what is inside an image.
 type State string
 
 const (
@@ -20,22 +16,18 @@ const (
 	Fresh State = "fresh"
 	// Stale means the tag was rebuilt upstream after this image was made.
 	Stale State = "stale"
-	// EOL means the upstream release line is past its end of life.
-	EOL State = "eol"
-	// Gone means the tag is no longer published at all.
-	Gone State = "gone"
+	EOL   State = "eol"
+	Gone  State = "gone"
 	// Pinned means the reference is a digest, so there is nothing to drift.
 	Pinned State = "pinned"
 	// Local means the image was built here and has no registry copy.
 	Local State = "local"
 	// None means there is nothing public to ask, as for scratch.
-	None State = "none"
-	// Unknown means kho could not ask the registry.
+	None    State = "none"
 	Unknown State = "unknown"
 )
 
-// Mark is the one character a state shows as, wherever kho prints it, so a
-// stale image reads like an outdated package and pinned like pinned.
+// Same marks as packages, so a stale image reads like an outdated package.
 func (s State) Mark() string {
 	switch s {
 	case Fresh:
@@ -52,17 +44,14 @@ func (s State) Mark() string {
 	return "·"
 }
 
-// DockerHub is the registry a reference names when it names none.
 const DockerHub = "docker.io"
 
-// Scratch is the empty base image, which no registry holds.
+// No registry holds the empty base image.
 const Scratch = "scratch"
 
-// Presence says whether the machine holds an image.
 type Presence string
 
 const (
-	// OnDisk means docker listed it.
 	OnDisk Presence = "local"
 	// NotPulled means docker answered and did not list it.
 	NotPulled Presence = "missing"
@@ -70,7 +59,6 @@ const (
 	Unasked Presence = "unknown"
 )
 
-// Mark says whether docker holds the image, in one character.
 func (p Presence) Mark() string {
 	switch p {
 	case OnDisk:
@@ -81,47 +69,31 @@ func (p Presence) Mark() string {
 	return "?"
 }
 
-// Ref is one image reference, as a file writes it and as kho understands it.
 type Ref struct {
-	// Image is the reference as written, once variables are resolved.
+	// Once variables are resolved.
 	Image string `json:"image"`
-	// Raw is the reference as the file spells it, when it differs, as for
-	// ${NODE_IMAGE}.
-	Raw string `json:"raw,omitempty"`
-	// Registry is the host the image comes from, docker.io when the file
-	// leaves it out.
+	// As the file spells it, when it differs, as for ${NODE_IMAGE}.
+	Raw      string `json:"raw,omitempty"`
 	Registry string `json:"registry"`
-	// Repo is the repository path without the registry or the tag.
-	Repo string `json:"repo"`
-	Tag  string `json:"tag,omitempty"`
-	// Digest is set when the reference pins one.
-	Digest string `json:"digest,omitempty"`
+	Repo     string `json:"repo"`
+	Tag      string `json:"tag,omitempty"`
+	Digest   string `json:"digest,omitempty"`
 
-	// File and Line say where the reference was read, relative to the scan
-	// root and slash separated.
-	File string `json:"file,omitempty"`
-	Line int    `json:"line,omitempty"`
-	// Source is dockerfile or compose.
-	Source string `json:"source,omitempty"`
-	// Stage is the Dockerfile stage the reference opens.
-	Stage string `json:"stage,omitempty"`
-	// Service is the compose service the reference belongs to.
+	// Relative to the scan root and slash separated.
+	File    string `json:"file,omitempty"`
+	Line    int    `json:"line,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Stage   string `json:"stage,omitempty"`
 	Service string `json:"service,omitempty"`
 
-	// Via names the ARG or compose variable the image came from, and
-	// Unresolved says the file does not say which image that is.
+	// Unresolved says the file does not say which image Via is.
 	Via        string `json:"via,omitempty"`
 	Unresolved bool   `json:"unresolved,omitempty"`
-	// StageRef says FROM named an earlier stage, not an image.
-	StageRef bool `json:"-"`
+	StageRef   bool   `json:"-"`
 
-	// Presence is filled from the machine's images.
 	Presence Presence `json:"presence,omitempty"`
-	// Note carries a hint, as when another tag of the same repository is on
-	// disk.
-	Note string `json:"note,omitempty"`
+	Note     string   `json:"note,omitempty"`
 
-	// What the registry and the lifecycle pages said.
 	Upstream     string    `json:"upstream,omitempty"`
 	Base         string    `json:"base,omitempty"`
 	BaseVersion  string    `json:"baseVersion,omitempty"`
@@ -132,8 +104,7 @@ type Ref struct {
 	State        State     `json:"state,omitempty"`
 }
 
-// Parse splits a reference the way docker does: an implicit docker.io/library
-// prefix, an implicit latest tag, and a digest after @.
+// Docker implies a docker.io/library prefix and a latest tag; a digest follows @.
 func Parse(s string) Ref {
 	r := Ref{Image: strings.TrimSpace(s)}
 	rest := r.Image
@@ -160,8 +131,6 @@ func splitRegistry(s string) (registry, repo string) {
 	return DockerHub, s
 }
 
-// Canonical is the reference with the registry and the library prefix
-// spelled out, so the same image written two ways compares equal.
 func (r Ref) Canonical() string {
 	if r.Tag == "" {
 		return r.CanonicalRepo() + "@" + r.Digest
@@ -169,8 +138,6 @@ func (r Ref) Canonical() string {
 	return r.CanonicalRepo() + ":" + r.Tag
 }
 
-// BaseImage is the image this one sits on, written the way a reference is:
-// php:8.5.12 when both halves are known, and whichever half we have when not.
 func (r Ref) BaseImage() string {
 	switch {
 	case r.Base != "" && r.BaseVersion != "":
@@ -181,14 +148,11 @@ func (r Ref) BaseImage() string {
 	return r.BaseVersion
 }
 
-// CanonicalRepo is Canonical without the tag, for finding another tag of the
-// same repository.
 func (r Ref) CanonicalRepo() string {
 	return r.Registry + "/" + r.RemoteRepo()
 }
 
-// RemoteRepo is the repository path a registry expects: an official Docker
-// Hub image lives under library/.
+// An official Docker Hub image lives under library/.
 func (r Ref) RemoteRepo() string {
 	if r.Registry == DockerHub && !strings.Contains(r.Repo, "/") {
 		return "library/" + r.Repo
@@ -196,8 +160,7 @@ func (r Ref) RemoteRepo() string {
 	return r.Repo
 }
 
-// Name is the reference without the registry, which is how docker lists an
-// official image: node:22-alpine rather than docker.io/library/node.
+// Docker lists an official image without the registry: node:22-alpine.
 func (r Ref) Name() string {
 	repo := r.Repo
 	if r.Registry == DockerHub {
@@ -211,7 +174,6 @@ func (r Ref) Name() string {
 	return repo + ":" + r.Tag
 }
 
-// shortDigest trims a digest to what a person reads.
 func shortDigest(d string) string {
 	if len(d) > 19 {
 		return d[:19]
@@ -221,8 +183,6 @@ func shortDigest(d string) string {
 
 var versionPrefix = regexp.MustCompile(`^v?(\d+(?:\.\d+)*)`)
 
-// Cycle is the upstream release line a tag names, as in 22 from 22-alpine or
-// 3.12 from 3.12-slim. It is "" when the tag names no version.
 func (r Ref) Cycle() string {
 	base, _, _ := strings.Cut(r.Tag, "-")
 	m := versionPrefix.FindStringSubmatch(base)
@@ -232,9 +192,7 @@ func (r Ref) Cycle() string {
 	return m[1]
 }
 
-// products maps a repository to the endoflife.date product that publishes
-// its release lines. A repository that is not here gets no end of life
-// claim, rather than a guess.
+// A repository missing here gets no end of life claim, rather than a guess.
 var products = map[string]string{
 	"library/node":          "nodejs",
 	"library/python":        "python",
@@ -258,13 +216,11 @@ var products = map[string]string{
 	"library/traefik":       "traefik",
 }
 
-// Product names the endoflife.date product a reference belongs to, or "".
 func (r Ref) Product() string {
 	repo := strings.TrimPrefix(r.CanonicalRepo(), r.Registry+"/")
 	return products[repo]
 }
 
-// Tag is one tag a registry publishes for a repository.
 type Tag struct {
 	Name   string    `json:"name"`
 	Pushed time.Time `json:"pushed,omitzero"`

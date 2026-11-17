@@ -178,8 +178,8 @@ func (Composer) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return withNotes(ctx, repo, rels), nil
 }
 
-// packagistVersion is one release in Packagist's p2 document. Fields that
-// repeat the previous version are left out, so the caller carries them forward.
+// Packagist leaves out fields that repeat the previous version, so the caller
+// carries them forward.
 type packagistVersion struct {
 	Version     string  `json:"version"`
 	Time        *string `json:"time"`
@@ -240,8 +240,7 @@ func packagistRepo(v packagistVersion) string {
 // they are.
 var packagistHeader = http.Header{"User-Agent": {"kho (https://github.com/vuon9/kho)"}}
 
-// Search finds Composer packages through Packagist's search API. It does not
-// run `composer search`, which would load the current project's plugins.
+// Not `composer search`, which would load the current project's plugins.
 func (Composer) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	limit = searchLimit(limit)
 	u := "https://packagist.org/search.json?q=" + url.QueryEscape(query) + "&per_page=" + strconv.Itoa(limit)
@@ -254,7 +253,6 @@ func (Composer) Search(ctx context.Context, query string, limit int) ([]Package,
 	return parsePackagistSearch(out.Results), nil
 }
 
-// packagistSearchResult is one row of Packagist's search.json response.
 type packagistSearchResult struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -271,8 +269,6 @@ func parsePackagistSearch(results []packagistSearchResult) []Package {
 	return pkgs
 }
 
-// Find looks one package up on Packagist, which works for a package the
-// machine does not have.
 func (Composer) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "composer" {
 		return Package{}, fmt.Errorf("Composer doesn't serve the %s source", source)
@@ -292,7 +288,6 @@ func (Composer) Find(ctx context.Context, source, name string) (Package, error) 
 	return packagistCandidate(name, meta)
 }
 
-// packagistCandidate builds a candidate from one package's p2 document.
 func packagistCandidate(name string, meta packagistMeta) (Package, error) {
 	versions := meta.Packages[name]
 	rels, repo := packagistReleases(name, versions)

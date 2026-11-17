@@ -20,9 +20,9 @@ const (
 	rowMachineImages
 )
 
-// railRow is one selectable line of the rail. key names it in filters and
-// statuses, so each row keeps its own even when rows above it come and go.
-// A part of the project stands for one lockfile, or every lockfile in dir.
+// key names it in filters and statuses, so each row keeps its own even when
+// rows above it come and go. A part of the project stands for one lockfile, or
+// every lockfile in dir.
 type railRow struct {
 	kind     int
 	name     string
@@ -58,10 +58,8 @@ func (m model) curRow() railRow {
 	return r
 }
 
-// inProject says the selected rail row is the project or one of its parts.
 func (m model) inProject() bool { return m.curRow().kind >= rowProject }
 
-// rowPkgs is every package a rail row stands for, before any filter.
 func (m model) rowPkgs(r railRow) []provider.Package {
 	switch r.kind {
 	case rowProvider:
@@ -88,9 +86,6 @@ func (m *model) setRail(i int) {
 	m.railKey = rows[i].key
 }
 
-// keepRail puts the selection back on its row after rows came or went: a
-// rescan, the project opening or closing, a provider appearing. A part of
-// the project that went away falls back to the project's header.
 func (m *model) keepRail() {
 	rows := m.railRows()
 	if r, ok := at(rows, m.rail); ok && r.key == m.railKey {
@@ -116,10 +111,8 @@ func (m *model) keepRail() {
 	m.railKey = rows[m.rail].key
 }
 
-// railAll is every line of the rail, which row each selects (-1 for none),
-// and where the project block starts (-1 for none): a rule, then the
-// project's header and parts. The header is only a row once the scan found
-// something to select.
+// rowOf and block are -1 for none. The header is only a row once the scan
+// found something to select.
 func (m model) railAll() (lines []string, rowOf []int, block int) {
 	inner := m.layout().railW - 2
 	rule := projRule(inner)
@@ -138,15 +131,12 @@ func (m model) railAll() (lines []string, rowOf []int, block int) {
 	return lines, rowOf, block
 }
 
-// pinned says the project block stays at the bottom while the Machine rows
-// above it scroll, which it does when the rail overflows and the block
-// leaves at least two lines for them.
+// The block is pinned only when the rail overflows and it leaves the Machine
+// rows at least two lines.
 func pinned(total, block, h int) bool {
 	return block >= 0 && total > h && total-block <= h-2
 }
 
-// railTopFor is where the rail's scrolled part starts, h lines tall, so the
-// selected row stays in view.
 func (m model) railTopFor(h int) int {
 	lines, _, block := m.railAll()
 	sel := m.railLineOf(m.rail)
@@ -163,17 +153,11 @@ func (m model) railTopFor(h int) int {
 	return max(min(scroll(m.railTop, sel, h), len(lines)-h), 0)
 }
 
-// projRule is the line above the project section, labeled like a panel's
-// top border.
 func projRule(inner int) string {
 	label := "── Project "
 	return fg(th.subtle).Render("── ") + faint().Bold(true).Render("Project") + " " + fg(th.subtle).Render(strings.Repeat("─", max(inner-len([]rune(label)), 0)))
 }
 
-// railLines is what the rail panel shows, h lines tall. When it all fits,
-// the project block sits at the bottom. When it doesn't, the Machine rows
-// scroll above the block, or with a block too tall for that, everything
-// scrolls, keeping the selected row in view.
 func (m model) railLines(h int) (lines []string, rowOf []int) {
 	lines, rowOf, block := m.railAll()
 	if pinned(len(lines), block, h) {
@@ -198,7 +182,6 @@ func (m model) railLines(h int) (lines []string, rowOf []int) {
 	return lines[top:end], rowOf[top:end]
 }
 
-// railLineOf is the line of the undocked rail that holds row i.
 func (m model) railLineOf(i int) int {
 	_, rowOf, _ := m.railAll()
 	for n, r := range rowOf {
@@ -247,7 +230,6 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 	return line
 }
 
-// badges is a row's count, then its filter mark, vulnerable and outdated.
 func (m model) badges(r railRow) string {
 	if r.kind == rowImages || r.kind == rowMachineImages {
 		list := m.images
@@ -291,7 +273,6 @@ func (m model) badges(r railRow) string {
 	return fmt.Sprintf("%4d", t.total) + " " + strings.Join(badges, " ")
 }
 
-// projHeader is the project section's selectable header, ▸ closed or ▾ open.
 func (m model) projHeader(selectedRow bool, inner int) string {
 	arrow := "▸"
 	if m.projOpen {
@@ -299,7 +280,6 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	}
 	nameW := max(inner-17, 6)
 	name := m.projName()
-	// The count only shows when the name still fits beside it.
 	if count := fmt.Sprintf(" · %d projects", len(m.proj.Projects)); len(m.proj.Projects) > 1 && nameW-len(count) >= 4 {
 		name = ansi.Truncate(name, nameW-len(count), "…") + count
 	}
@@ -314,8 +294,6 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	return line
 }
 
-// projStatusLine stands in for the header while there is nothing to select:
-// the scan is running, it failed, or the folder has no lockfiles.
 func (m model) projStatusLine() string {
 	name := icon("project") + " " + m.projName()
 	switch {
@@ -327,7 +305,6 @@ func (m model) projStatusLine() string {
 	return faint().Render("  " + name + " · no lockfiles")
 }
 
-// railRowAt is the row a click on line y of the rail's body selects, or -1.
 func (m model) railRowAt(y int) int {
 	_, rowOf := m.railLines(m.layout().bodyH - 2)
 	if r, ok := at(rowOf, y); ok {
@@ -336,15 +313,13 @@ func (m model) railRowAt(y int) int {
 	return -1
 }
 
-// railBody is the rail panel's lines, h tall.
 func (m model) railBody(h int) []string {
 	lines, _ := m.railLines(h)
 	return lines
 }
 
-// hidden is a row the d or p toggle leaves out. A vulnerable dependency
-// always shows, so hiding dependencies never hides risk. Hiding dev packages
-// is asking to leave their risk out, so it does.
+// A vulnerable dependency always shows, so hiding dependencies never hides
+// risk. Hiding dev packages is asking to leave their risk out, so it does.
 func (m model) hidden(p provider.Package) bool {
 	switch {
 	case p.Dev && m.prodOnly:

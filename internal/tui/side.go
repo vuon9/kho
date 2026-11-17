@@ -13,7 +13,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// line is one row of sidebar text. A row with a url opens it when clicked.
 // A labeled row wraps its value under the value, not under the label, and a
 // list row is never wrapped so each entry stays one row.
 type line struct {
@@ -31,7 +30,6 @@ func row(text string) line {
 	return line{text: text, nowrap: true}
 }
 
-// wrapLines folds every line to width, so nothing in the sidebar is cut off.
 func wrapLines(lines []line, width int) []line {
 	var out []line
 	for _, l := range lines {
@@ -62,10 +60,9 @@ func wrapLines(lines []line, width int) []line {
 
 var escapes = regexp.MustCompile("\x1b\\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\\\)|\x1b\\[([0-9;:]*)m")
 
-// wrapStyled wraps styled text and makes each line stand alone. A link or
-// style still open where a line breaks is closed there and opened again on
-// the next line; left open, it runs on into the panels beside the sidebar,
-// which terminals draw as a dotted line across the screen.
+// A link or style still open where a line breaks is closed there and opened
+// again on the next line; left open, it runs on into the panels beside the
+// sidebar, which terminals draw as a dotted line across the screen.
 func wrapStyled(text string, width int) []string {
 	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
 	link, style := "", ""
@@ -112,8 +109,6 @@ func tabLabel(name string, active bool) string {
 	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(name)
 }
 
-// tabLabels names the tabs in full, or shortened when the full names don't
-// fit across the sidebar.
 func (m model) tabLabels() []string {
 	build := func(names map[int]string) []string {
 		var labels []string
@@ -133,8 +128,6 @@ func (m model) tabBar() string {
 	return strings.Join(m.tabLabels(), " ")
 }
 
-// hasBottom says whether the active tab splits the sidebar. Long reads, like
-// a README, use the whole height instead.
 func (m model) hasBottom() bool {
 	p, ok := m.current()
 	if !ok {
@@ -157,8 +150,7 @@ func (m model) hasBottom() bool {
 	return true
 }
 
-// sideListLen is the length of the active tab's list, or -1 for tabs that
-// show text rather than a list.
+// -1 for tabs that show text rather than a list.
 func (m model) sideListLen() int {
 	if isImageRow(m.curRow().kind) {
 		return m.imageListLen()
@@ -181,8 +173,6 @@ func (m model) sideListLen() int {
 	return -1
 }
 
-// topView and bottomView are the sidebar halves as drawn: wrapped to width,
-// except list rows.
 func (m model) topView(inner int) []line {
 	if isImageRow(m.curRow().kind) {
 		return wrapLines(m.imageTabLines(inner), inner)
@@ -444,8 +434,6 @@ func (m model) securitySummary(p provider.Package) string {
 	return strings.Join(parts, faint().Render(" · "))
 }
 
-// fixFor is the lowest version that fixes every advisory, or "" when one of
-// them has no fix yet.
 func fixFor(advs []vuln.Advisory, version string) string {
 	best := ""
 	for _, a := range advs {
@@ -460,7 +448,6 @@ func fixFor(advs []vuln.Advisory, version string) string {
 	return best
 }
 
-// depList is the dependencies the Info tab lists for ↑↓ to pick from.
 func (m model) depList() []provider.Dep {
 	p, ok := m.current()
 	if !ok || p.Source == "skills" || m.isCandidate(p) || m.activeTab() != tabInfo {
@@ -472,8 +459,6 @@ func (m model) depList() []provider.Dep {
 	return nil
 }
 
-// depPopup shows one of a package's dependencies and its advisories over the
-// screen.
 type depPopup struct {
 	pkg provider.Package
 	dep provider.Dep
@@ -487,8 +472,6 @@ func (m *model) openDep(i int) {
 	}
 }
 
-// depAdvisories is what the security cache holds for one of p's
-// dependencies: its advisories, and whether osv.dev was asked about it.
 func (m model) depAdvisories(p provider.Package, d provider.Dep) ([]vuln.Advisory, bool) {
 	q, ok := provider.DepQuery(p, d)
 	if !ok {
@@ -511,8 +494,7 @@ func (m model) depPopTitle() string {
 	return title
 }
 
-// depPopView is the dependency popup's text, wrapped to fit it. It calls a
-// dependency clean only once osv.dev has answered for that very version.
+// A dependency is clean only once osv.dev has answered for that very version.
 func (m model) depPopView() []line {
 	inner := popupText(m.depRect()).w
 	p, d := m.depPop.pkg, m.depPop.dep
@@ -542,8 +524,6 @@ func (m model) depPopView() []line {
 	return wrapLines(lines, inner)
 }
 
-// unchecked says why osv.dev hasn't answered for something kho asked it
-// about.
 func (m model) unchecked(name string) []line {
 	again := faint().Render(" R checks again.")
 	switch {
@@ -594,6 +574,9 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	known := m.db.Known(eco, name)
 	history := eco != "" && m.db.HistoryFresh(eco, name, now())
+	if p.Source == "brew" {
+		known, history = m.brewKnown(p)
+	}
 	verW := max(min(inner-36, 22), 10)
 	lines := plain("  " + faint().Bold(true).Render(pad("VERSION", verW)+" "+pad("DATE", 10)+" NOTES  SECURITY"))
 	for _, r := range v.val {
@@ -618,7 +601,7 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		switch {
 		case affected > 0:
 			tags = append(tags, red().Render(fmt.Sprintf("⚠ %d", affected)))
-		case history && p.Version != "" && vuln.Compare(r.Version, p.Version) > 0:
+		case history && p.Version != "" && vuln.Compare(vuln.Clean(r.Version), provider.BrewVersion(vuln.Clean(p.Version))) > 0:
 			tags = append(tags, green().Render("✓ safe"))
 		}
 		if p.Version != "" && provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
@@ -632,6 +615,22 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+// Homebrew reports only what affects one version. A newer release is called
+// safe only when every finding carries the span it ends at.
+func (m model) brewKnown(p provider.Package) ([]vuln.Advisory, bool) {
+	known := m.vulns[pkgKey(p)]
+	if m.isCandidate(p) {
+		known, _ = m.brewCandidate(p)
+	}
+	spanned := len(known) > 0
+	for _, a := range known {
+		if len(a.Ranges) == 0 {
+			spanned = false
+		}
+	}
+	return known, spanned
+}
+
 func (m model) changelogLines(p provider.Package, inner int) []line {
 	r, ok := at(m.currentVersions(), m.sideCursor)
 	if !ok {
@@ -639,7 +638,11 @@ func (m model) changelogLines(p provider.Package, inner int) []line {
 	}
 	var lines []line
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
-	for _, a := range m.db.Known(eco, name) {
+	known := m.db.Known(eco, name)
+	if p.Source == "brew" {
+		known, _ = m.brewKnown(p)
+	}
+	for _, a := range known {
 		if a.Affects(r.Version) {
 			lines = append(lines, line{text: " " + severityPill(a.Severity) + " " + red().Render(a.ID) + " " + faint().Render(a.Summary), url: a.URL()})
 		}
@@ -679,6 +682,13 @@ func (m model) securityEntries() []securityEntry {
 		// tab lists what affects the newest version the registry knows.
 		version := p.Latest
 		var es []securityEntry
+		if p.Source == "brew" {
+			advs, _ := m.brewCandidate(p)
+			for _, a := range advs {
+				es = append(es, securityEntry{adv: a})
+			}
+			return es
+		}
 		for _, a := range m.db.Known(provider.Ecosystem(p), provider.OSVName(p)) {
 			if version == "" || a.Affects(version) {
 				es = append(es, securityEntry{adv: a})
@@ -719,17 +729,19 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+by))
 	}
+	return m.fixTable(es, func(e securityEntry) string {
+		if e.dep != "" {
+			_, version, _ := strings.Cut(e.dep, "@")
+			return version
+		}
+		return p.Version
+	})
+}
+
+func (m model) fixTable(es []securityEntry, versionOf func(securityEntry) string) []line {
 	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
 	for _, e := range es {
-		fix := red().Render("no fix yet")
-		version := p.Version
-		if e.dep != "" {
-			_, version, _ = strings.Cut(e.dep, "@")
-		}
-		if f := e.adv.FixedAfter(version); f != "" {
-			fix = green().Render("≥ " + f)
-		}
-		text := "  " + severityPill(e.adv.Severity) + " " + pad(e.adv.ID, 20) + " " + fix
+		text := "  " + severityPill(e.adv.Severity) + " " + pad(e.adv.ID, 20) + " " + fixLabel(e.adv, versionOf(e))
 		if e.dep != "" {
 			text += faint().Render(" via " + e.dep)
 		}
@@ -738,12 +750,32 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	return lines
 }
 
-// candidateSecurityLines is the Security tab for a package the machine does
-// not have: the advisories that affect the newest version, with the same
-// detail panel an installed package has.
+// "> x" means only the last affected version is known, so anything after it is clear.
+func fixLabel(a vuln.Advisory, version string) string {
+	if f := a.FixedAfter(version); f != "" {
+		return green().Render("≥ " + f)
+	}
+	if c := a.ClearAfter(version); c != "" {
+		return green().Render("> " + c)
+	}
+	return red().Render("no fix yet")
+}
+
 func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	version := p.Latest
+	if p.Source == "brew" {
+		advs, why := m.brewCandidate(p)
+		switch {
+		case why == "checking with Homebrew…":
+			return plain(" " + m.spin() + faint().Render(" "+why))
+		case why != "":
+			return plain("", faint().Render(" 🛡  "+why))
+		case len(advs) == 0:
+			return plain("", green().Render(" ✓ No known advisories for "+printable(version)), faint().Render(" checked by Homebrew"))
+		}
+		return m.fixTable(m.securityEntries(), func(securityEntry) string { return version })
+	}
 	if eco == "" {
 		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
 	}
@@ -762,15 +794,7 @@ func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+label), faint().Render(" checked "+ago(m.db.HistoryAt[hkey])+" on osv.dev"))
 	}
-	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
-	for _, e := range es {
-		fix := red().Render("no fix yet")
-		if f := e.adv.FixedAfter(version); f != "" {
-			fix = green().Render("≥ " + f)
-		}
-		lines = append(lines, row("  "+severityPill(e.adv.Severity)+" "+pad(e.adv.ID, 20)+" "+fix))
-	}
-	return lines
+	return m.fixTable(es, func(securityEntry) string { return version })
 }
 
 func (m model) advisoryLines(p provider.Package, inner int) []line {
@@ -798,9 +822,6 @@ func (m model) advisoryLines(p provider.Package, inner int) []line {
 	return lines
 }
 
-// advisoryDetail is one advisory as it affects version, reached through a
-// dependency when through is set. A latest version gets a word on whether
-// upgrading to it clears the advisory.
 func (m model) advisoryDetail(a vuln.Advisory, through, version, latest string, inner int) []line {
 	lines := plain(" " + severityPill(a.Severity) + " " + bold().Render(ansi.Truncate(a.Summary, inner-10, "…")))
 	lines = append(lines, line{})
@@ -808,6 +829,12 @@ func (m model) advisoryDetail(a vuln.Advisory, through, version, latest string, 
 		lines = append(lines, field("through", through, ""))
 	}
 	fix := red().Render("no fix published yet")
+	if c := a.ClearAfter(version); c != "" && a.FixedAfter(version) == "" {
+		fix = green().Render("after " + c)
+		if latest != "" && !a.Affects(latest) {
+			fix += faint().Render(" · latest " + latest + " is clear")
+		}
+	}
 	if f := a.FixedAfter(version); f != "" {
 		fix = green().Render(f)
 		if latest != "" {
@@ -874,8 +901,6 @@ func (m model) skillMetaLines(p provider.Package) []line {
 	return append(lines, field("files", strings.Join(d.val.Files, "  "), ""))
 }
 
-// skillDocView is the SKILL.md body alone, drawn in the scrollable bottom pane
-// under the fixed Info fields.
 func (m model) skillDocView(p provider.Package, inner int) []line {
 	d := m.docs[cacheKey(p)]
 	switch {
@@ -927,9 +952,7 @@ func linkState(l provider.SkillLink) string {
 	return faint().Render("· none")
 }
 
-// readLinks reads the selected skill's agents into the model: the installed
-// ones, or with A every agent the skills CLI supports. The Links tab draws
-// and acts on these rows, so enter always works on the row on screen.
+// The Links tab draws and acts on these rows, so enter always works on the row on screen.
 func (m *model) readLinks() {
 	p, _ := m.current()
 	if pkgKey(p) == m.linksOf {
@@ -941,8 +964,6 @@ func (m *model) readLinks() {
 	}
 }
 
-// installed keeps the agents that are installed. The Info tab lists only
-// those, whatever A shows on the Links tab.
 func installed(links []provider.SkillLink) []provider.SkillLink {
 	var out []provider.SkillLink
 	for _, l := range links {
@@ -955,12 +976,9 @@ func installed(links []provider.SkillLink) []provider.SkillLink {
 
 func agentName(l provider.SkillLink) string { return cmp.Or(l.Display, l.Agent) }
 
-// linkLines draws the agents in the order they were read: installed harnesses
-// first, and within each group the ones holding the skill in their own folder
-// before the ones that read only ~/.agents/skills. A harness that isn't
-// installed is marked as such, so the reason it is lower is on screen. A link
-// in one of those is what the harness finds once it is installed, and enter
-// still removes it.
+// A harness that isn't installed is marked as such, so the reason it is lower
+// is on screen. A link in one of those is what the harness finds once it is
+// installed, and enter still removes it.
 func linkLines(links []provider.SkillLink) []line {
 	lines := []line{row("  " + faint().Bold(true).Render(pad("AGENT", 16)+" "+pad("STATE", 15)+" PATH"))}
 	for _, l := range links {
@@ -1028,16 +1046,12 @@ func (m model) linkDetail(p provider.Package) []line {
 	return lines
 }
 
-// skillScope says the skills panel is the one showing, installed or searching,
-// so its table can name the source repo instead of repeating "skills".
 func (m model) skillScope() bool {
 	r := m.curRow()
 	return r.kind == rowProvider && r.name == "skills"
 }
 
-// skillFrom is the repo a skill came from. A skill installed from a local
-// folder has a path there instead, which reads as local; the path itself is on
-// Info.
+// A skill installed from a local folder has a path here instead; the path itself is on Info.
 func skillFrom(p provider.Package) string {
 	repo := p.Repo
 	if repo == "" {
@@ -1052,7 +1066,6 @@ func skillFrom(p provider.Package) string {
 	return p.Source
 }
 
-// curIsSkill says the selected package is a skill, installed or candidate.
 func (m model) curIsSkill() bool {
 	p, ok := m.current()
 	return ok && p.Source == "skills"

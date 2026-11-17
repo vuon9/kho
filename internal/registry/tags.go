@@ -15,9 +15,7 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Tags lists what a repository publishes, newest first. Docker Hub answers
-// with dates and digests; every other registry answers with names, which are
-// ordered by version so the newest line comes first.
+// Docker Hub answers with dates and digests; every other registry answers with names only.
 func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 	if r.Registry == "" || r.Repo == "" || r.Repo == image.Scratch {
 		return nil, nil
@@ -27,8 +25,8 @@ func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 		if err == nil && len(tags) > 0 {
 			return tags, nil
 		}
-		// The hub's web API is rate limited on its own, and a registry lists
-		// the same tags without dates. A list of names beats an empty tab.
+		// The hub's web API is rate limited on its own, and a registry lists the same tags
+		// without dates. A list of names beats an empty tab.
 		if alt, altErr := c.registryTags(ctx, r); altErr == nil && len(alt) > 0 {
 			return alt, nil
 		}
@@ -38,10 +36,8 @@ func (c *Client) Tags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 }
 
 func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
-	// A tag names a release line (3.19), and a busy repository's newest tags are
-	// all newer lines, so the newest page says nothing about this one. Ask the
-	// Hub for the line's own tags first, and for a full version (3.19.9) ask
-	// about its line rather than about that one tag, or the list is one row.
+	// A busy repository's newest tags are all newer lines, so ask the Hub for the line's
+	// own tags, and for a full version (3.19.9) ask about its line, or the list is one row.
 	var tags []image.Tag
 	if line := releaseLine(r.Tag); line != "" {
 		if got, err := c.hubTagPage(ctx, r, "&page_size=100&name="+url.QueryEscape(line)); err == nil {
@@ -67,8 +63,7 @@ func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) 
 	return tags, nil
 }
 
-// orderTags puts numbered tags first, newest first, then the named ones. A
-// registry sorts lexically, where trixie outranks 0.11.6.
+// A registry sorts lexically, where trixie outranks 0.11.6.
 func orderTags(names []string) []string {
 	version := func(name string) string {
 		base, _, _ := strings.Cut(name, "-")
@@ -93,8 +88,6 @@ func orderTags(names []string) []string {
 	return out
 }
 
-// onLine says a tag belongs to a release line: 3.19.9 and 3.19-slim do, and
-// 16.13 does not.
 func onLine(name, line string) bool {
 	if name == line {
 		return true
@@ -105,7 +98,6 @@ func onLine(name, line string) bool {
 	return strings.ContainsRune(".-_+", rune(name[len(line)]))
 }
 
-// mergeTags joins two pages, keeping the first of any name it already has.
 func mergeTags(pages ...[]image.Tag) []image.Tag {
 	seen := map[string]bool{}
 	var out []image.Tag
@@ -121,12 +113,9 @@ func mergeTags(pages ...[]image.Tag) []image.Tag {
 	return out
 }
 
-// tagVersion is the leading version of a tag, the same shape the image package
-// reads for a lifecycle line.
+// The same shape the image package reads for a lifecycle line.
 var tagVersion = regexp.MustCompile(`^v?(\d+(?:\.\d+)*)`)
 
-// releaseLine is the line a tag belongs to: 3.19.9 and 3.19-slim both belong
-// to 3.19, and 22-alpine to 22. A tag with no version in it has no line.
 func releaseLine(tag string) string {
 	base, _, _ := strings.Cut(tag, "-")
 	m := tagVersion.FindStringSubmatch(base)
@@ -172,17 +161,14 @@ func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]i
 	return tags, nil
 }
 
-// registryTags asks the OCI distribution API, which returns names only.
 func (c *Client) registryTags(ctx context.Context, r image.Ref) ([]image.Tag, error) {
 	host := r.Registry
 	if host == image.DockerHub {
 		host = dockerHubAPI
 	}
-	// The distribution API lists tags in lexical order, so a plain page holds
-	// the alphabetically first tags, not the newest: for a repository with
-	// thousands of them, 0.11.6 sits past five pages of 0.1.x. The line the tag
-	// belongs to is contiguous in that order, so ask for what follows the line
-	// and keep the line's own tags.
+	// The distribution API lists tags lexically, so a plain page holds the alphabetically
+	// first tags (0.11.6 sits past five pages of 0.1.x). A line is contiguous in that order,
+	// so ask for what follows the line and keep the line's own tags.
 	if line := releaseLine(r.Tag); line != "" {
 		names, err := c.tagPage(ctx, r, host, "&last="+url.QueryEscape(line))
 		if err != nil {
@@ -205,7 +191,6 @@ func (c *Client) registryTags(ctx context.Context, r image.Ref) ([]image.Tag, er
 	return tagList(names), nil
 }
 
-// tagPage reads one page of a registry's tags, from after the given suffix.
 func (c *Client) tagPage(ctx context.Context, r image.Ref, host, extra string) ([]string, error) {
 	raw := fmt.Sprintf("%s/v2/%s/tags/list?n=1000%s", c.base(host), r.RemoteRepo(), extra)
 	body, _, status, err := c.get(ctx, raw, host, r.RemoteRepo())
@@ -224,7 +209,6 @@ func (c *Client) tagPage(ctx context.Context, r image.Ref, host, extra string) (
 	return doc.Tags, nil
 }
 
-// tagList orders the tags newest first and keeps the ones the tab shows.
 func tagList(names []string) []image.Tag {
 	names = orderTags(names)
 	if len(names) > 40 {
@@ -237,7 +221,6 @@ func tagList(names []string) []image.Tag {
 	return tags
 }
 
-// hubBase is where the Docker Hub web API lives, for tests.
 func (c *Client) hubBase() string {
 	if c.HubBase != "" {
 		return c.HubBase
@@ -245,7 +228,6 @@ func (c *Client) hubBase() string {
 	return HubURL
 }
 
-// parseStamp reads the timestamps the Docker Hub API writes.
 func parseStamp(s string) time.Time {
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999Z"} {
 		if t, err := time.Parse(layout, s); err == nil {

@@ -1,6 +1,5 @@
-// Package project finds the lockfiles under a folder and reads them into
-// packages kho can check. It only reads files. It never runs a project's
-// tools, because those run the project's own scripts and plugins.
+// Package project only reads files. It never runs a project's tools, because those
+// run the project's own scripts and plugins.
 package project
 
 import (
@@ -21,7 +20,7 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Tunables, package vars so tests can shrink them.
+// Package vars so tests can shrink them.
 var (
 	MaxDepth     = 4
 	MaxLockfiles = 50
@@ -29,41 +28,27 @@ var (
 )
 
 type Scan struct {
-	// Root is the absolute folder the scan used: the start folder, or the
-	// git root when nothing was found below the start.
-	Root string `json:"root"`
-	// Projects holds one entry per folder with lockfiles or flagged
-	// manifests, sorted by Dir.
+	Root     string    `json:"root"`
 	Projects []Project `json:"projects,omitempty"`
-	// Capped says why the scan stopped early, or is "".
-	Capped string `json:"capped,omitempty"`
-	// Shallow names up to five folders at the depth limit whose subfolders
-	// were not read, relative to Root and slash separated.
-	Shallow []string `json:"shallow,omitempty"`
+	Capped   string    `json:"capped,omitempty"`
+	Shallow  []string  `json:"shallow,omitempty"`
 }
 
 type Project struct {
-	// Dir is relative to Root and slash separated, "" for Root itself.
+	// Relative to Root and slash separated, "" for Root itself.
 	Dir       string     `json:"dir"`
 	Lockfiles []Lockfile `json:"lockfiles"`
 }
 
 type Lockfile struct {
-	// Path is relative to Root and slash separated.
-	Path string `json:"path"`
-	// Manager is npm, composer, go, uv, poetry, pip or cargo. It becomes
-	// each package's Source.
+	// Relative to Root and slash separated.
+	Path     string             `json:"path"`
 	Manager  string             `json:"manager"`
 	Packages []provider.Package `json:"packages,omitempty"`
-	// Missing is set when only a manifest exists, and says what to do.
-	Missing string `json:"missing,omitempty"`
-	// Err is a read or parse failure, shown to the person.
-	Err string `json:"error,omitempty"`
+	Missing  string             `json:"missing,omitempty"`
+	Err      string             `json:"error,omitempty"`
 }
 
-// Find walks down from start for lockfiles. When it finds nothing and start
-// sits below the root of a git repo, it walks the repo from its root. The
-// error is only for a start folder that can't be read.
 func Find(ctx context.Context, start string) (Scan, error) {
 	root, err := filepath.Abs(start)
 	if err != nil {
@@ -91,7 +76,6 @@ func Find(ctx context.Context, start string) (Scan, error) {
 	return s, nil
 }
 
-// gitRoot is the nearest folder at or above dir that holds .git, or "".
 // It never looks above the home folder.
 func gitRoot(dir string) string {
 	home, err := os.UserHomeDir()
@@ -120,21 +104,15 @@ func aboveHome(dir, home string) bool {
 var skipped = map[string]bool{
 	"node_modules": true, "vendor": true, ".venv": true, "venv": true, "target": true,
 	"dist": true, "build": true, "testdata": true, "fixtures": true,
-	// The OS keeps its own data here: caches, app support, containers, never a
-	// project. Reading it costs more than the rest of a home folder together.
-	"Library": true,
 }
 
 type folder struct {
-	rel   string
-	depth int
-	// locked holds the ecosystems with a lockfile in a folder above.
+	rel    string
+	depth  int
 	locked map[string]bool
 }
 
-// walk goes breadth first, so when a cap stops it the folders nearest the
-// root are the ones read. shallow names the first few folders at MaxDepth
-// that had folders below them, so a person knows what went unread.
+// Breadth first, so when a cap stops it the folders nearest the root are the ones read.
 func walk(ctx context.Context, root string) (projects []Project, capped string, shallow []string) {
 	var found []Lockfile
 	read := 0
@@ -159,15 +137,14 @@ scan:
 			case !e.IsDir():
 				files[e.Name()] = true
 			case e.Name() == "requirements":
-				// pip projects keep their requirements files here, as part of
-				// the project above.
+				// pip projects keep their requirements files here, as part of the project above.
 				sub, _ := os.ReadDir(filepath.Join(dir, e.Name()))
 				for _, s := range sub {
 					if !s.IsDir() {
 						files["requirements/"+s.Name()] = true
 					}
 				}
-			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), ".") && clean(e.Name()) == e.Name():
+			case !skipped[e.Name()] && !strings.HasPrefix(e.Name(), ".") && clean(e.Name()) == e.Name() && !osLibrary(dir, e.Name()):
 				dirs = append(dirs, e.Name())
 			}
 		}
@@ -200,9 +177,8 @@ scan:
 	return group(found), capped, shallow
 }
 
-// detect lists the lockfiles in one folder, plus notes for manifests that
-// have none. A manifest is not flagged when a folder above holds that
-// ecosystem's lockfile, as in npm and Cargo workspaces.
+// A manifest is not flagged when a folder above holds that ecosystem's lockfile, as in
+// npm and Cargo workspaces.
 func detect(dir, rel string, files, above map[string]bool) ([]Lockfile, map[string]bool) {
 	var out []Lockfile
 	add := func(file, manager, missing string) {
@@ -308,8 +284,7 @@ func dirOf(p string) string {
 	return ""
 }
 
-// projectOf is the folder a lockfile belongs to. Requirements files kept in
-// a requirements folder belong to the project above it.
+// Requirements files kept in a requirements folder belong to the project above it.
 func projectOf(lf Lockfile) string {
 	d := dirOf(lf.Path)
 	if lf.Manager == "pip" && path.Base(d) == "requirements" {
@@ -351,8 +326,6 @@ func readLockfile(root, rel, manager string) Lockfile {
 	return lf
 }
 
-// tidy sorts packages by name and version, and folds copies of one version
-// into the one that matters most: direct, then prod, then the shortest chain.
 // npm can install the same version at several places in node_modules.
 func tidy(pkgs []provider.Package) []provider.Package {
 	slices.SortFunc(pkgs, func(a, b provider.Package) int {
@@ -388,10 +361,7 @@ func boolRank(b bool) int {
 	return 0
 }
 
-// trace finds how each node is pulled in. via holds the shortest chain of
-// names from a root down to the node's parent. Chains from prod roots win, so
-// a prod package is never shown as coming in through a dev tool. devOnly says
-// a node is reachable from dev roots alone.
+// Chains from prod roots win, so a prod package is never shown as coming in through a dev tool.
 func trace[K comparable](prod, dev []K, children func(K) []K, name func(K) string) (via map[K][]string, devOnly func(K) bool) {
 	fromProd := chains(prod, children, name)
 	fromDev := chains(dev, children, name)
@@ -432,9 +402,8 @@ func chains[K comparable](roots []K, children func(K) []K, name func(K) string) 
 
 const chainHead, chainTail = 5, 4
 
-// chain is a path from a direct package, kept to its first and last few
-// links, so a lockfile where each package requires the next can't make
-// every path a copy of the one before.
+// Kept to its first and last few links, so a lockfile where each package requires the
+// next can't make every path a copy of the one before.
 type chain struct {
 	head, tail []string
 	n          int
@@ -470,11 +439,8 @@ func readJSON(file string, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// FixCommand is what a person runs in the project's folder to move p to
-// version, or "" when kho can't say. For pip it is an edit to make, not a
-// command. Every part comes from a lockfile anyone could have written, so a
-// command is only built from names and versions that a shell reads as
-// plain words, and that the tool can't take for a flag.
+// For pip it is an edit to make, not a command. A lockfile may come from anyone, so only
+// names and versions a shell reads as plain words, and the tool can't take for a flag, go in.
 func FixCommand(p provider.Package, version string) string {
 	plain := func(s string) bool { return shellSafe.MatchString(s) && !strings.HasPrefix(s, "-") }
 	for _, part := range []string{p.Name, p.Version, version, path.Base(p.Lockfile), p.Path, p.Entry} {
@@ -487,7 +453,6 @@ func FixCommand(p provider.Package, version string) string {
 	}
 	switch p.Source {
 	case "npm":
-		// readNpm sets Path to the workspace member and Entry to the alias.
 		name, spec := p.Name, p.Name+"@"+version
 		if p.Entry != "" {
 			name, spec = p.Entry, p.Entry+"@npm:"+p.Name+"@"+version
@@ -542,4 +507,11 @@ func FixCommand(p provider.Package, version string) string {
 		return "cargo update -p " + p.Name + "@" + p.Version + " --precise " + version
 	}
 	return ""
+}
+
+// macOS keeps caches and app support in ~/Library, never a project, and reading it
+// costs more than the rest of home. A Library folder anywhere else is read.
+func osLibrary(dir, name string) bool {
+	home, err := os.UserHomeDir()
+	return err == nil && name == "Library" && dir == filepath.Clean(home)
 }

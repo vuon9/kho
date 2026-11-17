@@ -16,8 +16,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// fakeProvider is the Provider half every fake below shares. Tests fill in the
-// answers they need; nothing here touches a real package manager.
 type fakeProvider struct {
 	name      string
 	installed []provider.Package
@@ -46,7 +44,6 @@ type fakeSearchCall struct {
 	deadline bool
 }
 
-// fakeSearchable answers a keyword search, like brew or npm.
 type fakeSearchable struct {
 	fakeProvider
 	results   []provider.Package
@@ -60,7 +57,6 @@ func (f *fakeSearchable) Search(ctx context.Context, query string, limit int) ([
 	return f.results, f.searchErr
 }
 
-// fakeFindable resolves an exact name only, like pipx, uv or go.
 type fakeFindable struct {
 	fakeProvider
 	found   provider.Package
@@ -73,8 +69,7 @@ func (f *fakeFindable) Find(_ context.Context, source, name string) (provider.Pa
 	return f.found, f.findErr
 }
 
-// fakeFull both searches and finds, which installing a new package needs from
-// the managers that can search.
+// Installing a new package needs both search and find from the managers that can search.
 type fakeFull struct {
 	fakeProvider
 	results   []provider.Package
@@ -96,7 +91,6 @@ func (f *fakeFull) Find(_ context.Context, source, name string) (provider.Packag
 	return f.found, f.findErr
 }
 
-// catalogKho runs kho against made-up registries and records what it ran.
 func catalogKho(t *testing.T, providers []provider.Provider, skipped map[string]string, args ...string) run {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -418,8 +412,6 @@ func TestSearchNarrowsTheSource(t *testing.T) {
 	}
 }
 
-// customLimit is the fake a narrowed search asks for five results; the table
-// row checks that the limit arrived.
 func TestSearchJSON(t *testing.T) {
 	tests := []struct {
 		id        string

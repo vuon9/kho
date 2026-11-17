@@ -66,8 +66,6 @@ func TestProduct(t *testing.T) {
 	}
 }
 
-// A base reads like a reference when both halves are known, and never makes one
-// up when they are not.
 func TestBaseImage(t *testing.T) {
 	tests := []struct {
 		id   string

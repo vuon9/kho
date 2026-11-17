@@ -136,19 +136,24 @@ func TestGoBinSearchByKeyword(t *testing.T) {
 		return []githubRepository{
 			{FullName: "acme/tool", Description: "A tool for widgets", HTMLURL: "https://github.com/acme/tool", Stars: 10},
 			{FullName: "acme/fork", Fork: true},
+			{FullName: "mallory/tool", Description: "A copy whose go.mod names acme's module", Stars: 1},
 		}, nil
 	}
 	goModFile = func(_ context.Context, repo string) (string, error) {
-		if repo != "acme/tool" {
+		if repo != "acme/tool" && repo != "mallory/tool" {
 			return "", nil
 		}
 		return "example.com/tool", nil
 	}
-	gitTreePaths = func(_ context.Context, repo string) ([]string, error) {
-		return []string{"go.mod", "cmd/widget/main.go"}, nil
+	// cmd/unreleased exists only on the default branch, after the tag.
+	gitTreePaths = func(_ context.Context, repo, ref string) ([]string, error) {
+		if ref == "c0ffee" {
+			return []string{"go.mod", "cmd/widget/main.go"}, nil
+		}
+		return []string{"go.mod", "cmd/widget/main.go", "cmd/unreleased/main.go"}, nil
 	}
 	goModuleLatest = func(_ context.Context, module string) (goModuleInfo, error) {
-		return goModuleInfo{Version: "v1.2.3", RepoURL: "https://github.com/acme/tool"}, nil
+		return goModuleInfo{Version: "v1.2.3", RepoURL: "https://github.com/acme/tool", Commit: "c0ffee"}, nil
 	}
 	got, err := GoBin{}.Search(context.Background(), "widget", 5)
 	if err != nil {

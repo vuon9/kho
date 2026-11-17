@@ -27,14 +27,12 @@ import (
 // ~/.agents/skills folder and its lock file.
 type Skills struct{}
 
-// SkillNewest is the version word a skill candidate carries. The skills CLI
-// installs the newest commit, never a chosen version.
+// The skills CLI installs the newest commit, never a chosen version.
 const SkillNewest = "newest"
 
-// skillsSearchURL is the endpoint the skills CLI's own find uses.
+// The skills CLI's own find uses this endpoint.
 const skillsSearchURL = "https://www.skills.sh/api/search"
 
-// skillHit is one skill skills.sh knows about.
 type skillHit struct {
 	ID       string `json:"id"`
 	Source   string `json:"source"`
@@ -43,7 +41,7 @@ type skillHit struct {
 	Installs int    `json:"installs"`
 }
 
-// skillSearch is the one read a skill search makes, so tests can answer it.
+// A var so tests can answer it.
 var skillSearch = searchSkillsSh
 
 func (Skills) Name() string { return "skills" }
@@ -57,8 +55,7 @@ func (Skills) Missing() string {
 
 //go:generate go run ./genagents v1.7.6
 
-// skillAgent is one agent the skills CLI supports. Its global skills folder
-// is the first of Dirs whose parent folder exists, or else the first, and one
+// An agent's global skills folder is the first of Dirs whose parent folder exists, or else the first, and one
 // of Detect existing is the CLI's idea of an install; installed narrows that
 // down. A universal agent reads ~/.agents/skills as well as its own folder.
 // Paths start with ~/, a ${VAR:-default} the agent's own env setting
@@ -85,7 +82,6 @@ func (a skillAgent) dir(home string) string {
 	return d
 }
 
-// resolved is p with its links followed, or p as it is when it doesn't exist.
 func resolved(p string) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
@@ -93,16 +89,13 @@ func resolved(p string) string {
 	return p
 }
 
-// placed is an agent with its folder and install state worked out once per
-// scan, not once per skill.
+// Worked out once per scan, not once per skill.
 type placed struct {
 	skillAgent
 	dir       string
 	installed bool
 }
 
-// place lists the installed agents, or every agent when all is set, with the
-// installed ones first.
 func place(home string, all bool) []placed {
 	var installed, rest []placed
 	for _, a := range skillAgents {
@@ -120,14 +113,10 @@ func place(home string, all bool) []placed {
 	return append(installed, rest...)
 }
 
-// shared says whether the agent sees a skill through ~/.agents/skills, given
-// whether that folder holds it.
 func (a placed) shared(inShared bool) bool {
 	return inShared && (a.Universal || a.dir == "")
 }
 
-// link is how the agent sees the skill called name, where inShared says
-// whether ~/.agents/skills holds it.
 func (a placed) link(home, name string, inShared bool) SkillLink {
 	l := SkillLink{Agent: a.Name, Display: a.Display, Installed: a.installed, Shared: a.shared(inShared)}
 	if a.dir == "" {
@@ -149,8 +138,7 @@ func (a placed) link(home, name string, inShared bool) SkillLink {
 	return l
 }
 
-// installed says whether the agent itself is installed, not just whether one
-// of its folders exists. `skills add` makes a folder for every agent it links
+// `skills add` makes a folder for every agent it links
 // into, so an agent nobody installed still gets one, holding nothing but the
 // chain of folders down to its skills folder. Anything else in a Detect
 // folder, like the config or state the agent wrote, means the agent is
@@ -169,26 +157,29 @@ func (a skillAgent) installed(home string) bool {
 	return false
 }
 
-// linksOnly says whether dir holds only the folders the skills CLI made for a
-// link: one folder, one folder inside it, and so on down to the skills folder.
-// An empty folder is not linksOnly, because the CLI never leaves one behind,
-// so a person or the agent made it. The cap stops a chain of links that would
-// otherwise lead back into itself.
-func linksOnly(dir string) bool {
-	for range 32 {
-		if filepath.Base(dir) == "skills" {
-			return true
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) != 1 {
-			return false
-		}
-		dir = filepath.Join(dir, entries[0].Name())
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+// linksOnly says whether dir holds only the folders the skills CLI made for
+// links: every path down from it is a chain of folders ending in a skills
+// folder. Several chains can share a parent, such as ~/.gemini holding the
+// skills folders of two other agents. An empty folder is not linksOnly,
+// because the CLI never leaves one behind, so a person or the agent made it.
+// The depth cap stops links that lead back into themselves.
+func linksOnly(dir string) bool { return linksOnlyBelow(dir, 8) }
+
+func linksOnlyBelow(dir string, depth int) bool {
+	if filepath.Base(dir) == "skills" {
+		return true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 || depth == 0 {
+		return false
+	}
+	for _, e := range entries {
+		sub := filepath.Join(dir, e.Name())
+		if info, err := os.Stat(sub); err != nil || !info.IsDir() || !linksOnlyBelow(sub, depth-1) {
 			return false
 		}
 	}
-	return false
+	return true
 }
 
 var envDefault = regexp.MustCompile(`^\$\{(\w+):-([^}]*)\}`)
@@ -253,8 +244,6 @@ func (Skills) List(context.Context) ([]Package, error) {
 	return scanSkills(home, lock)
 }
 
-// Search finds skills by keyword through skills.sh, the registry the skills
-// CLI's find calls.
 func (Skills) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	query = strings.TrimSpace(query)
 	if len([]rune(query)) < 2 {
@@ -278,8 +267,6 @@ func (Skills) Search(ctx context.Context, query string, limit int) ([]Package, e
 	return out, nil
 }
 
-// Find resolves a skill the CLI names: owner/repo/skill directly, otherwise an
-// exact skill name through search.
 func (Skills) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "skills" {
 		return Package{}, fmt.Errorf("skills doesn't serve the %s source", source)
@@ -304,7 +291,6 @@ func (Skills) Find(ctx context.Context, source, name string) (Package, error) {
 	return Package{}, fmt.Errorf("no skill named %s", name)
 }
 
-// skillPackage turns one search hit into the candidate kho shows.
 func skillPackage(h skillHit) Package {
 	skill := h.SkillID
 	if skill == "" {
@@ -349,8 +335,7 @@ func parseSkillHits(data []byte) ([]skillHit, error) {
 	return resp.Skills, nil
 }
 
-// isSkill says whether dir holds a skill. As in the skills CLI, it does only
-// with a SKILL.md, so a link whose skill was removed, or a category folder of
+// As in the skills CLI, only a folder with a SKILL.md is a skill, so a link whose skill was removed, or a category folder of
 // bundled skills, is not one.
 func isSkill(dir string) bool {
 	_, err := os.Stat(filepath.Join(dir, "SKILL.md"))
@@ -385,10 +370,7 @@ func scanSkills(home string, lock map[string]lockEntry) ([]Package, error) {
 			}
 		}
 	}
-	// Each agent's folder is read once above. Own comes from the same
-	// SKILL.md test link makes, and Sees decides, as on the Links tab. The
-	// agents that hold the skill in their own folder come first, then those
-	// that read it only through ~/.agents/skills, as the Links tab lists them.
+	// Own, Sees and the order match the Links tab.
 	seenBy := func(name string) []string {
 		type seen struct {
 			agent string
@@ -457,9 +439,8 @@ func shortRef(ref string) string {
 	return ref
 }
 
-// Latest compares each skill folder's recorded tree hash with the folder's
-// hash on the repo's default branch. For a pinned skill that means a newer
-// version exists upstream, not that `skills update` will move it.
+// For a pinned skill a changed tree hash means a newer version exists
+// upstream, not that `skills update` will move it.
 func (Skills) Latest(ctx context.Context, pkgs []Package) ([]Package, error) {
 	lock, err := readSkillLock(homeDir())
 	if err != nil {
@@ -521,8 +502,7 @@ func skillFolder(e lockEntry) string {
 
 func (Skills) Deps(context.Context, Package) ([]Dep, error) { return nil, nil }
 
-// Versions lists the commits that touched the skill's folder, since skills
-// have no published versions of their own.
+// Skills have no published versions of their own, so commits stand in.
 func (Skills) Versions(ctx context.Context, p Package) ([]Release, error) {
 	lock, err := readSkillLock(homeDir())
 	if err != nil {
@@ -552,8 +532,6 @@ func (Skills) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return rels, nil
 }
 
-// SkillDoc is what a skill folder holds: SKILL.md's front matter and body,
-// a README if there is one, and the folder's files.
 type SkillDoc struct {
 	Meta   [][2]string
 	Body   string
@@ -561,16 +539,16 @@ type SkillDoc struct {
 	Files  []string
 }
 
-// The reads a candidate skill makes: its repo tree and one file. Tests feed
-// both.
+// Tests feed both.
 var (
-	skillRepoTree = fetchGitTreePaths
+	skillRepoTree = func(ctx context.Context, repo string) ([]string, error) {
+		return fetchGitTreePaths(ctx, repo, "HEAD")
+	}
 	skillRepoFile = fetchRepoFile
 )
 
-// ReadRemoteSkill reads a candidate skill's SKILL.md from its GitHub repo. It
-// finds the file whose folder is the skill's slug, so a repo with several
-// skills loads the one the row names.
+// The file's folder must be the skill's slug, so a repo with several skills
+// loads the one the row names.
 func ReadRemoteSkill(ctx context.Context, p Package) (SkillDoc, error) {
 	if p.Path != "" {
 		return ReadSkill(p)
@@ -595,8 +573,6 @@ func ReadRemoteSkill(ctx context.Context, p Package) (SkillDoc, error) {
 	return doc, nil
 }
 
-// skillDocPath picks the SKILL.md whose folder name is the skill slug, or the
-// only SKILL.md in the repo when there is one.
 func skillDocPath(paths []string, slug string) string {
 	var root, match, only string
 	count := 0
@@ -617,10 +593,10 @@ func skillDocPath(paths []string, slug string) string {
 		only = p
 	}
 	switch {
-	case root != "":
-		return root
 	case match != "":
 		return match
+	case root != "":
+		return root
 	case count == 1:
 		return only
 	}
@@ -651,8 +627,6 @@ func ReadSkill(p Package) (SkillDoc, error) {
 	return doc, nil
 }
 
-// frontMatter splits "---\nkey: value\n---\nbody". Values that span lines
-// keep only their first line.
 func frontMatter(s string) ([][2]string, string) {
 	rest, ok := strings.CutPrefix(s, "---\n")
 	if !ok {
@@ -672,7 +646,6 @@ func frontMatter(s string) ([][2]string, string) {
 	return meta, strings.TrimLeft(strings.TrimPrefix(body, "\n"), "-\n")
 }
 
-// LinkKind is what an agent's own skills folder holds for a skill.
 type LinkKind string
 
 const (
@@ -683,8 +656,6 @@ const (
 	LinkNoFolder LinkKind = "no folder"
 )
 
-// SkillLink is how one agent sees a skill: through what its own skills
-// folder holds, through the shared ~/.agents/skills folder, or not at all.
 type SkillLink struct {
 	Agent, Display string
 	Path           string
@@ -693,21 +664,15 @@ type SkillLink struct {
 	// Shared is true when the agent reads ~/.agents/skills and the skill is
 	// there, so it sees the skill without a link of its own.
 	Shared bool
-	// Own is true when Path holds the skill, SKILL.md and all. A broken link
-	// is still a link to remove, but not a skill the agent loads.
+	// A broken link is still a link to remove, but not a skill the agent loads.
 	Own       bool
 	Installed bool
 }
 
-// Sees says whether the agent loads the skill, from its own folder or from
-// ~/.agents/skills.
 func (l SkillLink) Sees() bool {
 	return l.Shared || l.Own
 }
 
-// rank orders the agents a skill is listed under: one that holds the skill in
-// its own folder first, then one that reads it only through ~/.agents/skills,
-// then one that doesn't hold it, with installed agents before the rest.
 func rank(l SkillLink) int {
 	switch {
 	case l.Installed && l.Own:
@@ -720,14 +685,11 @@ func rank(l SkillLink) int {
 	return 3
 }
 
-// CanLink says whether a link of the agent's own would add the skill: its
-// folder has nothing by that name, and it doesn't see the skill already, so
-// the link can't load it twice.
+// An agent that already sees the skill would load it twice.
 func (l SkillLink) CanLink() bool {
 	return l.Kind == LinkMissing && !l.Shared
 }
 
-// RealPath follows any symlinks to the folder the skill's files live in.
 func RealPath(p Package) string {
 	if real, err := filepath.EvalSymlinks(p.Path); err == nil {
 		return real
@@ -735,10 +697,6 @@ func RealPath(p Package) string {
 	return p.Path
 }
 
-// SkillLinks says how each installed agent sees the skill, or every agent
-// the skills CLI supports when all is set, in the order rank gives: the ones
-// with the skill in their own folder, then the ones reading ~/.agents/skills,
-// then the rest.
 func SkillLinks(p Package, all bool) []SkillLink {
 	return skillLinks(homeDir(), p, all)
 }
@@ -753,7 +711,7 @@ func skillLinks(home string, p Package, all bool) []SkillLink {
 	return links
 }
 
-// LinkTarget is what a new link to the skill points at. A skill in
+// A skill in
 // ~/.agents/skills is linked at its entry there, as the CLI's links are, so
 // removing it there removes it for every agent. Any other skill sits in an
 // agent's own folder, maybe as that agent's link, so it is linked at its real
@@ -769,8 +727,7 @@ func linkTarget(home string, p Package) string {
 	return RealPath(p)
 }
 
-// LinkSkill gives an agent its own symlink to LinkTarget, relative like the
-// ones the skills CLI makes.
+// Relative, like the links the skills CLI makes.
 func LinkSkill(l SkillLink, p Package) error {
 	return linkSkill(homeDir(), l, p)
 }
@@ -813,7 +770,7 @@ func linkSkill(home string, l SkillLink, p Package) error {
 	return os.Symlink(rel, l.Path)
 }
 
-// UnlinkSkill removes an agent's symlink. It never deletes a copied folder.
+// It never deletes a copied folder.
 // It looks at the path again rather than trust l.Kind, which kho may have
 // read minutes ago.
 func UnlinkSkill(l SkillLink) error {

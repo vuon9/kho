@@ -72,8 +72,6 @@ func (m model) View() tea.View {
 	return v
 }
 
-// installLines fills the install popup: the command, as much of its output
-// as fits, and how it is going.
 func (m model) installLines(rows, width int) []string {
 	in := m.inst
 	end := in.end
@@ -112,7 +110,6 @@ func (m model) installLines(rows, width int) []string {
 	return append(lines, statusRows...)
 }
 
-// actionable is a package an upgrade would move: outdated and not pinned.
 func actionable(p provider.Package) bool {
 	return p.Outdated && !p.Pinned
 }
@@ -153,13 +150,11 @@ func pillOn(text string, bg, fgc color.Color) string {
 	return lipgloss.NewStyle().Background(bg).Foreground(fgc).Bold(true).Padding(0, 1).Render(text)
 }
 
-// titleBar names the app and its version across the top.
 func (m model) titleBar() string {
 	left := " " + logo() + " " + pillOn(m.version, th.subtle, th.selFg) + faint().Render("  one place for every package manager")
 	return ansi.Truncate(left, m.width, "…") + strings.Repeat(" ", max(m.width-lipgloss.Width(left), 0))
 }
 
-// statusBar sits under the panels: the tallies, and what kho is busy with.
 func (m model) statusBar() string {
 	if m.inResults() {
 		return m.searchStatusBar()
@@ -187,7 +182,6 @@ func (m model) statusBar() string {
 	return left + strings.Repeat(" ", max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)) + right
 }
 
-// activity says what kho is busy with, or when security data was last checked.
 func (m model) activity() string {
 	var busy []string
 	for _, p := range m.providers {
@@ -240,9 +234,8 @@ func keys(pairs ...string) string {
 	return strings.Join(out, faint().Render("  "))
 }
 
-// rowKeys lists what a person can do with the selected row, most useful first.
-// The footer shows what fits of it, so a row offers the same actions whether
-// the cursor is on it or one of the sidebar's tabs is open.
+// The footer shows what fits, so a row offers the same actions whether the
+// cursor is on it or one of the sidebar's tabs is open.
 func (m model) rowKeys() []string {
 	var pairs []string
 	if m.focus == focusSide {
@@ -279,8 +272,6 @@ func (m model) rowKeys() []string {
 	return append(pairs, "?", "help")
 }
 
-// enterLabel is what enter does where the cursor is: the panel decides, and the
-// footer says so instead of promising one thing for both.
 func (m model) enterLabel() string {
 	p, _ := m.current()
 	switch {
@@ -298,8 +289,7 @@ func (m model) enterLabel() string {
 	return "read"
 }
 
-// fitKeys renders the pairs that fit in width and always the last one, so the
-// help key is there on a narrow screen even when the row's actions are many.
+// Always keeps the last pair, so the help key is there on a narrow screen.
 func fitKeys(width int, pairs []string) string {
 	if len(pairs) < 2 {
 		return ""
@@ -416,6 +406,15 @@ func (m model) tableTitle() string {
 	if !m.showDeps {
 		title += " · deps hidden"
 	}
+	if m.filter() != "" {
+		total := 0
+		for _, p := range m.rowPkgs(r) {
+			if !m.hidden(p) && m.matchStatus(p) {
+				total++
+			}
+		}
+		return fmt.Sprintf("%s · %d of %d", title, len(m.rows()), total)
+	}
 	return fmt.Sprintf("%s · %d", title, len(m.rows()))
 }
 
@@ -423,8 +422,6 @@ type column struct {
 	id, width int
 }
 
-// tableColumns fits the columns to the table. A narrow table drops SOURCE
-// and narrows the version columns before it squeezes names.
 func (m model) tableColumns() []column {
 	inner := m.layout().tableW - 4
 	cols := []column{{colName, 0}, {colSource, 8}, {colVersion, 13}, {colLatest, 13}, {colStatus, 11}}
@@ -525,11 +522,9 @@ func (m model) tableLines() []string {
 		}
 		lines = append(lines, line)
 	}
-	if len(rows) == 0 && len(m.busy) == 0 {
+	if len(rows) == 0 && !m.listing() {
 		switch {
 		case m.filter() != "" && (m.curRow().kind == rowAll || m.curRow().kind == rowProvider):
-			// The installed filter found nothing, so the bridge to the registry
-			// search takes the middle of the table.
 			lines = append(lines, m.searchBridge(inner)...)
 		case m.status() != statusAll && m.filter() == "":
 			lines = append(lines, "", faint().Render("  ✨ all clear here"))
@@ -544,9 +539,17 @@ func (m model) tableLines() []string {
 	return append(m.fitBody(lines), m.barRule(inner), bar)
 }
 
-// fitBody keeps the table body at the rows the table has, so the rule and the
-// bottom bar always fit: a long empty state or a pile of error lines must never
-// clip the input.
+// A security check running in the background changes no row, so it never hides an empty state.
+func (m model) listing() bool {
+	for _, state := range m.busy {
+		if state == "listing" {
+			return true
+		}
+	}
+	return false
+}
+
+// A long empty state or a pile of error lines must never clip the input.
 func (m model) fitBody(lines []string) []string {
 	limit := m.layout().rows + 1
 	if len(lines) > limit {
@@ -558,8 +561,6 @@ func (m model) fitBody(lines []string) []string {
 	return lines
 }
 
-// barRule is the line above the bottom bar. A search bar takes the search
-// tone, so it reads as a different input from the installed filter.
 func (m model) barRule(inner int) string {
 	e := fg(th.subtle)
 	if m.search != nil {
@@ -568,15 +569,10 @@ func (m model) barRule(inner int) string {
 	return e.Render(strings.Repeat("─", inner))
 }
 
-// centered puts a styled line in the middle of width, measuring the styles so
-// the padding is right whatever the theme draws.
 func centered(text string, width int) string {
 	return strings.Repeat(" ", max((width-lipgloss.Width(text))/2, 0)) + text
 }
 
-// searchBridge fills the empty table body when the installed filter matches
-// nothing: the way to search the registries sits in the middle where the
-// missing rows would be, and n is lit the way the footer lights its keys.
 func (m model) searchBridge(inner int) []string {
 	hint := []string{
 		faint().Render(fmt.Sprintf("no installed match for %q", m.filter())),
@@ -590,8 +586,6 @@ func (m model) searchBridge(inner int) []string {
 	return lines
 }
 
-// nameTag follows a project package's name: dev, and the direct package
-// that pulls it in.
 func nameTag(p provider.Package) string {
 	var tag string
 	if p.Dev {
@@ -603,7 +597,6 @@ func nameTag(p provider.Package) string {
 	return tag
 }
 
-// styled renders each line in style, one space in from the edge.
 func styled(style lipgloss.Style, lines []string) []string {
 	out := make([]string, len(lines))
 	for i, l := range lines {
@@ -638,7 +631,6 @@ func (m model) statusCell(p provider.Package) string {
 	return ""
 }
 
-// overlay draws a box over the screen at x, y.
 func overlay(screen, boxed string, x, y, w int) string {
 	lines := strings.Split(screen, "\n")
 	for i, pl := range strings.Split(boxed, "\n") {
@@ -663,8 +655,7 @@ func wrap(text string, w int) []string {
 	return strings.Split(ansi.Wrap(text, max(w, 10), ""), "\n")
 }
 
-// expandTabs turns each tab into spaces up to the next multiple of 8
-// columns, as a terminal lines them up.
+// Tab stops every 8 columns, as a terminal lines them up.
 func expandTabs(s string) string {
 	if !strings.Contains(s, "\t") {
 		return s
@@ -702,32 +693,25 @@ func boxTitle(title string, focused bool) string {
 	return bold().Foreground(th.muted).Render(title)
 }
 
-// popupFrame is how many rows a popup's frame takes: the top border, the
-// title bar and the bottom border.
+// The top border, the title bar and the bottom border.
 const popupFrame = 3
 
-// popupText is where popupBox puts lines in a popup at r: inside its
-// one-column border, under the top border and the title bar.
+// Inside the one-column border, under the top border and the title bar.
 func popupText(r rect) rect {
 	return rect{r.x + 1, r.y + 2, r.w - 2, r.h - popupFrame}
 }
 
-// popupBox draws a dialog so it can't be taken for a panel: a heavy border and
-// a filled title bar.
-// popupBox draws a dialog and wraps what is in it, so a sentence a person has
-// to read is never cut by the border. Its rect must already be tall enough for
-// the wrapped lines.
+// Wraps so a sentence is never cut by the border. r must already be tall
+// enough for the wrapped lines.
 func popupBox(title string, lines []string, r rect) string {
 	return drawPopup(title, wrapPopup(lines, popupText(r).w), r)
 }
 
-// popupRows draws a dialog whose lines are one per row and scroll on their own,
-// so it pads and cuts rather than wrapping: the caller counts rows.
+// Pads and cuts rather than wrapping: the caller counts rows.
 func popupRows(title string, lines []string, r rect) string {
 	return drawPopup(title, lines, r)
 }
 
-// wrapPopup wraps every line to the popup's width.
 func wrapPopup(lines []string, w int) []string {
 	var out []string
 	for _, l := range lines {
@@ -752,8 +736,6 @@ func drawPopup(title string, lines []string, r rect) string {
 	return strings.Join(out, "\n")
 }
 
-// box draws a rounded border with the title set into the top edge. A focused
-// box gets an accent border.
 func box(title string, lines []string, w, h int, focused bool) string {
 	e := edge(focused)
 	inner := w - 2

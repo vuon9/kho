@@ -2,11 +2,7 @@ package image
 
 import "strings"
 
-// ParseCompose reads the images a compose file names, one per service. It
-// understands the part of YAML compose uses here: a services block, one key
-// per service under it, and an image key inside a service. A service that
-// only builds has no image key, so its name never appears: docker decides
-// that name, not the file.
+// A service that only builds has no image key: docker names that image, not the file.
 func ParseCompose(file string, src []byte) []Ref {
 	return parseCompose(file, string(src))
 }
@@ -56,7 +52,6 @@ func parseCompose(file, src string) []Ref {
 	return refs
 }
 
-// stripComment drops a trailing comment, leaving a # inside quotes alone.
 func stripComment(line string) string {
 	var quote rune
 	for i, c := range line {

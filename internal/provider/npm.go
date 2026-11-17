@@ -96,9 +96,8 @@ func (Npm) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return withNotes(ctx, repo, rels), nil
 }
 
-// npmViewDoc unwraps the document `npm view --json` prints. npm 12 wraps it in
-// a one-element array; older releases and the registry's own document are the
-// object itself.
+// npm 12 wraps the `npm view --json` document in a one-element array; older
+// releases and the registry's own document are the object itself.
 func npmViewDoc(data []byte) (json.RawMessage, error) {
 	doc := bytes.TrimSpace(data)
 	if len(doc) == 0 || doc[0] != '[' {
@@ -145,11 +144,9 @@ func parseNpmView(name string, data []byte) ([]Release, string, error) {
 	return rels, repo, nil
 }
 
-// Search finds packages by keyword through the npm CLI, which reads the
-// registry's search endpoint.
 func (Npm) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	limit = searchLimit(limit)
-	out, err := run(ctx, "npm", "search", "--json", "--searchlimit="+itoa(limit), query)
+	out, err := run(ctx, "npm", "search", "--json", "--searchlimit="+itoa(limit), "--", query)
 	if err != nil {
 		return nil, err
 	}
@@ -180,8 +177,6 @@ func parseNpmSearch(data []byte, limit int) ([]Package, error) {
 	return pkgs, nil
 }
 
-// Find looks one package up in the npm registry, which works for a package the
-// machine does not have.
 func (Npm) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "npm" {
 		return Package{}, fmt.Errorf("npm doesn't serve the %s source", source)
@@ -212,8 +207,7 @@ func (Npm) Find(ctx context.Context, source, name string) (Package, error) {
 		Homepage: doc.Homepage, Repo: githubRepo(repositoryURL(doc.Repository)), Origin: "npmjs.com"}, nil
 }
 
-// repositoryURL reads npm's repository field, which is a URL or an object with
-// a url, and drops the git+ prefix.
+// npm's repository field is a URL or an object with a url.
 func repositoryURL(v any) string {
 	switch r := v.(type) {
 	case string:

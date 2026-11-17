@@ -38,7 +38,7 @@ func goBinDir() string {
 	return filepath.Join(home, "go", "bin")
 }
 
-// majorProbe reports whether a module path serves a version. Tests swap it.
+// Tests swap it.
 var majorProbe = func(ctx context.Context, path, version string) bool {
 	url := goProxy + "/" + escapeModule(path) + "/@v/" + escapeModule(version) + ".info"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -53,11 +53,9 @@ var majorProbe = func(ctx context.Context, path, version string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// MajorModule is the module path of a higher major that serves version, when a
-// Go tool outgrows v1. Every major keeps its own path, so the module an
-// installed binary reports never lists the releases above it: a tool installed
-// from v1 looks like it has no newer version while its whole v2 line lives at
-// /v2.
+// Every Go major keeps its own module path, so the module an installed binary
+// reports never lists the releases above it: a tool installed from v1 looks
+// like it has no newer version while its whole v2 line lives at /v2.
 func MajorModule(ctx context.Context, origin, version string) string {
 	if origin == "" || version == "" {
 		return ""
@@ -146,9 +144,8 @@ func (GoBin) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return withNotes(ctx, p.Repo, rels), nil
 }
 
-// Find resolves an exact Go package path through the module proxy. The proxy
-// knows module paths, so a path inside a module can still fail here; the
-// install command is the final check for those.
+// The module proxy knows module paths, so a path inside a module can still
+// fail here; the install command is the final check for those.
 func (GoBin) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "go" {
 		return Package{}, fmt.Errorf("go doesn't serve the %s source", source)
@@ -165,7 +162,6 @@ func (GoBin) Find(ctx context.Context, source, name string) (Package, error) {
 		Repo: githubRepo(repoURL, module)}, nil
 }
 
-// goBinName is the last path segment, or the one before a major version suffix:
 // example.com/tool/v2 installs a binary named tool.
 func goBinName(path string) string {
 	parts := strings.Split(path, "/")

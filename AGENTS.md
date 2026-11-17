@@ -2,7 +2,7 @@
 
 kho lists what a machine's package managers installed, what a project's lockfiles pin, and the container images a project names. It checks them against OSV, skills.sh and endoflife.date. It changes the machine only after a person says yes, and it never changes a project.
 
-This file says how kho is put together and what must stay true. It names directories, not functions: the code is the source of truth for names, and search finds them faster than a list here would stay correct.
+This file says how kho is put together and what must stay true. It names directories, not functions; search the code for names.
 
 ## Build and check
 
@@ -59,12 +59,34 @@ kho gets opened on machines and folders nobody has vetted. Breaking one of these
 - One table per unit, a readable id per row, critical rows first, and assertions on the whole result.
 - For a rule that matters, break it once and watch its row fail.
 - A screen change also gets a look in a real terminal, at full size and at about 110 columns. Tests check widths, not looks.
-- Check a README claim against the code before writing it.
+- Check a README or SKILL.md claim against the code before writing it.
+
+## Comments
+
+The default is no comment. A comment is a cost every reader pays, so it has to carry something the code can't.
+
+**Keep a comment only when it says one of these:**
+
+- **A fact from outside the code.** How a tool or API really behaves: `npm outdated` exits 1 when it finds something, Homebrew names a tap's formula `tap/name`.
+- **Why the obvious way is wrong.** The choice a reader would "fix" back without it, and what breaks if they do.
+- **A rule the code must keep.** A safety line or an invariant a change could quietly break, such as "the query goes to brew after `--`".
+
+**Delete everything else**, including:
+
+- A doc comment that restates the name or signature ("listing reports whether a manager is listing"). No linter asks for doc comments here, exported names included.
+- Narration of what the next lines do ("loop over the rows", "phase 1"), section dividers, and commented-out code.
+- History: "now", "used to", "added for", "fixed", issue numbers. That goes in the commit.
+- A comment above a test or table row that repeats its id. The row id is the doc.
+
+**How to write one that stays:** one line when it fits, about the why, next to the line it explains. If it takes a paragraph, try a better name or a smaller function first. When a change makes a comment wrong, fix or delete it in the same change. Directives (`//go:generate`, build tags) are code, not comments.
+
+A review that finds a comment restating the code treats it as a defect, like dead code.
 
 ## Writing
 
-- Comments only for a reason the code can't show. No narration, no history; that goes in the commit.
 - Plain, short words in the UI, errors, docs and commits. No em dashes.
+- **Each fact lives in one doc.** `README.md` is for people deciding to use kho: what it does, install, the command table, privacy. `skills/use-kho/SKILL.md` is the agent's prompt and the JSON contract: rules first, then commands and fields. This file is for contributors. Link to the owner instead of repeating it.
+- **SKILL.md is loaded into an agent's context.** Every line must change what the agent does. Rules are imperative and come first; edge cases go next to the command they affect.
 
 ## Commits and releases
 

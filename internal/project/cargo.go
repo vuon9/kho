@@ -13,10 +13,9 @@ import (
 	"github.com/vuon9/kho/internal/provider"
 )
 
-// readCargo reads Cargo.lock. Crates with no source are the workspace's own
-// (members and path dependencies): what they depend on is direct. Cargo.lock
-// doesn't say which of those are dev dependencies, so each own crate's
-// manifest decides, per locked version.
+// Crates with no source are the workspace's own (members and path dependencies).
+// Cargo.lock doesn't say which are dev dependencies, so each own crate's manifest
+// decides, per locked version.
 func readCargo(dir, name string) ([]provider.Package, error) {
 	var lock struct {
 		Package []struct {
@@ -117,8 +116,6 @@ type cargoReq struct {
 	dev     bool
 }
 
-// cargoRequirements reads Cargo.toml and its workspace members' manifests,
-// and lists each crate's requirements by the name of the crate they pick.
 // Only the root lists members, since Cargo has no nested workspaces.
 func cargoRequirements(dir string) (map[string]map[string][]cargoReq, error) {
 	var root cargoManifest
@@ -158,9 +155,8 @@ func cargoRequirements(dir string) (map[string]map[string][]cargoReq, error) {
 	return out, nil
 }
 
-// requirements lists m's requirements by the crate each one picks, which is
-// not the key for a rename (tmp = { package = "tempfile" }), also when the
-// rename comes from the workspace (tmp = { workspace = true }).
+// A requirement is keyed by the crate it picks, not by a rename
+// (tmp = { package = "tempfile" }), also when the rename comes from the workspace.
 func (m cargoManifest) requirements(shared map[string]any) map[string][]cargoReq {
 	out := map[string][]cargoReq{}
 	add := func(table map[string]any, dev bool) {
@@ -189,9 +185,8 @@ func (m cargoManifest) requirements(shared map[string]any) map[string][]cargoReq
 	return out
 }
 
-// cargoDevEdge says an own crate pulls version in only as a dev dependency:
-// a dev requirement can pick it and no other requirement can. Anything less
-// certain counts as prod, so a crate that could ship is never marked dev.
+// Anything less certain than "only a dev requirement can pick it" counts as prod,
+// so a crate that could ship is never marked dev.
 func cargoDevEdge(reqs []cargoReq, version string) bool {
 	dev := false
 	for _, r := range reqs {
@@ -205,9 +200,7 @@ func cargoDevEdge(reqs []cargoReq, version string) bool {
 	return dev
 }
 
-// cargoMatches says whether the Cargo requirement req, such as "0.7",
-// "^1.2", "~1.2.3", "=0.4.1" or ">=1, <3", can pick version. It says yes to
-// what it can't read, and errs wide where it simplifies, as for pre-releases.
+// Says yes to what it can't read, and errs wide where it simplifies, as for pre-releases.
 func cargoMatches(req, version string) bool {
 	if i := strings.IndexAny(version, "-+"); i >= 0 {
 		version = version[:i]
@@ -263,8 +256,6 @@ func cargoMatches(req, version string) bool {
 	return true
 }
 
-// cargoParts reads the numbers at the start of a version: 1.2.3, 0.7 or the
-// 1 of 1.*.
 func cargoParts(s string) []int {
 	var out []int
 	for _, p := range strings.SplitN(s, ".", 3) {

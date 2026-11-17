@@ -23,8 +23,8 @@ var (
 	statusIcons = []string{"All", "⚠", "↑", "⚑", "◌", "✓"}
 )
 
-// filter and status are what the current screen shows. Each source keeps its
-// own, so filtering one never hides packages on another.
+// Each source keeps its own filter, so filtering one never hides packages on
+// another.
 func (m model) filter() string {
 	if m.showHistory {
 		return m.hFilter
@@ -47,7 +47,6 @@ func (m *model) setStatus(s int) {
 	m.cursor, m.offset = 0, 0
 }
 
-// toggleStatus shows only s, or everything again when s is already shown.
 func (m *model) toggleStatus(s int) {
 	if m.status() == s {
 		s = statusAll
@@ -75,8 +74,6 @@ func (m model) isStatus(p provider.Package, s int) bool {
 	return true
 }
 
-// counts tallies the current screen by status, after the keyword filter, so
-// each chip says how many packages it would show.
 func (m model) counts() []int {
 	n := make([]int, len(statusNames))
 	for _, pkg := range m.rowPkgs(m.curRow()) {
@@ -92,8 +89,6 @@ func (m model) counts() []int {
 	return n
 }
 
-// statusChips is the bottom bar's vocabulary for the row that is showing:
-// image states on an image row, package statuses everywhere else.
 func (m model) statusChips() (names, icons []string, counts []int, active int) {
 	if isImageRow(m.curRow().kind) {
 		return imageStatusNames, imageStatusIcons, m.imgCounts(), m.imgStatus()
@@ -101,14 +96,11 @@ func (m model) statusChips() (names, icons []string, counts []int, active int) {
 	return statusNames, statusIcons, m.counts(), m.status()
 }
 
-// chipEntry is one status chip and the index of the status it stands for, so
-// a bar that had to drop chips can still map a click back.
 type chipEntry struct {
 	status int
 	text   string
 }
 
-// filterBarChips is the bar's head (the keyword box) and the chips that fit.
 // A narrow table drops the tail rather than cutting a chip in half, and never
 // drops the one that is on.
 func (m model) filterBarChips() (string, []chipEntry) {
@@ -139,8 +131,6 @@ func (m model) filterBarChips() (string, []chipEntry) {
 	return head, chips
 }
 
-// filterBar is the last line of the table: the keyword, then a chip for each
-// status with its count, the active one lit and named in full.
 func (m model) filterBar() string {
 	head, chips := m.filterBarChips()
 	var texts []string
@@ -162,16 +152,21 @@ func (m model) filterBoxWidth() int {
 	return min(filterBoxMax, max(filterBoxMin, m.layout().tableW-12))
 }
 
-// filterBox is the bar's head: the word filter, then the query, lit like the
-// search box's own label. A long query keeps its tail, as the search bar does.
 func (m model) filterBox() string {
 	prefix := " " + accent().Render("⌕ filter ")
-	cursor := ""
-	if m.filtering {
-		cursor = accent().Render("▏")
-	}
 	w := m.filterBoxWidth()
-	return pad(fitBar(prefix, m.filter(), cursor, "", w), w)
+	cursor, hint := "", ""
+	switch {
+	case m.filtering && m.filter() == "":
+		cursor, hint = accent().Render("▏"), faint().Render("part of a name")
+	case m.filtering:
+		cursor = accent().Render("▏")
+	case m.filter() != "":
+		if clear := faint().Render("  esc clears"); lipgloss.Width(prefix+m.filter()+clear) <= w {
+			hint = clear
+		}
+	}
+	return pad(fitBar(prefix, m.filter(), cursor, hint, w), w)
 }
 
 const filterWidth = 14
@@ -183,8 +178,7 @@ func (m model) chip(names, icons []string, i, active, count int) string {
 	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(fmt.Sprintf("%s %d", icons[i], count))
 }
 
-// chipAt maps an x offset within the table panel to the status chip under it,
-// or -1, or -2 for the keyword box.
+// Returns -1 for no chip, -2 for the keyword box.
 func (m model) chipAt(x int) int {
 	head, chips := m.filterBarChips()
 	edge := lipgloss.Width(head)

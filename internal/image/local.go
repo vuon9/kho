@@ -10,7 +10,6 @@ import (
 	"github.com/vuon9/kho/internal/provider"
 )
 
-// Local is one image on the machine, as docker lists it.
 type LocalImage struct {
 	Image   string
 	Repo    string
@@ -21,7 +20,6 @@ type LocalImage struct {
 	Created time.Time
 }
 
-// Container is one container docker knows about.
 type Container struct {
 	Name    string
 	Image   string
@@ -29,7 +27,7 @@ type Container struct {
 	Created time.Time
 }
 
-// Docker runs a docker subcommand and returns its stdout. Tests swap it.
+// Tests swap it.
 var Docker = func(ctx context.Context, args ...string) ([]byte, error) {
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "docker", args...)
@@ -52,8 +50,7 @@ func (e errText) Error() string { return string(e) }
 
 const listFormat = `{{.Repository}}\t{{.Tag}}\t{{.Digest}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}`
 
-// ListLocal reads the images docker holds. A machine with no daemon gets an
-// error, which callers report as "could not ask" rather than "nothing there".
+// No daemon is an error, which callers report as "could not ask", not "nothing there".
 func ListLocal(ctx context.Context) ([]LocalImage, error) {
 	out, err := Docker(ctx, "image", "ls", "--digests", "--no-trunc", "--format", listFormat)
 	if err != nil {
@@ -78,7 +75,6 @@ func ListLocal(ctx context.Context) ([]LocalImage, error) {
 	return images, nil
 }
 
-// ListContainers reads every container docker knows about, running or not.
 func ListContainers(ctx context.Context) ([]Container, error) {
 	out, err := Docker(ctx, "ps", "-a", "--format", `{{.Names}}\t{{.Image}}\t{{.State}}\t{{.CreatedAt}}`)
 	if err != nil {
@@ -95,8 +91,7 @@ func ListContainers(ctx context.Context) ([]Container, error) {
 	return containers, nil
 }
 
-// parseDockerTime reads the timestamps docker prints, as in
-// "2026-10-17 08:12:34 +0700 +07".
+// Docker prints timestamps like "2026-10-17 08:12:34 +0700 +07".
 func parseDockerTime(s string) time.Time {
 	for _, layout := range []string{"2006-01-02 15:04:05 -0700 MST", "2006-01-02 15:04:05 -0700", time.RFC3339} {
 		if t, err := time.Parse(layout, strings.TrimSpace(s)); err == nil {
@@ -106,9 +101,7 @@ func parseDockerTime(s string) time.Time {
 	return time.Time{}
 }
 
-// Join fills each reference's presence from the machine's images. A reference
-// docker lists keeps its age; one it does not list is missing. When docker
-// was never asked, nothing is claimed.
+// When docker was never asked, nothing is claimed.
 func Join(refs []Ref, local []LocalImage) []Ref {
 	byCanonical := map[string]LocalImage{}
 	byRepo := map[string][]LocalImage{}

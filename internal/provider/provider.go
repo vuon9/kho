@@ -24,18 +24,13 @@ type Package struct {
 	Path       string   `json:"path,omitempty"`
 	Agents     []string `json:"agents,omitempty"`
 	Note       string   `json:"note,omitempty"`
-	// Repo is the GitHub owner/name the package is built from, when known.
-	Repo string `json:"repo,omitempty"`
-	// Entry is the main package `go install` builds a Go binary from.
-	Entry string `json:"entry,omitempty"`
-	Deps  []Dep  `json:"deps,omitempty"`
-	// Lockfile is the project lockfile a package was read from, relative to
-	// the scanned folder. It is set only for project packages, which kho
-	// never changes.
+	Repo       string   `json:"repo,omitempty"`
+	Entry      string   `json:"entry,omitempty"`
+	Deps       []Dep    `json:"deps,omitempty"`
+	// Set only for project packages, which kho never changes.
 	Lockfile string `json:"lockfile,omitempty"`
 	Dev      bool   `json:"dev,omitempty"`
-	// Via is the chain of packages that pulls a transitive dependency in,
-	// starting with the direct one.
+	// Via starts with the direct package.
 	Via []string `json:"via,omitempty"`
 }
 
@@ -45,7 +40,6 @@ type Dep struct {
 	Direct  bool   `json:"direct,omitempty"`
 }
 
-// Release is one published version. URL is the page that holds its notes.
 type Release struct {
 	Version string    `json:"version"`
 	Date    time.Time `json:"date,omitzero"`
@@ -53,9 +47,9 @@ type Release struct {
 	URL     string    `json:"url,omitempty"`
 }
 
-// Provider adapts one package manager. List must be fast and local; Latest
-// may hit the network and returns the packages with Latest and Outdated set.
-// Deps and Versions load one package's details on demand, newest version first.
+// List must be fast and local; Latest may hit the network and returns the
+// packages with Latest and Outdated set. Deps and Versions load one package's
+// details on demand, newest version first.
 type Provider interface {
 	Name() string
 	// Missing is what this machine lacks for the provider, such as "uv not on
@@ -67,7 +61,6 @@ type Provider interface {
 	Versions(ctx context.Context, p Package) ([]Release, error)
 }
 
-// ProviderOf names the provider a package belongs to.
 func ProviderOf(p Package) string {
 	if p.Source == "cask" {
 		return "brew"
@@ -79,9 +72,7 @@ func All() []Provider {
 	return []Provider{Brew{}, Npm{}, Composer{}, Pipx{}, Uv{}, GoBin{}, Mise{}, Skills{}}
 }
 
-// Detect splits All into the providers this machine is set up for and the
-// ones it is not, with what each was missing. A provider that is left out of
-// a scan reads as "nothing installed", which hides the packages it would have
+// A provider that is left out of a scan reads as "nothing installed", which hides the packages it would have
 // found, so callers report skipped instead of dropping it.
 func Detect() (ready []Provider, skipped map[string]string) {
 	skipped = map[string]string{}
@@ -107,7 +98,6 @@ func notOnPath(bin string) string {
 	return bin + " not on PATH"
 }
 
-// Record hears about every command a provider runs, for kho's history.
 var Record = func(command []string, took time.Duration, err error) {}
 
 // run returns stdout even when the command exits non-zero, because

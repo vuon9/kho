@@ -97,7 +97,8 @@ func TestSkillDocPath(t *testing.T) {
 		slug  string
 		want  string
 	}{
-		{"a root SKILL.md wins", []string{"SKILL.md", "skills/pdf/SKILL.md"}, "pdf", "SKILL.md"},
+		{"the folder named for the skill beats a root SKILL.md", []string{"SKILL.md", "skills/pdf/SKILL.md"}, "pdf", "skills/pdf/SKILL.md"},
+		{"a root SKILL.md when no folder is named for the skill", []string{"SKILL.md", "skills/docx/SKILL.md"}, "pdf", "SKILL.md"},
 		{"the folder named for the skill", []string{"a/SKILL.md", "pdf/SKILL.md", "b/SKILL.md"}, "pdf", "pdf/SKILL.md"},
 		{"the only one when the name differs", []string{"a/SKILL.md"}, "pdf", "a/SKILL.md"},
 		{"nothing when several do not match", []string{"a/SKILL.md", "b/SKILL.md"}, "pdf", ""},

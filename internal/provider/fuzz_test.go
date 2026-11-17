@@ -2,8 +2,7 @@ package provider
 
 import "testing"
 
-// FuzzParsers feeds the command and registry output parsers arbitrary bytes.
-// They read data from package managers and registries, so a panic here would
+// The parsers read data from package managers and registries, so a panic here would
 // crash a check before it can report the package that caused it.
 func FuzzParsers(f *testing.F) {
 	f.Add([]byte(`{"dependencies":{"left-pad":{"version":"1.3.0"}}}`))

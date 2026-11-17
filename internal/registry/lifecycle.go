@@ -11,8 +11,6 @@ import (
 	"github.com/vuon9/kho/internal/image"
 )
 
-// lifeBase is where the lifecycle pages live. Tests point it at a local
-// server.
 func (c *Client) lifeBase() string {
 	if c.LifeBase != "" {
 		return c.LifeBase
@@ -20,9 +18,7 @@ func (c *Client) lifeBase() string {
 	return LifeURL
 }
 
-// Life answers the upstream release line a reference names. A product or
-// cycle the lifecycle page does not know gets a zero Life, so nothing is
-// claimed about it.
+// A product or cycle the lifecycle page does not know gets a zero Life, so nothing is claimed.
 func (c *Client) Life(ctx context.Context, r image.Ref) (image.Life, error) {
 	product, cycle := r.Product(), r.Cycle()
 	if product == "" || cycle == "" {
@@ -70,8 +66,7 @@ func (c *Client) Life(ctx context.Context, r image.Ref) (image.Life, error) {
 	return life, nil
 }
 
-// parseEOL reads a date, or a false when the page says the line is still
-// supported.
+// endoflife.date writes eol as a date, or false while the line is still supported.
 func parseEOL(raw json.RawMessage) time.Time {
 	s := strings.Trim(strings.TrimSpace(string(raw)), `"`)
 	if s == "" || s == "false" || s == "null" || s == "true" {

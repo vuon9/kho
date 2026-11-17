@@ -17,10 +17,10 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// projKey files the project's packages in m.pkgs. No provider has this name.
+// No provider has this name.
 const projKey = "\x00project"
 
-// The project lookups, swapped out in tests.
+// Swapped out in tests.
 var (
 	findProject     = project.Find
 	projectLatest   = provider.FillLatest
@@ -50,8 +50,7 @@ type watchMsg struct {
 	changed bool
 }
 
-// findCmd reads the project's lockfiles. gen tells its answer apart from one
-// for a scan that has since been started again.
+// gen tells its answer apart from one for a scan that has since been started again.
 func (m model) findCmd() tea.Cmd {
 	gen, dir := m.projGen, m.dir
 	return func() tea.Msg {
@@ -60,7 +59,6 @@ func (m model) findCmd() tea.Cmd {
 	}
 }
 
-// scanProject reads the project again, as when a lockfile changed.
 func (m *model) scanProject() tea.Cmd {
 	if m.dir == "" {
 		return nil
@@ -108,15 +106,12 @@ func (m *model) gotProjectLatest(msg projectLatestMsg) {
 	m.reindex()
 }
 
-// lockfileOf is the lockfile a manager writes, which a manifest without one
-// is waiting for.
 var lockfileOf = map[string]string{
 	"npm": "package-lock.json", "composer": "composer.lock", "uv": "uv.lock",
 	"poetry": "poetry.lock", "cargo": "Cargo.lock",
 }
 
-// stamps are the modification times of every lockfile the scan read, and of
-// the lockfile each bare manifest is missing, so creating one counts too.
+// The lockfile each bare manifest is missing is stamped too, so creating one counts.
 func stamps(scan project.Scan) map[string]time.Time {
 	out := map[string]time.Time{}
 	for _, p := range scan.Projects {
@@ -143,7 +138,6 @@ func modTime(file string) time.Time {
 	return fi.ModTime()
 }
 
-// watch looks at the lockfiles again in a while, and says whether any changed.
 func (m model) watch() tea.Cmd {
 	if m.proj == nil || len(m.projStamps) == 0 {
 		return nil
@@ -168,7 +162,6 @@ func (m *model) gotWatch(msg watchMsg) tea.Cmd {
 	return m.watch()
 }
 
-// projName is the folder the project section is named after.
 func (m model) projName() string {
 	if m.proj != nil {
 		return filepath.Base(m.proj.Root)
@@ -176,17 +169,13 @@ func (m model) projName() string {
 	return filepath.Base(m.dir)
 }
 
-// projReady says the project section has something to select. While a
-// rescan reads the lockfiles again, the last scan stays selectable. A folder
-// with images but no lockfiles still has something to show.
+// While a rescan reads the lockfiles again, the last scan stays selectable.
 func (m model) projReady() bool {
 	return m.proj != nil && (len(m.proj.Projects) > 0 || len(m.images) > 0)
 }
 
 func (m model) projPkgs() []provider.Package { return m.pkgs[projKey] }
 
-// projParts are the rows under the project header: one per lockfile when
-// there is one project, one per project folder when there are several.
 func (m model) projParts() []railRow {
 	if !m.projReady() {
 		return nil
@@ -209,7 +198,6 @@ func (m model) projParts() []railRow {
 	return rows
 }
 
-// partPkgs is what one row under the project header stands for.
 func (m model) partPkgs(r railRow) []provider.Package {
 	var out []provider.Package
 	for _, p := range m.projPkgs() {
@@ -227,7 +215,6 @@ func dirOf(file string) string {
 	return ""
 }
 
-// partLockfiles are the lockfiles a row under the project header stands for.
 func (m model) partLockfiles(r railRow) []project.Lockfile {
 	if m.proj == nil || r.kind != rowPart {
 		return nil
@@ -243,7 +230,6 @@ func (m model) partLockfiles(r railRow) []project.Lockfile {
 	return out
 }
 
-// lockfile is the scan's entry for path, for its note or error.
 func (m model) lockfile(file string) (project.Lockfile, bool) {
 	if m.proj == nil {
 		return project.Lockfile{}, false
@@ -258,9 +244,7 @@ func (m model) lockfile(file string) (project.Lockfile, bool) {
 	return project.Lockfile{}, false
 }
 
-// pulledIn is what p pulls into its project: every package in its lockfile
-// whose chain runs through p, direct when p is the last link. The lockfile
-// already has them, so nothing is fetched.
+// The lockfile already has them, so nothing is fetched.
 func (m model) pulledIn(p provider.Package) []provider.Dep {
 	var deps []provider.Dep
 	for _, q := range m.projPkgs() {
@@ -271,8 +255,6 @@ func (m model) pulledIn(p provider.Package) []provider.Dep {
 	return deps
 }
 
-// projectFix is the command that clears p's advisories in its project: to
-// the lowest version that fixes them all, or to the latest when it is clear.
 func (m model) projectFix(p provider.Package) string {
 	advs := m.vulns[pkgKey(p)]
 	if p.Lockfile == "" || len(advs) == 0 {
@@ -288,13 +270,11 @@ func (m model) projectFix(p provider.Package) string {
 	return project.FixCommand(p, target)
 }
 
-// inProjectPkg says the selected package comes from a project lockfile.
 func (m model) inProjectPkg() bool {
 	p, ok := m.current()
 	return ok && p.Lockfile != ""
 }
 
-// currentFix is the selected project package's fix command, or "".
 func (m model) currentFix() string {
 	if p, ok := m.current(); ok {
 		return m.projectFix(p)

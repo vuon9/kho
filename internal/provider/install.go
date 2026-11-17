@@ -6,10 +6,8 @@ import (
 	"os/exec"
 )
 
-// InstallNewCmd builds the command that installs a package the machine does
-// not have yet through its own package manager, or says why kho can't. p comes
-// from a Searcher or a Finder, so Version is empty and Latest is the newest
-// version the registry gave.
+// p comes from a Searcher or a Finder, so Version is empty and Latest is the
+// newest version the registry gave.
 func InstallNewCmd(p Package, version string) (*exec.Cmd, error) {
 	if p.Source == "skills" {
 		// The skills CLI installs the newest commit, so there is no version to
@@ -52,8 +50,6 @@ func InstallNewCmd(p Package, version string) (*exec.Cmd, error) {
 	return nil, fmt.Errorf("kho can't install new %s packages yet", p.Source)
 }
 
-// InstallCmd builds the command that moves a package to version through its
-// own package manager, or says why kho can't.
 func InstallCmd(p Package, version string) (*exec.Cmd, error) {
 	if p.Lockfile != "" {
 		return nil, fmt.Errorf("%s comes from %s, and kho doesn't change project lockfiles", p.Name, p.Lockfile)

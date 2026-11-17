@@ -12,7 +12,9 @@ import (
 
 func TestFind(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	files := map[string]string{
+		"app/Library/Dockerfile":      "FROM busybox:1\n",
 		"Dockerfile":                  "FROM alpine:3.20\n",
 		"api/Dockerfile":              "ARG BASE=node:22-alpine\nFROM ${BASE} AS build\n",
 		"api/docker-compose.yml":      "services:\n  db:\n    image: postgres:13\n",
@@ -48,6 +50,7 @@ func TestFind(t *testing.T) {
 		"api/docker-compose.yml|postgres:13",
 		"web/compose.yaml|nginx:1.29-alpine",
 		"deploy/Dockerfile.prod|scratch",
+		"app/Library/Dockerfile|busybox:1",
 		"web/compose.override.yaml|nginx:1.29-alpine-alpine",
 		"web/compose.override.yaml|nginx:1.29-alpine-alpine",
 	}
@@ -61,12 +64,11 @@ func TestFind(t *testing.T) {
 			t.Errorf("found %q, which the walk should skip", unwanted)
 		}
 	}
-	if len(s.Files) != 6 {
-		t.Errorf("read %d files, want 6: %v", len(s.Files), s.Files)
+	if len(s.Files) != 7 {
+		t.Errorf("read %d files, want 7: %v", len(s.Files), s.Files)
 	}
 }
 
-// A level with many folders is read at once, and every folder is still read.
 func TestFindWideSiblings(t *testing.T) {
 	root := t.TempDir()
 	const n = 40
@@ -97,8 +99,6 @@ func TestFindWideSiblings(t *testing.T) {
 	}
 }
 
-// The walk stops at the file cap, keeps the files it read in order, and says
-// it stopped.
 func TestFindCaps(t *testing.T) {
 	old := MaxFiles
 	MaxFiles = 2

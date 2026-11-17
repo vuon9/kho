@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
 
-// khoUserAgent names kho to public services that ask who is calling.
 const khoUserAgent = "kho (https://github.com/vuon9/kho)"
 
-// fillLatest looks up every package concurrently. A failed lookup leaves that
-// package's latest unknown and says why in its note.
+// A failed lookup leaves that package's latest unknown and says why in its note.
 func fillLatest(ctx context.Context, pkgs []Package, lookup func(context.Context, Package) (string, error)) []Package {
 	var g errgroup.Group
 	g.SetLimit(8)
@@ -98,8 +98,7 @@ type githubTree struct {
 	} `json:"tree"`
 }
 
-// folderHashes maps every folder in the repo's default branch to its git tree
-// SHA, the same hash the skills CLI records as skillFolderHash.
+// The git tree SHA is the same hash the skills CLI records as skillFolderHash.
 func folderHashes(ctx context.Context, repo string) (map[string]string, error) {
 	var t githubTree
 	if err := githubGet(ctx, "repos/"+repo+"/git/trees/HEAD?recursive=1", &t); err != nil {
@@ -140,7 +139,6 @@ var githubToken = sync.OnceValue(func() string {
 
 var githubURL = regexp.MustCompile(`github\.com[/:]([\w.-]+)/([\w.-]+)`)
 
-// githubRepo finds "owner/name" in any GitHub URL, such as a tarball or git remote.
 func githubRepo(urls ...string) string {
 	for _, u := range urls {
 		if m := githubURL.FindStringSubmatch(u); m != nil {
@@ -170,16 +168,14 @@ func githubReleases(ctx context.Context, repo string) ([]Release, error) {
 	return out, nil
 }
 
-// TagVersion strips what tags add around a version: "v1.2", "pkg@1.2", "pkg/v1.2".
 func TagVersion(tag string) string {
 	if i := strings.LastIndexAny(tag, "@/"); i >= 0 {
 		tag = tag[i+1:]
 	}
-	return strings.TrimPrefix(tag, "v")
+	return vuln.Clean(tag)
 }
 
-// withNotes copies GitHub release notes onto registry versions with the same
-// number. Notes are a bonus, so a failed lookup leaves the versions as they are.
+// Notes are a bonus, so a failed lookup leaves the versions as they are.
 func withNotes(ctx context.Context, repo string, rels []Release) []Release {
 	if repo == "" {
 		return rels
