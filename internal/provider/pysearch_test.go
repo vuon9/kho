@@ -47,6 +47,7 @@ func TestPythonSearchByKeyword(t *testing.T) {
 			{FullName: "psf/black", Description: "A formatter", HTMLURL: "https://github.com/psf/black"},
 			{FullName: "acme/fork", Fork: true},
 			{FullName: "acme/docs", Description: "Docs only"},
+			{FullName: "acme/fastthing", Description: "Claims a name PyPI gives another repo"},
 		}, nil
 	}
 	pyRepoFile = func(_ context.Context, repo, file string) (string, error) {
@@ -56,11 +57,16 @@ func TestPythonSearchByKeyword(t *testing.T) {
 		return "", errRepoFileNotFound
 	}
 	pyPIProjectDoc = func(_ context.Context, name string) (pypiProject, error) {
-		if name != "black" && name != "docs" {
+		if name != "black" && name != "docs" && name != "fastthing" {
 			t.Errorf("asked PyPI for %q", name)
 		}
 		if name == "black" {
 			return pypiFixture("black", "24.10.0", "The uncompromising code formatter"), nil
+		}
+		if name == "fastthing" {
+			p := pypiFixture("fastthing", "9.9.9", "Fast")
+			p.Info.ProjectURLs = map[string]string{"Source": "https://github.com/bob/fastthing"}
+			return p, nil
 		}
 		return pypiProject{}, errors.New("not found")
 	}
@@ -82,6 +88,29 @@ func TestPythonSearchByKeyword(t *testing.T) {
 	}
 	if githubCalls != 1 {
 		t.Errorf("pipx and uv asked GitHub %d times, want one shared search", githubCalls)
+	}
+}
+
+func TestPyPINamesRepo(t *testing.T) {
+	tests := []struct {
+		id   string
+		urls map[string]string
+		want bool
+	}{
+		{"a project linking another repo is not this repo's", map[string]string{"Source": "https://github.com/bob/fastthing"}, false},
+		{"a project linking this repo is", map[string]string{"Source": "https://github.com/Alice/FastThing"}, true},
+		{"a sponsor link beside this repo does not count against it",
+			map[string]string{"Funding": "https://github.com/sponsors/alice", "Source": "https://github.com/alice/fastthing"}, true},
+		{"a project linking no repo cannot be checked", map[string]string{"Docs": "https://fastthing.example.com"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			p := pypiFixture("fastthing", "1.0", "")
+			p.Info.ProjectURLs = tt.urls
+			if got := pypiNamesRepo(p, "alice/fastthing"); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

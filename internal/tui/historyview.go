@@ -29,7 +29,6 @@ func (m model) isKind(e history.Entry, k int) bool {
 	return true
 }
 
-// historyEntries is the log newest first, after the kind and keyword filters.
 func (m model) historyEntries() []history.Entry {
 	var out []history.Entry
 	for _, e := range m.log.Entries() {
@@ -40,9 +39,8 @@ func (m model) historyEntries() []history.Entry {
 	return out
 }
 
-// pressHistory handles keys on the history screen. It reports false only for
-// the keys it leaves to the rest of kho, like ? and q; every other key would
-// act on the panels hidden behind it, so it takes them and does nothing.
+// Reports false only for keys left to the rest of kho, like ? and q; every
+// other key would act on the panels hidden behind, so it takes them.
 func (m *model) pressHistory(key string) (tea.Cmd, bool) {
 	page := max(m.layout().rows-1, 1)
 	switch key {
@@ -194,8 +192,7 @@ func (m model) kindChip(k int) string {
 	return lipgloss.NewStyle().Foreground(th.muted).Padding(0, 1).Render(label)
 }
 
-// kindAt maps an x offset within the history list to the chip under it, or
-// -1, or -2 for the keyword box.
+// Returns -1 for no chip, -2 for the keyword box.
 func (m model) kindAt(x int) int {
 	edge := 1 + 2 + filterWidth + 1
 	if x < edge {

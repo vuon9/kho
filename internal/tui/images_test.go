@@ -18,8 +18,6 @@ import (
 	"github.com/vuon9/kho/internal/trivy"
 )
 
-// withImages loads a project and the images its files name, with the states
-// the registries would have given them.
 func withImages(t *testing.T, refs ...image.Ref) model {
 	t.Helper()
 	// A test must never reach the real scanner or the network.
@@ -34,15 +32,12 @@ func withImages(t *testing.T, refs ...image.Ref) model {
 	return m
 }
 
-// asker is a registry that answers nothing; the tests that care swap the
-// lookups around it.
 type asker struct{}
 
 func (asker) Remote(context.Context, image.Ref) (image.Remote, error) { return image.Remote{}, nil }
 func (asker) Life(context.Context, image.Ref) (image.Life, error)     { return image.Life{}, nil }
 
-// A row is listed only once kho knows what it is, and the rows arrive one at a
-// time instead of all at the end: the table fills in as the registries answer.
+// A row is listed only once kho knows what it is.
 func TestImagesArriveOneAtATime(t *testing.T) {
 	mk := func(name string) image.Ref {
 		return image.Ref{Image: name, Registry: "docker.io", Repo: "library/" + name, Tag: "1", File: "compose.yaml", Line: 1, State: image.Unknown}
@@ -64,7 +59,6 @@ func TestImagesArriveOneAtATime(t *testing.T) {
 		t.Fatalf("%d rows before any answer, want none", got)
 	}
 	cmd := m.factsCmd()
-	// One answer lands while the other registry is still thinking.
 	first := cmd()
 	fact, ok := first.(imageFactMsg)
 	if !ok {
@@ -89,7 +83,6 @@ func TestImagesArriveOneAtATime(t *testing.T) {
 	}
 }
 
-// A row in the images table answers a click the way a package row does.
 func TestImageRowsAreClickable(t *testing.T) {
 	m := onImages(t, withImages(t,
 		image.Ref{Image: "node:22-alpine", File: "Dockerfile", Line: 1},
@@ -108,7 +101,6 @@ func TestImageRowsAreClickable(t *testing.T) {
 	}
 }
 
-// onImages moves the rail to the images row.
 func onImages(t *testing.T, m model) model {
 	t.Helper()
 	for i, r := range m.railRows() {
@@ -209,7 +201,6 @@ func TestImagesSidebar(t *testing.T) {
 
 func TestImagesUnresolvedIsHonest(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
-	// Unverified images are out of the way unless the untracked filter asks.
 	m = press(t, m, "f", "f", "f", "f", "f")
 	for i, r := range m.imgRows() {
 		if r.Unresolved {
@@ -235,7 +226,6 @@ func TestImagesNoProject(t *testing.T) {
 	}
 }
 
-// A narrow terminal drops columns rather than cutting the state off.
 func TestImagesNarrow(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 110, Height: 40})
@@ -248,7 +238,6 @@ func TestImagesNarrow(t *testing.T) {
 	}
 }
 
-// The machine's own images get their own row, and the two lists stay apart.
 func TestMachineImagesRow(t *testing.T) {
 	m := withImages(t, sampleImages()...)
 	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, machine: []image.Ref{
@@ -277,8 +266,6 @@ func TestMachineImagesRow(t *testing.T) {
 	}
 }
 
-// The Versions tab lists what the repository publishes, with the tag in use
-// marked.
 func TestImageVersionsTab(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
@@ -299,7 +286,6 @@ func TestImageVersionsTab(t *testing.T) {
 	}
 }
 
-// The Security tab says what kho cannot know, and lists what a scan found.
 func TestImageSecurityTab(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = press(t, m, "a")
@@ -325,8 +311,6 @@ func TestImageSecurityTab(t *testing.T) {
 	}
 }
 
-// A scan result splits the sidebar like a package's: the list above, the
-// finding below.
 func TestImageSecuritySplit(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	key := m.imgRows()[0].Canonical()
@@ -346,8 +330,6 @@ func TestImageSecuritySplit(t *testing.T) {
 	}
 }
 
-// The upstream line in the Info tab is a link: clicking it opens the
-// lifecycle page, the way a package's homepage opens.
 func TestImageUpstreamLinkIsClickable(t *testing.T) {
 	opened = nil
 	defer func() { openURL = func(string) error { return nil } }()
@@ -366,7 +348,6 @@ func TestImageUpstreamLinkIsClickable(t *testing.T) {
 	}
 }
 
-// The fixed line at the foot of the panel names what the tab is looking at.
 func TestImageTabStatus(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, imagesMsg{gen: m.imgGen, refs: m.images, tags: map[string][]image.Tag{
@@ -386,7 +367,6 @@ func TestImageTabStatus(t *testing.T) {
 	}
 }
 
-// Opening Security scans without being asked.
 func TestImageAutoScan(t *testing.T) {
 	scans := 0
 	m := onImages(t, withImages(t, sampleImages()...))
@@ -403,9 +383,6 @@ func TestImageAutoScan(t *testing.T) {
 	}
 }
 
-// The scan is lazy: opening Security runs it, and nothing else does. A clean
-// result is kept, and a failed one is asked again only when the tab opens
-// again, never on every redraw.
 func TestImageScanIsLazy(t *testing.T) {
 	tests := []struct {
 		id    string
@@ -436,7 +413,6 @@ func TestImageScanIsLazy(t *testing.T) {
 	}
 }
 
-// Enter on a version asks before pulling it, the way a package install does.
 func TestImageVersionPull(t *testing.T) {
 	var asked string
 	pullCmd = func(ref string) *exec.Cmd { asked = ref; return exec.Command("true") }
@@ -460,7 +436,6 @@ func TestImageVersionPull(t *testing.T) {
 	}
 }
 
-// y opens the page for the selected tag.
 func TestImageVersionOpensOnTheWeb(t *testing.T) {
 	opened = nil
 	defer func() { openURL = func(string) error { return nil } }()
@@ -493,7 +468,6 @@ func TestTagOrder(t *testing.T) {
 	}
 }
 
-// Unverified images stay out of the list, but never disappear silently.
 func TestImagesHideUnverified(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	got := screen(m)
@@ -509,8 +483,6 @@ func TestImagesHideUnverified(t *testing.T) {
 	}
 }
 
-// Opening Versions asks the repository, whether it was opened with v, with a
-// numbered tab, or with a click on the tab bar.
 func TestVersionsTabAsksHoweverItOpens(t *testing.T) {
 	asked := 0
 	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
@@ -548,8 +520,7 @@ func TestVersionsTabAsksHoweverItOpens(t *testing.T) {
 	}
 }
 
-// An empty answer reads as empty and says why, instead of looking like a
-// repository that publishes one version.
+// An empty answer must not look like a repository that publishes one version.
 func TestVersionsSaysWhyItIsEmpty(t *testing.T) {
 	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
 		return nil, errors.New("docker hub answered 429 for library/python")
@@ -576,7 +547,6 @@ func TestVersionsSaysWhyItIsEmpty(t *testing.T) {
 	}
 }
 
-// A failed ask heals itself once, without waiting for someone to press v.
 func TestVersionsRetriesOnceByItself(t *testing.T) {
 	asked := 0
 	tagsFor = func(context.Context, image.Ref, image.Asker) ([]image.Tag, error) {
@@ -606,8 +576,6 @@ func TestVersionsRetriesOnceByItself(t *testing.T) {
 	}
 }
 
-// Moving to another image while Versions is open asks about that image too,
-// instead of leaving the panel on "press v again".
 func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
 	asked := map[string]int{}
 	tagsFor = func(_ context.Context, r image.Ref, _ image.Asker) ([]image.Tag, error) {
@@ -636,8 +604,6 @@ func TestVersionsAsksWhenTheRowMoves(t *testing.T) {
 	}
 }
 
-// The image table carries the same bar as a package table: the keyword box,
-// then a chip per state with how many it holds.
 func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 200, Height: 40})
@@ -652,7 +618,6 @@ func TestImagesHaveTheSameFilterBar(t *testing.T) {
 		t.Errorf("counts %v, want two images past their line", counts)
 	}
 
-	// and a click on the second chip selects that state, like a package table
 	m = update(t, m, tea.KeyPressMsg{Code: 'f', Text: "f"})
 	if bar := ansi.Strip(m.filterBar()); !strings.Contains(bar, "⚠ EOL") {
 		t.Errorf("bar %q, want the active chip named in full", bar)
@@ -667,7 +632,6 @@ func TestImagesHaveTheSameFilterBar(t *testing.T) {
 	}
 }
 
-// s sorts the image table by its own columns, and F steps the state back.
 func TestImagesSortAndReverse(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -696,7 +660,6 @@ func TestImagesSortAndReverse(t *testing.T) {
 	}
 }
 
-// The keys that only mean something for a package do nothing on an image row.
 func TestPackageStatusKeysIgnoreImageRows(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -713,8 +676,6 @@ func TestPackageStatusKeysIgnoreImageRows(t *testing.T) {
 	}
 }
 
-// A filter that hides every image says so, the way a package table does,
-// instead of claiming the project names no images.
 func TestImagesSayNothingMatches(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -728,7 +689,6 @@ func TestImagesSayNothingMatches(t *testing.T) {
 	}
 }
 
-// D on an image asks first, and says which containers still use it.
 func TestImageRemoveAsksWithItsContainers(t *testing.T) {
 	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) {
 		return []image.Container{
@@ -758,8 +718,6 @@ func TestImageRemoveAsksWithItsContainers(t *testing.T) {
 	}
 }
 
-// An image that is not on disk has nothing to remove, and kho says so instead
-// of opening a dialog that would fail.
 func TestImageRemoveNeedsItOnDisk(t *testing.T) {
 	refs := sampleImages()
 	refs[0].Presence = image.NotPulled
@@ -775,8 +733,6 @@ func TestImageRemoveNeedsItOnDisk(t *testing.T) {
 	}
 }
 
-// Every line that says work is in progress starts with the same spinner, and
-// the ticker runs while it does, so the frame moves.
 func TestImageProgressSpins(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -811,8 +767,6 @@ func TestImageProgressSpins(t *testing.T) {
 	}
 }
 
-// A dialog wraps what is in it: a long sentence grows the box instead of being
-// cut at the border with an ellipsis.
 func TestPopupsWrapTheirContent(t *testing.T) {
 	long := "docker refuses to remove an image a container still uses, so remove that container first or keep the image as it is"
 	m := onImages(t, withImages(t, sampleImages()...))
@@ -847,8 +801,6 @@ func TestPopupsWrapTheirContent(t *testing.T) {
 	}
 }
 
-// However many containers use an image, the question at the bottom of the
-// dialog stays on screen.
 func TestImageRemoveKeepsItsQuestionVisible(t *testing.T) {
 	users := []image.Container{}
 	for _, n := range []string{"api", "db", "cache", "queue", "search", "worker"} {
@@ -872,8 +824,6 @@ func TestImageRemoveKeepsItsQuestionVisible(t *testing.T) {
 	}
 }
 
-// The Info tab says which containers are made from the image, since that is
-// what stands between it and a removal.
 func TestImageInfoListsItsContainers(t *testing.T) {
 	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) {
 		return []image.Container{
@@ -899,7 +849,6 @@ func TestImageInfoListsItsContainers(t *testing.T) {
 	}
 }
 
-// An image nothing was made from says so, instead of saying nothing.
 func TestImageInfoSaysNoContainer(t *testing.T) {
 	imageUsers = func(context.Context, image.Ref) ([]image.Container, error) { return nil, nil }
 	t.Cleanup(func() { imageUsers = image.Users })
@@ -914,7 +863,6 @@ func TestImageInfoSaysNoContainer(t *testing.T) {
 	}
 }
 
-// linesText is the plain text of a sidebar block.
 func linesText(lines []line) []string {
 	var out []string
 	for _, l := range lines {
@@ -927,8 +875,7 @@ func linesText(lines []line) []string {
 	return out
 }
 
-// A state has one mark in the table and the sidebar, the one a package with
-// the same problem has: stale is ↑ like outdated, pinned is ⚑ like pinned.
+// Stale is ↑ like outdated, pinned is ⚑ like pinned: the mark a package with the same problem has.
 func TestImageStateMarks(t *testing.T) {
 	tests := []struct {
 		state       image.State
@@ -953,12 +900,10 @@ func TestImageStateMarks(t *testing.T) {
 	}
 }
 
-// A filter that matches nothing must not hide the filter bar: the bar is the
-// only place to see or clear the query.
+// The bar is the only place to see or clear the query.
 func TestImagesFilterNoMatchKeepsTheBar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
-	// The smallest layout kho draws, where a long empty state has clipped the
-	// bar before.
+	// The smallest layout kho draws.
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
 	m = press(t, m, "/", "z", "z")
 	sc := screen(m)
@@ -984,7 +929,6 @@ func TestImagesFilterKeepsOnlyMatches(t *testing.T) {
 	}
 }
 
-// An error in the image table also leaves the filter bar in place.
 func TestImagesErrorKeepsTheBar(t *testing.T) {
 	m := onImages(t, withImages(t, sampleImages()...))
 	m.imgErr = errors.New("registry down")

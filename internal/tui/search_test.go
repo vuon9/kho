@@ -20,18 +20,13 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// catalogFake is a fake provider that searches by keyword and resolves an
-// exact name, the way a real manager's adapter does.
 type catalogFake struct {
 	fake
-	results []provider.Package
-	// bulk is what the query "bulk" returns, for the per-source cap.
-	bulk   []provider.Package
-	latest map[string]string
-	// err is the search failure a test wants to see on the status bar.
-	err     error
-	findErr error
-	// added are packages an install puts on the machine.
+	results         []provider.Package
+	bulk            []provider.Package
+	latest          map[string]string
+	err             error
+	findErr         error
 	added           []provider.Package
 	searches, finds int
 }
@@ -77,8 +72,7 @@ func (f *catalogFake) Find(_ context.Context, source, name string) (provider.Pac
 	return provider.Package{}, errors.New("not found")
 }
 
-// finderFake resolves an exact name but has no keyword search, as pipx, uv and
-// go do.
+// No keyword search, as pipx, uv and go have none.
 type finderFake struct {
 	fake
 	results []provider.Package
@@ -99,8 +93,6 @@ func (f *finderFake) Find(_ context.Context, source, name string) (provider.Pack
 	return provider.Package{}, errors.New("not found")
 }
 
-// searchStack is the fake machine a search test runs on: keyword sources,
-// exact-name managers, and the two deferred ones.
 type searchStack struct {
 	brew, npm, composer *catalogFake
 	pipx, gobin         *finderFake
@@ -118,12 +110,14 @@ func searchable(t *testing.T) (model, *searchStack) {
 			}, pkgs: []provider.Package{
 				{Source: "brew", Name: "anvil", Version: "0.2.89", Latest: "0.2.94", Outdated: true, Homepage: "https://anvil.example", Repo: "example/anvil"},
 				{Source: "brew", Name: "focus", Version: "1.1.1", Latest: "1.1.1"},
+				{Source: "brew", Name: "forge", Version: "2.0.0", Latest: "2.0.0", Origin: "acme/tools"},
 			}},
 			results: []provider.Package{
 				{Source: "brew", Name: "anvil", Latest: "0.2.94"},
 				{Source: "brew", Name: "yq", Latest: "0.2.94", Desc: "A lightweight and portable YAML processor",
 					Homepage: "https://yq.example", Repo: "example/yq", Origin: "homebrew/core"},
 				{Source: "cask", Name: "focus", Latest: "1.2.3"},
+				{Source: "brew", Name: "acme/tools/forge", Latest: "2.0.0"},
 			},
 		},
 		npm: &catalogFake{
@@ -165,7 +159,6 @@ func searchable(t *testing.T) (model, *searchStack) {
 	return m, s
 }
 
-// searchRail selects a rail row by the word it shows.
 func searchRail(t *testing.T, m model, name string) model {
 	t.Helper()
 	for i, r := range m.railRows() {
@@ -187,7 +180,6 @@ func typeQuery(t *testing.T, m model, query string) model {
 	return m
 }
 
-// runSearch opens the prompt on rail, types query and submits it.
 func runSearch(t *testing.T, m model, rail, query string) model {
 	t.Helper()
 	m = searchRail(t, m, rail)
@@ -196,7 +188,6 @@ func runSearch(t *testing.T, m model, rail, query string) model {
 	return press(t, m, "enter")
 }
 
-// openCandidate searches, moves down to the row and opens its sidebar.
 func openCandidate(t *testing.T, m model, rail, query string, down int) model {
 	t.Helper()
 	m = runSearch(t, m, rail, query)
@@ -219,15 +210,54 @@ func searchRowsNames(m model) []string {
 	return out
 }
 
-// TestSearchPromptIsQuiet covers the prompt: it fetches nothing, its states
-// say what is missing, and the rows behind it stay the installed ones.
-func TestSearchPromptIsQuiet(t *testing.T) {
+func TestFilterBarStates(t *testing.T) {
 	tests := []struct {
 		id    string
-		rail  string
-		query string
 		keys  []string
-		// nilSearch wants the prompt or results gone.
+		shows []string
+		lacks []string
+	}{
+		{id: "no match while a security check runs still says so",
+			keys:  []string{"/", "z", "z", "q"},
+			shows: []string{`no installed match for "zzq"`, "deps hidden · 0 of 3"}},
+		{id: "an empty filter says what to type", keys: []string{"/"},
+			shows: []string{"⌕ filter ▏part of a name", "deps hidden · 3 "}},
+		{id: "typing counts what is left of the whole", keys: []string{"/", "a", "n"},
+			shows: []string{"⌕ filter an▏", "deps hidden · 1 of 3"}, lacks: []string{"part of a name", "esc clears"}},
+		{id: "a kept filter says how to drop it", keys: []string{"/", "a", "n", "enter"},
+			shows: []string{"⌕ filter an  esc clears", "deps hidden · 1 of 3"}},
+		{id: "esc drops it and the hint", keys: []string{"/", "a", "n", "enter", "esc"},
+			shows: []string{"deps hidden · 3 "}, lacks: []string{"esc clears", " of 3"}},
+		{id: "a long kept filter keeps its text over the hint",
+			keys:  append(append([]string{"/"}, strings.Split("abcdefghijklmnop", "")...), "enter"),
+			shows: []string{"abcdefghijklmnop"}, lacks: []string{"esc clears"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			m, _ := searchable(t)
+			m = searchRail(t, m, "brew")
+			m.busy["npm"] = "checking"
+			sc := screen(press(t, m, tt.keys...))
+			for _, want := range tt.shows {
+				if !strings.Contains(sc, want) {
+					t.Errorf("screen lacks %q:\n%s", want, sc)
+				}
+			}
+			for _, want := range tt.lacks {
+				if strings.Contains(sc, want) {
+					t.Errorf("screen has %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestSearchPromptIsQuiet(t *testing.T) {
+	tests := []struct {
+		id        string
+		rail      string
+		query     string
+		keys      []string
 		nilSearch bool
 		prompt    bool
 		searches  int
@@ -237,7 +267,7 @@ func TestSearchPromptIsQuiet(t *testing.T) {
 		lacks     []string
 	}{
 		{id: "n opens the prompt and reads nothing at all", rail: "brew", prompt: true,
-			shows: []string{"⌕ search", "type a name  enter search  esc cancel", "anvil"}},
+			shows: []string{"⌕ search ▏a name or keyword", "type a name  enter search  esc cancel", "anvil"}},
 		{id: "every manager's prompt says only search", rail: "pipx", prompt: true,
 			shows: []string{"⌕ search"}, lacks: []string{"add to pipx"}},
 		{id: "go says only search too", rail: "go", prompt: true,
@@ -245,7 +275,7 @@ func TestSearchPromptIsQuiet(t *testing.T) {
 		{id: "the All row says only search", rail: "All", prompt: true,
 			shows: []string{"⌕ search"}, lacks: []string{"every package manager for"}},
 		{id: "typing is a draft and still reads nothing", rail: "brew", query: "yq", prompt: true,
-			searches: 0, shows: []string{"⌕ search yq▏"}},
+			searches: 0, shows: []string{"⌕ search yq▏"}, lacks: []string{"a name or keyword"}},
 		{id: "esc cancels the prompt", rail: "brew", query: "yq", keys: []string{"esc"}, nilSearch: true, shows: []string{"anvil"}},
 		{id: "enter with nothing typed does nothing", rail: "brew", keys: []string{"enter"}, prompt: true,
 			notice: "type a name to search", shows: []string{"type a name to search"}},
@@ -294,14 +324,12 @@ func TestSearchPromptIsQuiet(t *testing.T) {
 	}
 }
 
-// TestSearchRuns covers what enter asks and how the results table reads.
 func TestSearchRuns(t *testing.T) {
 	tests := []struct {
-		id    string
-		rail  string
-		query string
-		setup func(*searchStack)
-		// names are the rows in the manager's order.
+		id            string
+		rail          string
+		query         string
+		setup         func(*searchStack)
 		names         []string
 		brew, npm     int
 		composer      int
@@ -311,16 +339,18 @@ func TestSearchRuns(t *testing.T) {
 		onlyInstalled bool
 	}{
 		{id: "a manager's row searches its own registry", rail: "brew", query: "yq", names: []string{"yq"}, brew: 1,
-			shows: []string{"brew · search · 1 results", "1 results · brew", "LATEST", "STATUS", "· not installed"}},
+			shows: []string{"brew · search · 1 result", "1 result · brew", "LATEST", "STATUS", "· not installed"}},
 		{id: "All searches every keyword source", rail: "All", query: "yaml",
 			names: []string{"yq", "yaml", "yaml-lint"}, brew: 1, npm: 1, composer: 1,
 			shows: []string{"3 results", "3 results · every package manager"}},
 		{id: "an installed hit keeps its status and version", rail: "brew", query: "anvil", names: []string{"anvil"}, brew: 1,
 			shows: []string{"↑ newer 0.2.89"}},
+		{id: "a tap's formula found as tap/name is the installed one", rail: "brew", query: "forge", names: []string{"forge"}, brew: 1,
+			lacks: []string{"· not installed"}},
 		{id: "a cask in the brew panel carries its source tag", rail: "brew", query: "focus", names: []string{"focus"}, brew: 1,
 			shows: []string{"cask/focus"}},
 		{id: "an exact-name manager resolves a name", rail: "go", query: "wren", finds: 1, names: []string{"wren"},
-			shows: []string{"v1.2.0", "· not installed", "go · search · 1 results"}},
+			shows: []string{"v1.2.0", "· not installed", "go · search · 1 result"}},
 		{id: "an unknown exact name is a no match, not a failed source", rail: "go", query: "zzzz", finds: 1,
 			shows: []string{`no package named "zzzz" on the Go proxy`}},
 		{id: "an empty answer reads as no match", rail: "npm", query: "zzzz", npm: 1,
@@ -379,8 +409,6 @@ func TestSearchRuns(t *testing.T) {
 	}
 }
 
-// TestSearchFailures prints failed sources on the status bar, and only calls
-// the search hopeless when every source failed.
 func TestSearchFailures(t *testing.T) {
 	down := errors.New("rate limited")
 	tests := []struct {
@@ -418,8 +446,6 @@ func TestSearchFailures(t *testing.T) {
 	}
 }
 
-// Info reads nothing while the cursor moves through the results: enter is the
-// first network step on that tab.
 func TestSearchInfoReadsNothingUntilEnter(t *testing.T) {
 	m, s := searchable(t)
 	m = runSearch(t, m, "All", "yaml")
@@ -447,7 +473,6 @@ func TestSearchInfoReadsNothingUntilEnter(t *testing.T) {
 	}
 }
 
-// A source failure is dropped when a newer search replaces it.
 func TestSearchDropsStaleAnswers(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "brew", "yq")
@@ -459,9 +484,6 @@ func TestSearchDropsStaleAnswers(t *testing.T) {
 	}
 }
 
-// TestCandidateSidebar covers the sidebar a package without an installation
-// opens: Info with what would run and no dependencies, Versions to pick one,
-// and Security for the newest version.
 func TestCandidateSidebar(t *testing.T) {
 	yamlish := vuln.Advisory{ID: "GHSA-yaml", Summary: "YAML parser loops", Severity: "HIGH", Package: "yaml",
 		Details: "A crafted doc loops.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "2.9.0"}}}
@@ -474,8 +496,7 @@ func TestCandidateSidebar(t *testing.T) {
 		keys  []string
 		shows []string
 		lacks []string
-		// tabs is the sidebar's tab list, when it matters.
-		tabs []int
+		tabs  []int
 	}{
 		{id: "Info shows what a candidate is and what would run", rail: "brew", query: "yq", shows: []string{
 			"🍺 yq · brew", "about     A lightweight and portable YAML", "latest    0.2.94", "status    not installed",
@@ -530,8 +551,6 @@ func TestCandidateSidebar(t *testing.T) {
 	}
 }
 
-// TestCandidateConfirm covers the install dialog: the new verb, the source in
-// a word, the newest nudge, Homebrew's refusal and the advisory line.
 func TestCandidateConfirm(t *testing.T) {
 	lint := vuln.Advisory{ID: "GHSA-yaml", Summary: "YAML parser loops", Severity: "HIGH", Package: "yaml",
 		Details: "A crafted doc loops.", Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "2.9.0"}}}
@@ -594,9 +613,6 @@ func TestCandidateConfirm(t *testing.T) {
 	}
 }
 
-// TestSearchInstallThenEsc runs the new install path end to end: the row is
-// patched while the relist runs under it, the notice names the version, and
-// esc selects the new package in the installed list.
 func TestSearchInstallThenEsc(t *testing.T) {
 	m, s := searchable(t)
 	installProcess = func(c *exec.Cmd) *exec.Cmd {
@@ -644,8 +660,6 @@ func TestSearchInstallThenEsc(t *testing.T) {
 	}
 }
 
-// TestSearchModeResets covers the transient rule: esc and a rail switch drop
-// the search, and the installed list comes back untouched.
 func TestSearchModeResets(t *testing.T) {
 	tests := []struct {
 		id       string
@@ -656,11 +670,11 @@ func TestSearchModeResets(t *testing.T) {
 		wantRail string
 		wantRows []string
 	}{
-		{id: "esc closes results", rail: "brew", run: true, keys: []string{"esc"}, wantRail: "brew", wantRows: []string{"anvil", "focus"}},
-		{id: "esc cancels the prompt", rail: "brew", keys: []string{"esc"}, wantRail: "brew", wantRows: []string{"anvil", "focus"}},
+		{id: "esc closes results", rail: "brew", run: true, keys: []string{"esc"}, wantRail: "brew", wantRows: []string{"anvil", "focus", "forge"}},
+		{id: "esc cancels the prompt", rail: "brew", keys: []string{"esc"}, wantRail: "brew", wantRows: []string{"anvil", "focus", "forge"}},
 		{id: "a rail switch closes results", rail: "brew", run: true, keys: []string{"h", "j"}, wantRail: "npm"},
 		{id: "a rail switch cancels the prompt", rail: "brew", keys: []string{"tab", "tab"},
-			msgs: []tea.Msg{tea.KeyPressMsg{Code: tea.KeyUp}}, wantRail: "All", wantRows: []string{"anvil", "focus"}},
+			msgs: []tea.Msg{tea.KeyPressMsg{Code: tea.KeyUp}}, wantRail: "All", wantRows: []string{"anvil", "focus", "forge"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -694,8 +708,6 @@ func TestSearchModeResets(t *testing.T) {
 	}
 }
 
-// TestSearchScopeAndCounts covers the All row against a manager's row, and
-// that results never join the installed counts.
 func TestSearchScopeAndCounts(t *testing.T) {
 	m, _ := searchable(t)
 	beforePkgs := len(m.allPkgs())
@@ -719,8 +731,6 @@ func TestSearchScopeAndCounts(t *testing.T) {
 	}
 }
 
-// TestSearchCarriesFilter opens the prompt on the installed filter's text, as
-// the bridge from / to n asks.
 func TestSearchCarriesFilter(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -737,8 +747,6 @@ func TestSearchCarriesFilter(t *testing.T) {
 	}
 }
 
-// TestSearchNotOnProjectOrImageRows: n belongs to the machine's package
-// panels, not to a project, a part or an image.
 func TestSearchNotOnProjectOrImageRows(t *testing.T) {
 	m := loaded(t)
 	m = update(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
@@ -764,7 +772,6 @@ func TestSearchNotOnProjectOrImageRows(t *testing.T) {
 			}
 		})
 	}
-	// The project section's rows are read-only too.
 	scan := project.Scan{Root: "/work/app", Projects: []project.Project{{Lockfiles: []project.Lockfile{
 		{Path: "package-lock.json", Manager: "npm"},
 	}}}}
@@ -781,8 +788,6 @@ func TestSearchNotOnProjectOrImageRows(t *testing.T) {
 	}
 }
 
-// TestSearchSpinnerAndHints covers the searching state a first search shows
-// and the rows a refinement keeps.
 func TestSearchSpinnerAndHints(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -798,15 +803,12 @@ func TestSearchSpinnerAndHints(t *testing.T) {
 			t.Errorf("screen lacks %q:\n%s", want, sc)
 		}
 	}
-	// A refinement keeps the rows it has while the new answer is out.
 	m.search.rows = []provider.Package{{Source: "brew", Name: "yq", Latest: "0.2.94"}}
 	if sc := screen(m); !strings.Contains(sc, "yq") {
 		t.Errorf("a refinement dropped its rows:\n%s", sc)
 	}
 }
 
-// TestSearchFootersAndHelp covers the keys the modes show and the help entry
-// that names their way in.
 func TestSearchFootersAndHelp(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -830,8 +832,7 @@ func TestSearchFootersAndHelp(t *testing.T) {
 	}
 }
 
-// TestSearchWidths draws the prompt, results and a candidate at the narrow
-// sizes kho supports, where every line must still fill the width exactly.
+// Every line must fill the width exactly at the narrow sizes kho supports.
 func TestSearchWidths(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -865,8 +866,6 @@ func TestSearchWidths(t *testing.T) {
 	}
 }
 
-// TestSearchStripsControlCharacters keeps registry text as data: a result
-// carrying terminal escapes and controls renders plain.
 func TestSearchStripsControlCharacters(t *testing.T) {
 	m, s := searchable(t)
 	s.brew.results = append(s.brew.results, provider.Package{Source: "brew", Name: "evil\x1b[31mname", Latest: "1.0.0\a", Desc: "wraps\x1b[0m badly"})
@@ -880,8 +879,6 @@ func TestSearchStripsControlCharacters(t *testing.T) {
 	}
 }
 
-// A failed install leaves the panel in results with the candidate sidebar, so
-// the person can try another version: nothing is patched on a failure.
 func TestSearchFailedInstallKeepsCandidate(t *testing.T) {
 	m, _ := searchable(t)
 	installScript = "echo no space; exit 3"
@@ -904,8 +901,6 @@ func TestSearchFailedInstallKeepsCandidate(t *testing.T) {
 	}
 }
 
-// A refinement replaces the rows of the manager that answered again, so a new
-// query never shows beside the old one.
 func TestSearchRefineReplacesRows(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "brew", "yq")
@@ -921,8 +916,6 @@ func TestSearchRefineReplacesRows(t *testing.T) {
 	}
 }
 
-// A name installed through another manager is a warning on the candidate, not
-// a reason to hide it: the confirm says what is already on the machine.
 func TestSearchWarnsAboutANameInstalledElsewhere(t *testing.T) {
 	loaded(t)
 	brew := &catalogFake{
@@ -958,8 +951,6 @@ func TestSearchWarnsAboutANameInstalledElsewhere(t *testing.T) {
 	}
 }
 
-// Closing results puts the keys back on the installed table, even when the
-// sidebar was open.
 func TestSearchEscapeReturnsFocusToTheTable(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "brew", "yq")
@@ -973,7 +964,6 @@ func TestSearchEscapeReturnsFocusToTheTable(t *testing.T) {
 	}
 }
 
-// ansiLines strips styles from a dialog's lines so a test can read them.
 func ansiLines(lines []string) []string {
 	out := make([]string, len(lines))
 	for i, l := range lines {
@@ -982,8 +972,6 @@ func ansiLines(lines []string) []string {
 	return out
 }
 
-// The title and the status bar carry the spinner while a search runs, and the
-// status bar names the lookup when opening a result resolves its version.
 func TestSearchShowsItsSpinner(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -1002,8 +990,6 @@ func TestSearchShowsItsSpinner(t *testing.T) {
 	}
 }
 
-// The empty installed filter points at the registry search from the middle of
-// the table, with the key lit the way the footer lights its keys.
 func TestSearchBridgeIsCentered(t *testing.T) {
 	m, _ := searchable(t)
 	m = searchRail(t, m, "brew")
@@ -1036,9 +1022,6 @@ func TestSearchBridgeIsCentered(t *testing.T) {
 	}
 }
 
-// A long empty state must not push the bottom bar out of the table: the rule
-// and the query stay the last two lines however many hint or error lines there
-// are.
 func TestSearchBarSurvivesALongEmptyState(t *testing.T) {
 	m, _ := searchable(t)
 	m = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 16})
@@ -1061,8 +1044,8 @@ func TestSearchBarSurvivesALongEmptyState(t *testing.T) {
 	}
 }
 
-// A candidate's Versions tab must never look installed: a blank release would
-// compare equal to the candidate's empty version and grow an installed pill.
+// A blank release would compare equal to the candidate's empty version and
+// grow an installed pill.
 func TestCandidateVersionsDoNotLookInstalled(t *testing.T) {
 	m, _ := searchable(t)
 	m = openCandidate(t, m, "brew", "yq", 0)
@@ -1081,9 +1064,6 @@ func TestCandidateVersionsDoNotLookInstalled(t *testing.T) {
 	}
 }
 
-// Pressing a data tab on a result is an explicit request: Versions loads even
-// when enter was not pressed first. Without that, the tab said "loading" with
-// nothing scheduled and a spinner that could not tick.
 func TestCandidateVersionsLoadOnVWithoutEnter(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "brew", "yq")
@@ -1100,8 +1080,6 @@ func TestCandidateVersionsLoadOnVWithoutEnter(t *testing.T) {
 	}
 }
 
-// Versions and Security read when they are showing, without an enter first,
-// the way an installed package's tabs do.
 func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "All", "yaml")
@@ -1119,7 +1097,6 @@ func TestCandidateVersionsLoadWhenTabShows(t *testing.T) {
 	}
 }
 
-// skillDocDir is a local SKILL.md a fake candidate can read without network.
 func skillDocDir(t *testing.T, name string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -1130,8 +1107,7 @@ func skillDocDir(t *testing.T, name string) string {
 	return dir
 }
 
-// A skill searches like any other source, and installs from Info because the
-// skills CLI has no version to pick: it always takes the newest commit.
+// The skills CLI has no version to pick: it always takes the newest commit.
 func TestSkillsSearchAndInstall(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "skills", "pdf")
@@ -1167,8 +1143,6 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 	}
 }
 
-// Moving on before the quiet period ends drops the earlier SKILL.md read, so
-// arrowing through results asks GitHub for the one left selected only.
 func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
 	m, _ := searchable(t)
 	var ticks []func(time.Time) tea.Msg
@@ -1203,8 +1177,6 @@ func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
 	}
 }
 
-// Skill results give the repo the room a short name leaves, while keeping the
-// status readable, and still fit the narrow table.
 func TestSkillResultColumnsRebalance(t *testing.T) {
 	m, _ := searchable(t)
 	m = runSearch(t, m, "skills", "pdf")

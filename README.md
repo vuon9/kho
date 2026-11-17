@@ -9,8 +9,7 @@
 
 <img width="1904" height="1120" alt="image" src="https://github.com/user-attachments/assets/edb2dcb7-8a0a-4c15-b51e-898eabf202f6" />
 
-
-*Kho* is Vietnamese for storehouse: one place for what your machine and your project have installed, the advisories that affect them, and the command that fixes each one. It runs as a terminal app, and as a JSON CLI for agents.
+*Kho* is Vietnamese for storehouse. It lists what your machine and your project have installed, the advisories that affect them, and the command that fixes each one. It runs as a terminal app, and as a JSON CLI for agents.
 
 <details>
 <summary>See it run</summary>
@@ -23,39 +22,10 @@ https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
 
 ## What it does
 
-- **One list** of the machine's packages, the project's dependencies, and the images they name, with installed and latest versions.
-- **Find and install** a package the machine does not have yet, from the same package managers, without leaving the terminal.
-- **Advisory checks** from [OSV](https://osv.dev), Homebrew's own scanner and [skills.sh](https://skills.sh), plus the version that fixes each finding.
-- **Project lockfiles** read in place, with dependency chains, dev markers and fix commands.
-- **Explicit changes**: install, upgrade, remove, each showing its command first.
-- **Agent-friendly**: JSON output, scriptable exit codes, and the `use-kho` skill.
-
-## Supported sources
-
-| Tool | Global | Project | Search | What kho reads | Latest version from | Security |
-|---|---|---|---|---|---|---|
-| Homebrew | ✓ |  | keyword | `brew info --json=v2 --installed`; `brew vulns --json` | Homebrew | Homebrew's own scan, formulae only |
-| npm | ✓ | ✓ | keyword | `npm ls -g`, `npm outdated -g`; `package-lock.json` | npm registry | OSV, plus direct dependencies |
-| Composer | ✓ | ✓ | keyword | `composer global show`, `composer global outdated`; `composer.lock` | Packagist | OSV, plus every dependency |
-| pipx | ✓ |  | keyword, or exact name | `pipx list --json` | PyPI | OSV |
-| uv | ✓ | ✓ | keyword, or exact name | `uv tool list`; `uv.lock` | PyPI | OSV |
-| pip |  | ✓ |  | `requirements*.txt` | PyPI | OSV |
-| Poetry |  | ✓ |  | `poetry.lock` | PyPI | OSV |
-| Go | ✓ | ✓ | keyword, or exact path | build info inside each binary; `go.mod` | Go module proxy | OSV, plus every module built in |
-| Cargo |  | ✓ |  | `Cargo.lock` | crates.io | OSV |
-| mise | ✓ |  | not yet | `mise ls --json`, `mise outdated` | mise | not covered yet |
-| Agent skills | ✓ |  | keyword | the skills CLI's lock file and agent folders | the source repo on GitHub | skills.sh audits (Gen, Socket, Snyk) |
-| Docker images | ✓ | ✓ |  | `docker image ls`; `FROM` and `image:` in project files | the image's own registry | trivy |
-
-Search is read-only and machine only: it asks registries for packages the machine does not have, while a project's dependencies stay untouched. Go and Python keyword searches use GitHub's repository search, so both are best effort; Python keeps only what PyPI publishes. Skills use the skills.sh endpoint the skills CLI's own `find` calls. Beyond a keyword, a Go query can be a module or package path or a pkg.go.dev URL, a Python query a pypi.org project page, and a skill an `owner/repo/skill` path.
-
-kho reads all three, and changes only what is on the machine:
-
-| | Machine packages | Project dependencies | Images |
-|---|---|---|---|
-| Read | ✓ | ✓ | ✓ |
-| Install or upgrade | ✓ | never | pull a tag, in the TUI |
-| Remove | ✓ | never | `D`, after naming the containers |
+- **One list** of the machine's packages, a project's dependencies, and the images they name, with installed and latest versions.
+- **Advisory checks** from [OSV](https://osv.dev), Homebrew's own scanner and [skills.sh](https://skills.sh), with the version that fixes each finding.
+- **Find and install** packages the machine does not have yet.
+- **Nothing changes without a yes.** Install, upgrade and remove show the command first. A project is only ever read.
 
 ## Install
 
@@ -64,24 +34,26 @@ brew trust vuon9/tap
 brew install --cask vuon9/tap/kho
 ```
 
-or, with Go:
+or `go install github.com/vuon9/kho@latest` (Go 1.27 or later).
 
-```bash
-go install github.com/vuon9/kho@latest
-```
+kho runs on macOS and Linux and skips any tool it can't find. Optional extras:
+
+- **docker**, to list, pull and remove images.
+- **[trivy](https://trivy.dev)**, to list the CVEs inside an image when you open its Security tab.
+- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go or Python searches can use up.
 
 <details>
 <summary>Verify a release archive</summary>
 
-To check that an archive from the [Releases page](https://github.com/vuon9/kho/releases) came from this repo's release workflow, verify its build provenance with the GitHub CLI (2.49 or later, signed in):
+Check an archive's build provenance with the GitHub CLI (2.49 or later):
 
 ```bash
-VERSION=0.1.8   # the release you downloaded
+VERSION=0.1.17   # the release you downloaded
 gh attestation verify "kho_${VERSION}_darwin_arm64.tar.gz" --repo vuon9/kho \
   --signer-workflow vuon9/kho/.github/workflows/release.yml
 ```
 
-`checksums.txt` is signed with keyless cosign. Download it and `checksums.txt.sigstore.json` from the release, then verify:
+`checksums.txt` is signed with keyless cosign. Download it and `checksums.txt.sigstore.json` from the release, then:
 
 ```bash
 cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
@@ -91,19 +63,24 @@ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
 
 </details>
 
-### Requirements
-
-macOS or Linux. Everything else is optional, and kho skips what it can't find:
-
-- **The package managers you use.** One that isn't installed shows as skipped, not as an error.
-- **docker**, to see which images are on disk, and to pull or remove one.
-- **[trivy](https://trivy.dev)**, to list the CVEs inside an image. It runs when you open an image's Security tab. Install it with `brew install trivy`.
-- **A GitHub token** (`GITHUB_TOKEN`, `GH_TOKEN`, or a signed-in `gh`). Without one, GitHub allows 60 requests an hour, which a long skills list or a few Go or Python keyword searches can use up.
-- **Go 1.27 or later**, only to install with `go install`.
-
 ## Use it
 
-Run `kho`, or `kho <folder>` to read another folder's project. Every action has a shortcut and `?` lists them all; panels resize, sidebar text can be copied, and there are five themes. On a package manager's panel, `n` opens a quiet search for a package the machine does not have; nothing is asked of a registry until you press `enter`. On a skill's Info tab, SKILL.md sits below the fixed fields and scrolls on its own; a new skill's loads after a short pause.
+Run `kho` for the terminal app, or `kho <folder>` to read another folder's project. Press `?` for every key. On a package manager's panel, `n` searches for a package to install.
+
+The CLI does the same from a script. JSON goes to stdout, everything else to stderr, and `install` and `remove` only print what they would run until you add `--yes`.
+
+| Command | Does |
+|---|---|
+| `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and their advisories |
+| `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
+| `kho search <query...> [--source brew,npm] [--limit N] [--json]` | find packages this machine does not have |
+| `kho show <source>/<name> [--json]` | one package, with every advisory |
+| `kho install <source>/<name>@<version\|latest> [--yes] [--json]` | install, upgrade or downgrade one package |
+| `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
+| `kho history [--json] [--changes] [-n N]` | the commands kho ran, newest first |
+| `kho list` | every package as JSON |
+
+`<source>` is `brew`, `cask`, `npm`, `composer`, `pipx`, `uv`, `go`, `mise` or `skills`. Exit codes: 0 ok or safe, 1 error, 2 usage, 3 at risk, 4 incomplete scan under `--require` or `--require-complete`. [skills/use-kho/SKILL.md](skills/use-kho/SKILL.md) documents every JSON field.
 
 <details>
 <summary>Every status, and what it means</summary>
@@ -137,63 +114,39 @@ Run `kho`, or `kho <folder>` to read another folder's project. Every action has 
 
 </details>
 
-## Commands
+## Supported sources
 
-`kho` with no arguments opens the terminal app. These commands are the other half: `--json` where it is offered, results on stdout with everything else on stderr, and nothing changes the machine without `--yes`.
+| Tool | Machine | Project | Search | Security |
+|---|---|---|---|---|
+| npm | ✓ | ✓ | ✓ | OSV, plus direct dependencies |
+| Composer | ✓ | ✓ | ✓ | OSV, plus every dependency |
+| Go | ✓ | ✓ | ✓ | OSV, plus every module built in |
+| uv | ✓ | ✓ | ✓ | OSV |
+| Homebrew | ✓ |  | ✓ | Homebrew's own scan, formulae only |
+| pipx | ✓ |  | ✓ | OSV |
+| Agent skills | ✓ |  | ✓ | skills.sh audits (Gen, Socket, Snyk) |
+| Docker images | ✓ | ✓ |  | trivy, on request |
+| Cargo, pip, Poetry |  | ✓ |  | OSV |
+| mise | ✓ |  |  | not covered yet |
 
-| Command | Does |
-|---|---|
-| `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and known advisories |
-| `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
-| `kho search <query...> [--source brew,npm] [--limit N] [--json]` | find packages this machine does not have |
-| `kho show <source>/<name> [--json]` | one package, with every advisory |
-| `kho install <source>/<name>@<version\|latest> [--yes] [--json]` | install a new package, or upgrade or downgrade one |
-| `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
-| `kho history [--json] [--changes] [-n N]` | the commands kho ran, newest first |
-| `kho list` | every package as JSON |
-| `kho version`, `kho help` | the version, and every command |
-
-`<source>` is where kho reads or installs the package: `brew` and `cask` for Homebrew, `npm`, `composer`, `pipx`, `uv`, `mise`, `go`, `skills`. Project dependencies have no source, because kho never installs or removes them. `kho search` uses the same labels with `--source`; `brew`, `cask`, `npm`, `composer`, `go`, `pipx`, `uv` and `skills` answer keywords; a Go query can also be a package or module path, a Python query a pypi.org project page, and a skill an `owner/repo/skill` path. Homebrew and skills install only their newest version.
-
-`kho check` exits 0 when safe, 3 when at risk, and 4 when the scan was incomplete and a gate was asked for. `kho search` exits 0 when a source answered, 1 when none did, and 2 on a usage mistake. `kho install` and `kho remove` exit 1 when the source fails, and 2 on a usage mistake.
-
-The JSON each command returns, field by field, is in [skills/use-kho/SKILL.md](skills/use-kho/SKILL.md).
-
-<details>
-<summary>Uninstalling with <code>kho remove</code></summary>
-
-`kho remove` runs the source's own uninstaller.
-
-One `<source>/<name>`, no version, since the installed version is what goes. Without `--yes` it prints the exact command and changes nothing:
-
-```bash
-kho remove pipx/bramble               # would run: pipx uninstall bramble
-kho remove pipx/bramble --yes         # removed pipx/bramble 26.10.1
-kho remove brew/anvil --yes --force   # override Homebrew's dependency refusal
-```
-
-| Flag | Does |
-|---|---|
-| `--yes` | run it; without this kho only prints what it would run |
-| `--force` | Homebrew formulae only: add `--ignore-dependencies` when another installed formula needs this one. A usage error on any other source. |
-| `--json` | print `{"package","version","command","ran","error","notes"}` instead of text |
-
-</details>
+Rows go from the most supported to the least. kho reads the managers' own JSON output for the machine, and parses a project's lockfiles itself so it never runs a project's code. Go and Python keyword searches go through GitHub's repository search, so they are best effort. A Go query can also be a module path or a pkg.go.dev URL, a Python query a pypi.org page, and a skill an `owner/repo/skill` path.
 
 ## For agents
 
-Give your agents the `use-kho` skill. `-g` installs it for your user, so it works in every project:
+Give your agent the `use-kho` skill (`-g` installs it for every project):
 
 ```bash
 npx skills add vuon9/kho --skill use-kho -g
 ```
 
-Then ask it "/use-kho am I safe?" or "/use-kho fix what's vulnerable". The skill runs kho's JSON commands, reports each risk with the version that fixes it, and changes a package only after you say yes to that package.
+Then ask "/use-kho am I safe?" or "/use-kho fix what's vulnerable". The agent reports each risk with the version that fixes it, and changes a package only after you say yes to it.
+
+In CI, `kho check --project . --prod-only --json` exits 3 when a pull request adds a vulnerable dependency.
 
 <details>
 <summary>A daily report from your agent</summary>
 
-Paste this into Claude Code, Hermes Agent, or any agent that can schedule tasks:
+Paste this into any agent that can schedule tasks:
 
 ```text
 With the use-kho skill, set up a task that runs kho check every morning at 9,
@@ -201,61 +154,51 @@ on this machine. Send me the report the skill describes. Never change anything
 from the task; I'll approve updates in a conversation.
 ```
 
-`--require uv,npm` fails only when one of the named sources could not be read, which is what a scheduled check wants; `--require-complete` fails whenever anything was skipped, an OSV, Homebrew or skills.sh lookup included. `kho help` lists the rest.
+`--require uv,npm` fails only when a named source could not be read; `--require-complete` fails whenever anything was skipped.
 
 </details>
 
-`kho check --project [folder]` does the same for a project's lockfiles instead of the machine, so it works as a CI step that fails a pull request adding a vulnerable dependency. `--prod-only` leaves dev dependencies out of the verdict:
-
-```bash
-kho check --project . --prod-only --json
-```
-
 ## What leaves your machine
 
-kho changes nothing until you confirm. To search, it sends the words you type to the managers' registries, including GitHub for a Go keyword search and skills.sh for a skill search. To check versions and security it asks the services below about the packages and images you have, so each one learns those names and sees your IP address. Nothing else is sent: no analytics, no paths, no file contents. Homebrew answers version questions from its local copy of its package list. Its own scanner, `brew vulns`, asks OSV.dev about the source repository and tag of each installed formula and keeps Homebrew's advisory feed up to date.
-
-kho uses your GitHub token only for GitHub's API. It keeps the token in memory and never stores or prints it.
+To check versions and advisories, kho asks the services below about the packages and images you have, so each one learns those names and sees your IP address. A search sends the words you type. Nothing else is sent: no analytics, no paths, no file contents. Your GitHub token stays in memory and goes only to GitHub's API.
 
 <details>
 <summary>Every service kho asks, and what it learns</summary>
 
 | Where | What it learns | Asked by |
 |---|---|---|
-| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages, and of their dependencies, including every package in a project's lockfiles; and, through `brew vulns`, the source repository and tag of each installed Homebrew formula | kho |
-| PyPI (`pypi.org`) | names of pipx and uv packages, of exact-name lookups, of the Python keyword searches that GitHub finds, and of a project's direct Python dependencies | kho |
+| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages and their dependencies, including every package in a project's lockfiles; and, through `brew vulns`, the source repository and tag of each installed Homebrew formula | kho |
+| PyPI (`pypi.org`) | names of pipx and uv packages, of Python search results and exact-name lookups, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
-| GitHub API (`api.github.com`) | repositories of skills, and of packages that link one, for commits and release notes; repositories matching a Go or Python keyword search, their file trees, and a new skill's SKILL.md | kho |
-| raw.githubusercontent.com | the `go.mod`, `pyproject.toml` or `setup.cfg`/`setup.py` of repos matching a keyword search, and a new skill's SKILL.md | kho |
+| GitHub API (`api.github.com`) | repositories of skills and of packages that link one; repositories matching a Go or Python search, their file trees, and a new skill's SKILL.md | kho |
+| raw.githubusercontent.com | the `go.mod`, `pyproject.toml` or `setup.cfg`/`setup.py` of repositories matching a search, and a new skill's SKILL.md | kho |
 | skills.sh | skill names and their repositories; the words you search for | kho |
-| npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho for projects and search |
+| npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho |
 | Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |
 | crates.io | names of a project's direct Rust crates | kho |
 | mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |
 | Docker Hub API (`hub.docker.com`) | tag names, digests and push dates of an image's release line | kho |
-| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or whichever registry the reference names) | which image a reference points to: its manifest and config, never a layer | kho |
+| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or the registry a reference names) | which image a reference points to: its manifest and config, never a layer | kho |
 | endoflife.date | the product and release line of an image | kho |
-| trivy's sources | the image it scans, which it may download, and its own vulnerability database | trivy, when you open an image's Security tab |
+| trivy's sources | the image it scans, and its own vulnerability database | trivy, when you open an image's Security tab |
+
+Homebrew answers version questions from its local copy of its package list.
 
 </details>
 
 <details>
 <summary>What kho keeps on disk</summary>
 
-- a security cache, reused for 12 hours: `kho/security.json` in your user cache folder (`~/Library/Caches` on macOS)
-- an image cache, reused for 6 hours: `kho/images.json`, beside it
-- the last 500 commands it ran: `kho/history.jsonl` in `$XDG_STATE_HOME`, `~/.local/state` by default
-- your theme: `theme`, next to the history
+- `kho/security.json` in your user cache folder (`~/Library/Caches` on macOS): advisories, reused for 12 hours
+- `kho/images.json`, beside it: image lookups, reused for 6 hours
+- `kho/history.jsonl` in `$XDG_STATE_HOME` (`~/.local/state` by default): the last 500 commands kho ran
+- `theme`, next to the history
 
 </details>
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to report a problem and open a change. [AGENTS.md](AGENTS.md) has the code layout and the safety rules.
-
-```bash
-gofmt -l . && go vet ./... && go test -race ./...
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md). [AGENTS.md](AGENTS.md) has the code layout and the safety rules.
 
 ## License
 

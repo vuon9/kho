@@ -12,15 +12,12 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// The package registries kho asks itself.
 const (
 	npmRegistry = "https://registry.npmjs.org"
 	pypiSite    = "https://pypi.org"
 	goProxy     = "https://proxy.golang.org"
 )
 
-// latestURL is where a package's registry says its newest version, by OSV
-// ecosystem, or "" when kho doesn't know one.
 func latestURL(p Package) string {
 	switch Ecosystem(p) {
 	case vuln.NPM:
@@ -42,8 +39,8 @@ func latestURL(p Package) string {
 
 var goModule = regexp.MustCompile(`^[a-z0-9._~!/-]+$`)
 
-// segments escapes each part of a slash separated name, so a name read from
-// a project's lockfile, such as "../x?y", stays one name in a registry URL.
+// A name read from a project's lockfile, such as "../x?y", must stay one name
+// in a registry URL.
 func segments(name string) string {
 	parts := strings.Split(name, "/")
 	for i, p := range parts {
@@ -59,8 +56,7 @@ func packagistURL(name string) string {
 	return "https://repo.packagist.org/p2/" + segments(name) + ".json"
 }
 
-// RegistryLatest asks a package's registry for its newest version. Project
-// packages use it, since kho never runs a project's own tools.
+// Project packages use it, since kho never runs a project's own tools.
 func RegistryLatest(ctx context.Context, p Package) (string, error) {
 	u := latestURL(p)
 	if u == "" {
@@ -95,9 +91,8 @@ func RegistryLatest(ctx context.Context, p Package) (string, error) {
 	return "", nil
 }
 
-// newestStable is the highest release that isn't a preview like
-// 3.0.0-beta1. It goes by version, not date, since a backport to an older
-// line is often published after the newest release.
+// By version, not date, since a backport to an older line is often published
+// after the newest release.
 func newestStable(rels []Release) string {
 	best := ""
 	for _, r := range rels {
@@ -111,12 +106,10 @@ func newestStable(rels []Release) string {
 	return best
 }
 
-// MaxLatest caps the registry lookups one project can cause.
 var MaxLatest = 200
 
-// FillLatest looks up the newest version of every direct package in pkgs,
-// up to MaxLatest. Transitive ones are left alone: a project can have a
-// thousand, and the direct ones are what a person upgrades.
+// Transitive packages are left alone: a project can have a thousand, and the
+// direct ones are what a person upgrades.
 func FillLatest(ctx context.Context, pkgs []Package) []Package {
 	var direct []Package
 	var at []int
@@ -137,9 +130,8 @@ func FillLatest(ctx context.Context, pkgs []Package) []Package {
 	return pkgs
 }
 
-// RegistryVersions lists a project package's published versions straight
-// from its registry, newest first. npm's are read from the registry's own
-// document rather than `npm view`, which would load the project's .npmrc.
+// npm's are read from the registry's own document rather than `npm view`,
+// which would load the project's .npmrc.
 func RegistryVersions(ctx context.Context, p Package) ([]Release, error) {
 	if latestURL(p) == "" {
 		return nil, fmt.Errorf("kho has no version list for %s packages yet", p.Source)

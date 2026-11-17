@@ -10,8 +10,6 @@ import (
 	"github.com/vuon9/kho/internal/image"
 )
 
-// Cache keeps what a registry said for a while, so a machine with forty
-// images does not ask forty times on every run.
 type Cache struct {
 	Path string
 	TTL  time.Duration
@@ -28,7 +26,6 @@ type entry struct {
 	At     time.Time    `json:"at"`
 }
 
-// Path is where kho keeps what the registries said.
 func Path() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
@@ -37,8 +34,6 @@ func Path() string {
 	return filepath.Join(dir, "kho", "images.json")
 }
 
-// Open returns a cache at path, or one that only lives for this run when path
-// is empty.
 func Open(path string, ttl time.Duration) *Cache {
 	return &Cache{Path: path, TTL: ttl, entries: map[string]entry{}}
 }
@@ -66,7 +61,6 @@ func (c *Cache) load() {
 	}
 }
 
-// Get returns a cached answer that is still young enough.
 func (c *Cache) Get(key string) (image.Remote, image.Life, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -78,7 +72,6 @@ func (c *Cache) Get(key string) (image.Remote, image.Life, bool) {
 	return e.Remote, e.Life, true
 }
 
-// PutRemote remembers what a registry said about a reference.
 func (c *Cache) PutRemote(key string, remote image.Remote) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -89,7 +82,6 @@ func (c *Cache) PutRemote(key string, remote image.Remote) {
 	c.dirty = true
 }
 
-// PutLife remembers what a lifecycle page said about a product line.
 func (c *Cache) PutLife(key string, life image.Life) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -100,10 +92,8 @@ func (c *Cache) PutLife(key string, life image.Life) {
 	c.dirty = true
 }
 
-// keepFor is how long an entry stays in the file after it was asked.
 const keepFor = 30 * 24 * time.Hour
 
-// Save writes the cache back, dropping entries that are too old to use.
 func (c *Cache) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -17,8 +17,6 @@ import (
 	"github.com/vuon9/kho/internal/image"
 )
 
-// registryServer is a registry that asks for a token, then serves an index, a
-// platform manifest and a config blob, the way a real one does.
 func registryServer(t *testing.T) (*httptest.Server, *int) {
 	t.Helper()
 	var asks int
@@ -175,8 +173,6 @@ func TestReadConfig(t *testing.T) {
 	}
 }
 
-// A full version tag asks about its line, not about that one tag, or the list
-// is a single row.
 func TestHubTagsAskForTheLineOfAFullVersion(t *testing.T) {
 	tests := []struct{ tag, line string }{
 		{"3.19", "3.19"},
@@ -193,8 +189,6 @@ func TestHubTagsAskForTheLineOfAFullVersion(t *testing.T) {
 	}
 }
 
-// A tag names a release line, and the repository's newest tags belong to newer
-// lines, so the Hub is asked for the line's own tags.
 func TestHubTagsAskForTheLine(t *testing.T) {
 	var asked []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,8 +223,6 @@ func TestHubTagsAskForTheLine(t *testing.T) {
 	}
 }
 
-// mirrorServer answers per host, so a test can make one mirror refuse and see
-// which source kho settles on.
 func mirrorServer(t *testing.T, answer map[string]http.HandlerFunc) (*httptest.Server, *[]string) {
 	t.Helper()
 	var asked []string
@@ -250,8 +242,6 @@ func mirrorServer(t *testing.T, answer map[string]http.HandlerFunc) (*httptest.S
 	return srv, &asked
 }
 
-// byHost routes each registry host at the same test server, keeping the host in
-// the path so the handlers can tell them apart.
 func byHost(srv *httptest.Server) func(string) string {
 	return func(host string) string { return srv.URL + "/" + host }
 }
@@ -335,8 +325,6 @@ func TestMergeTagsKeepsTheFirstOfAName(t *testing.T) {
 	}
 }
 
-// A registry lists tags lexically, so the line's tags are found by asking for
-// what follows the line, and only the line's own tags are shown.
 func TestRegistryTagsAskForTheLine(t *testing.T) {
 	var asked []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +351,6 @@ func TestRegistryTagsAskForTheLine(t *testing.T) {
 	}
 }
 
-// A line named thinly still gets the repository's recent tags beside it.
 func TestHubTagsAddRecentWhenLineIsThin(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("name") == "13.4" {
@@ -384,8 +371,6 @@ func TestHubTagsAddRecentWhenLineIsThin(t *testing.T) {
 	}
 }
 
-// The hub's web API is rate limited on its own, and the registry lists the
-// same tags without dates, so a 429 there does not empty the tab.
 func TestTagsFallBackToTheRegistryWhenTheHubFails(t *testing.T) {
 	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -410,8 +395,6 @@ func TestTagsFallBackToTheRegistryWhenTheHubFails(t *testing.T) {
 	}
 }
 
-// The hub matches a line anywhere in a tag, so a line filter must not let a
-// newer major version's tags into the list.
 func TestHubTagsKeepOnlyTheLine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"results":[{"name":"16.13"},{"name":"15.13"},{"name":"13.23"},{"name":"13.22"},{"name":"13.21"},
@@ -433,8 +416,6 @@ func TestHubTagsKeepOnlyTheLine(t *testing.T) {
 	}
 }
 
-// An image's version is the thing it is for, not the runtime it is built on:
-// composer:2 carries both PHP_VERSION and COMPOSER_VERSION.
 func TestUpstreamIsTheProductsVersion(t *testing.T) {
 	config := []byte(`{"created":"2026-11-05T08:00:00Z","config":{"Env":[
 		"PATH=/usr/local/bin","PHP_VERSION=8.5.12","PHP_URL=https://example.invalid/php",
@@ -465,8 +446,6 @@ func TestUpstreamIsTheProductsVersion(t *testing.T) {
 	}
 }
 
-// The runtime the image is built on is not its version, so a base whose label
-// names it leaves that key out.
 func TestUpstreamIgnoresTheBaseRuntime(t *testing.T) {
 	config := []byte(`{"created":"2026-11-05T08:00:00Z","config":{"Env":["PHP_VERSION=8.5.12"],"Labels":{"org.opencontainers.image.base.name":"docker.io/library/php"}}}`)
 	child := []byte(fmt.Sprintf(`{"config":{"digest":"%s"}}`, digestOf(config)))

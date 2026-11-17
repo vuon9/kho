@@ -136,10 +136,11 @@ func TestGoBinSearchByKeyword(t *testing.T) {
 		return []githubRepository{
 			{FullName: "acme/tool", Description: "A tool for widgets", HTMLURL: "https://github.com/acme/tool", Stars: 10},
 			{FullName: "acme/fork", Fork: true},
+			{FullName: "mallory/tool", Description: "A copy whose go.mod names acme's module", Stars: 1},
 		}, nil
 	}
 	goModFile = func(_ context.Context, repo string) (string, error) {
-		if repo != "acme/tool" {
+		if repo != "acme/tool" && repo != "mallory/tool" {
 			return "", nil
 		}
 		return "example.com/tool", nil

@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// DB is what kho knows about security, saved between runs so badges show
-// at once and a scan only asks about what changed or went stale.
 type DB struct {
 	Format     int                   `json:"format"`
 	Checked    map[string]time.Time  `json:"checked"`
@@ -17,25 +15,20 @@ type DB struct {
 	Advisories map[string]Advisory   `json:"advisories"`
 	Audits     map[string]SkillAudit `json:"audits"`
 	AuditedAt  map[string]time.Time  `json:"auditedAt"`
-	// History maps "ecosystem/name" to every advisory the package ever had.
+	// Keyed by "ecosystem/name".
 	History   map[string][]string  `json:"history"`
 	HistoryAt map[string]time.Time `json:"historyAt"`
-	// Brew is the last machine-wide Homebrew scan and what it could not check.
-	Brew Brew `json:"brew"`
+	Brew      Brew                 `json:"brew"`
 }
 
-// MaxAge is how long a result stays fresh. New advisories appear daily, so
-// results older than this are asked for again.
+// New advisories appear daily.
 const MaxAge = 12 * time.Hour
 
-// format changes whenever what kho stores changes, so a cache from an older
-// build is dropped instead of misread.
+// Bump format whenever what kho stores changes, so an older cache is dropped, not misread.
 const format = 4
 
-// stored is the shape format holds: each JSON path with the type its value
-// decodes to. formats keeps a checksum of stored for every format, so stored
-// cannot change without a new one: add a line for each new format and never
-// edit an old one. TestStoredShapeMatchesFormat checks both.
+// stored is format's JSON shape. formats keeps a checksum of stored per format: add a
+// line for each new format, never edit an old one. TestStoredShapeMatchesFormat checks both.
 var stored = []string{
 	"advisories.*.aliases[] string",
 	"advisories.*.details string",
@@ -91,7 +84,6 @@ func Path() string {
 	return filepath.Join(dir, "kho", "security.json")
 }
 
-// Load reads the cache at path. A missing or unreadable cache is an empty one.
 func Load(path string) *DB {
 	db := NewDB()
 	db.Format = 0
@@ -130,7 +122,6 @@ func (db *DB) Save(path string) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// Stale picks the queries with no result, or one older than MaxAge.
 func (db *DB) Stale(queries []Query, now time.Time) []Query {
 	var stale []Query
 	for _, q := range queries {
@@ -151,8 +142,6 @@ func (db *DB) Merge(hits map[string][]string, advisories map[string]Advisory, no
 	}
 }
 
-// StaleAudits keeps the skills, by GitHub source as SkillAudits takes them,
-// with no audit result or one older than MaxAge.
 func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[string][]string {
 	stale := map[string][]string{}
 	for source, slugs := range bySource {
@@ -165,12 +154,9 @@ func (db *DB) StaleAudits(bySource map[string][]string, now time.Time) map[strin
 	return stale
 }
 
-// MergeAudits keeps what skills.sh sent back for the asked skills. An answer
-// marks every asked skill fresh, even one skills.sh has no audit for, so it is
-// not asked again until MaxAge. A failed ask marks none fresh, so the next scan
-// asks again, but the audits that came back before it failed still count. A
-// nil answer means nothing was asked, as SkillAudits does with telemetry off,
-// so it marks none fresh either.
+// An answer marks every asked skill fresh, even one skills.sh has no audit for. A failed
+// ask marks none fresh, but the audits that came back still count. A nil answer means
+// nothing was asked (telemetry off), so it marks none fresh either.
 func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudit, err error, now time.Time) {
 	maps.Copy(db.Audits, audits)
 	if err != nil || audits == nil {
@@ -183,7 +169,6 @@ func (db *DB) MergeAudits(asked map[string][]string, audits map[string]SkillAudi
 	}
 }
 
-// For returns the advisories that affect q, without aliases, worst first.
 func (db *DB) For(q Query) []Advisory {
 	var advs []Advisory
 	for _, id := range db.Hits[q.Key()] {
@@ -196,8 +181,6 @@ func (db *DB) For(q Query) []Advisory {
 
 func historyKey(ecosystem, name string) string { return ecosystem + "/" + name }
 
-// HistoryFresh reports whether the package's full advisory history is cached
-// and younger than MaxAge.
 func (db *DB) HistoryFresh(ecosystem, name string, now time.Time) bool {
 	t, ok := db.HistoryAt[historyKey(ecosystem, name)]
 	return ok && now.Sub(t) <= MaxAge
@@ -213,7 +196,6 @@ func (db *DB) MergeHistory(ecosystem, name string, advs []Advisory, now time.Tim
 	db.HistoryAt[historyKey(ecosystem, name)] = now
 }
 
-// Known is the package's full advisory history, without aliases.
 func (db *DB) Known(ecosystem, name string) []Advisory {
 	var advs []Advisory
 	for _, id := range db.History[historyKey(ecosystem, name)] {

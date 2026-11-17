@@ -29,7 +29,6 @@ func (Brew) List(ctx context.Context) ([]Package, error) {
 // brew info already knows the latest version from its local API cache.
 func (Brew) Latest(_ context.Context, pkgs []Package) ([]Package, error) { return pkgs, nil }
 
-// brewInstalled is one installed keg of a formula.
 type brewInstalled struct {
 	Version             string    `json:"version"`
 	InstalledOnRequest  bool      `json:"installed_on_request"`
@@ -44,6 +43,7 @@ type brewDep struct {
 
 type brewFormula struct {
 	Name      string `json:"name"`
+	FullName  string `json:"full_name"`
 	Tap       string `json:"tap"`
 	Desc      string `json:"desc"`
 	Homepage  string `json:"homepage"`
@@ -64,6 +64,7 @@ type brewFormula struct {
 
 type brewCask struct {
 	Token       string `json:"token"`
+	FullToken   string `json:"full_token"`
 	Tap         string `json:"tap"`
 	Desc        string `json:"desc"`
 	Homepage    string `json:"homepage"`
@@ -145,11 +146,8 @@ func parseBrew(data []byte) ([]Package, error) {
 	return pkgs, nil
 }
 
-// ErrBrewVulnsUnsupported says the brew on PATH predates the built-in vulns
-// command, which Homebrew added in 6.0.11.
 var ErrBrewVulnsUnsupported = errors.New("brew vulns needs Homebrew 6.0.11 or later")
 
-// ScanBrewVulns runs Homebrew's own scan over the installed formulae.
 // Homebrew resolves each formula's source repository and revision before it
 // asks OSV, and knows which findings its own patches already fix, so kho does
 // not have to guess an ecosystem for brew.
@@ -164,9 +162,8 @@ func ScanBrewVulns(ctx context.Context) (vuln.BrewResult, error) {
 	return ParseBrewVulns(out)
 }
 
-// ParseBrewVulns reads `brew vulns --json`. Homebrew exits non-zero for
-// findings, for an incomplete scan, and for a failed one, so the JSON decides
-// what happened and the exit status is not read here.
+// Homebrew exits non-zero for findings, for an incomplete scan, and for a
+// failed one, so the JSON decides what happened and the exit status is not read.
 func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
 	var raw struct {
 		Findings []struct {
@@ -184,26 +181,30 @@ func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
 		return vuln.BrewResult{}, fmt.Errorf("brew vulns: %w", err)
 	}
 	result := vuln.BrewResult{Checked: raw.Checked, Complete: raw.Complete}
-	if len(raw.SkippedFormulae) > 0 {
-		result.Skipped = raw.SkippedFormulae
+	for _, name := range raw.SkippedFormulae {
+		result.Skipped = append(result.Skipped, brewShortName(name))
 	}
-	if len(raw.OutdatedWithoutSBOM) > 0 {
-		result.OutdatedWithoutSBOM = raw.OutdatedWithoutSBOM
+	for _, name := range raw.OutdatedWithoutSBOM {
+		result.OutdatedWithoutSBOM = append(result.OutdatedWithoutSBOM, brewShortName(name))
 	}
 	if len(raw.Unscanned) > 0 {
 		result.Unscanned = raw.Unscanned
 	}
 	for _, f := range raw.Findings {
-		finding := vuln.BrewFinding{Formula: f.Formula, Version: f.Version}
+		name := brewShortName(f.Formula)
+		finding := vuln.BrewFinding{Formula: name, Version: f.Version}
 		for _, v := range f.Vulnerabilities {
-			finding.Advisories = append(finding.Advisories, v.advisory(f.Formula, f.Version))
+			finding.Advisories = append(finding.Advisories, v.advisory(name, f.Version))
 		}
 		result.Findings = append(result.Findings, finding)
 	}
 	return result, nil
 }
 
-// brewVuln is one entry of a finding's vulnerabilities or patched lists.
+// brewShortName turns Homebrew's full name for a tap's formula, tap/name, into
+// the name `brew info` lists it under.
+func brewShortName(full string) string { return full[strings.LastIndex(full, "/")+1:] }
+
 type brewVuln struct {
 	ID            string   `json:"id"`
 	Severity      string   `json:"severity"`
@@ -229,10 +230,9 @@ func (v brewVuln) advisory(formula, version string) vuln.Advisory {
 	return a
 }
 
-// brewFixed is the lowest released version above the scanned one. Homebrew
-// also lists commit SHAs for patches, and tags that carry their project's
-// name; neither can be compared with a formula version, so they are left out
-// and the finding keeps no fixed version.
+// Homebrew also lists commit SHAs for patches, and tags that carry their
+// project's name; neither can be compared with a formula version, so they are
+// left out and the finding keeps no fixed version.
 func brewFixed(fixed []string, version string) string {
 	best := ""
 	for _, f := range fixed {
@@ -256,7 +256,7 @@ func brewVersion(v string) bool {
 func (Brew) Deps(_ context.Context, p Package) ([]Dep, error) { return p.Deps, nil }
 
 // Homebrew keeps no version history, so the GitHub releases of the formula's
-// source repo stand in for it. Without a repo, the known versions remain.
+// source repo stand in for it.
 func (Brew) Versions(ctx context.Context, p Package) ([]Release, error) {
 	if p.Repo != "" {
 		if rels, err := githubReleases(ctx, p.Repo); err == nil && len(rels) > 0 {
@@ -272,18 +272,16 @@ func (Brew) Versions(ctx context.Context, p Package) ([]Release, error) {
 			rels = append(rels, Release{Version: v, URL: p.Homepage})
 		}
 	}
-	// A package the machine does not have has no installed version to add.
 	if len(p.Versions) == 0 && p.Version != "" && p.Version != p.Latest {
 		rels = append(rels, Release{Version: p.Version, URL: p.Homepage})
 	}
 	return rels, nil
 }
 
-// brewNoResults is how Homebrew reports a search that matched nothing.
 const brewNoResults = "no formulae or casks found"
 
-// Search finds formulae and casks by keyword. Homebrew has no JSON search, so
-// the names come from `brew search` and `brew info --json=v2` fills them in.
+// Homebrew has no JSON search, so the names come from `brew search` and
+// `brew info --json=v2` fills them in.
 func (Brew) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	limit = searchLimit(limit)
 	var mu sync.Mutex
@@ -303,7 +301,7 @@ func (Brew) Search(ctx context.Context, query string, limit int) ([]Package, err
 		})
 	}
 	wg.Wait()
-	if len(names["brew"]) == 0 && len(names["cask"]) == 0 && len(errs) == 2 {
+	if len(names["brew"]) == 0 && len(names["cask"]) == 0 && len(errs) > 0 {
 		return nil, errors.Join(errs["brew"], errs["cask"])
 	}
 	var pkgs []Package
@@ -324,8 +322,6 @@ func (Brew) Search(ctx context.Context, query string, limit int) ([]Package, err
 	return pkgs, nil
 }
 
-// Find looks up one formula or cask by its exact name. An empty source tries
-// the formula first, then the cask.
 func (Brew) Find(ctx context.Context, source, name string) (Package, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -365,7 +361,7 @@ func brewSearchNames(ctx context.Context, source, query string, limit int) ([]st
 	if source == "cask" {
 		flag = "--cask"
 	}
-	out, err := run(ctx, "brew", "search", flag, query)
+	out, err := run(ctx, "brew", "search", flag, "--", query)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), brewNoResults) {
 			return nil, nil
@@ -379,7 +375,6 @@ func brewSearchNames(ctx context.Context, source, query string, limit int) ([]st
 	return names, nil
 }
 
-// parseBrewSearch reads the names `brew search` prints, one per line.
 func parseBrewSearch(out []byte) []string {
 	var names []string
 	for line := range strings.Lines(string(out)) {
@@ -392,8 +387,7 @@ func parseBrewSearch(out []byte) []string {
 	return names
 }
 
-// brewLookup asks brew info about names, which works whether or not the
-// machine has them.
+// brew info works whether or not the machine has the names.
 func brewLookup(ctx context.Context, source string, names []string) ([]Package, error) {
 	args := []string{"info", "--json=v2"}
 	if source == "cask" {
@@ -410,16 +404,21 @@ func brewLookup(ctx context.Context, source string, names []string) ([]Package, 
 	if err != nil {
 		return nil, err
 	}
+	// A tap's package comes back under its short name, while search printed
+	// tap/name. The row keeps the printed name, so installing it taps the repo.
 	byName := map[string]Package{}
 	for _, f := range info.Formulae {
 		byName[f.Name] = brewFormulaPackage(f)
+		byName[f.FullName] = brewFormulaPackage(f)
 	}
 	for _, c := range info.Casks {
 		byName[c.Token] = brewCaskPackage(c)
+		byName[c.FullToken] = brewCaskPackage(c)
 	}
 	pkgs := make([]Package, 0, len(names))
 	for _, name := range names {
 		if p, ok := byName[name]; ok {
+			p.Name = name
 			pkgs = append(pkgs, p)
 			continue
 		}
@@ -438,8 +437,6 @@ func brewCaskPackage(c brewCask) Package {
 		Homepage: c.Homepage, Origin: c.Tap, Repo: githubRepo(c.Homepage)}
 }
 
-// parseBrewCatalog reads brew info --json=v2 for packages the machine may not
-// have. Installed versions are ignored; latest and metadata are what matter.
 func parseBrewCatalog(data []byte) (brewInfo, error) {
 	var info brewInfo
 	if err := json.Unmarshal(data, &info); err != nil {

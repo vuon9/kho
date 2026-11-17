@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -22,7 +24,6 @@ const (
 	pySearchWorkers = 4
 )
 
-// pythonFound is one repository that maps to a PyPI project.
 type pythonFound struct {
 	project pypiProject
 	repo    githubRepository
@@ -45,7 +46,6 @@ var pythonSearches = struct {
 	group   singleflight.Group
 }{byQuery: map[string][]pythonFound{}}
 
-// Search finds Python tools by keyword through GitHub and PyPI.
 func (Pipx) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	return searchPython(ctx, "pipx", query, limit)
 }
@@ -73,6 +73,9 @@ func searchPython(ctx context.Context, source, query string, limit int) ([]Packa
 	}
 	out := make([]Package, 0, len(found))
 	for _, f := range found {
+		if !pypiNamesRepo(f.project, f.repo.FullName) {
+			continue
+		}
 		p := pypiCandidate(f.project, source, f.name)
 		p.Repo = f.repo.FullName
 		out = append(out, p)
@@ -80,8 +83,23 @@ func searchPython(ctx context.Context, source, query string, limit int) ([]Packa
 	return out, nil
 }
 
-// findPythonProjects turns a query into PyPI projects, once per query even when
-// pipx and uv ask together.
+// A repo can claim any name, so when PyPI's own links point at
+// GitHub, one of them must be that repo, or installing the name would bring
+// someone else's code. A project that links no repo cannot be checked.
+func pypiNamesRepo(r pypiProject, repo string) bool {
+	linked := false
+	for _, u := range append([]string{r.Info.HomePage}, slices.Collect(maps.Values(r.Info.ProjectURLs))...) {
+		if got := githubRepo(u); got != "" {
+			if strings.EqualFold(got, repo) {
+				return true
+			}
+			linked = true
+		}
+	}
+	return !linked
+}
+
+// Once per query, even when pipx and uv ask together.
 func findPythonProjects(ctx context.Context, query string, limit int) ([]pythonFound, error) {
 	key := fmt.Sprintf("%s\x00%d", query, limit)
 	pythonSearches.Lock()
@@ -106,7 +124,6 @@ func findPythonProjects(ctx context.Context, query string, limit int) ([]pythonF
 	return v.([]pythonFound), nil
 }
 
-// searchPythonProjects does the GitHub and PyPI reads behind findPythonProjects.
 func searchPythonProjects(ctx context.Context, query string, limit int) ([]pythonFound, error) {
 	n := min(max(limit, 1), pySearchRepos)
 	repos, err := gitHubPyRepos(ctx, query, n)
@@ -136,7 +153,6 @@ func searchPythonProjects(ctx context.Context, query string, limit int) ([]pytho
 			}
 			project, err := pyPIProjectDoc(ctx, name)
 			if err != nil || project.Info.Version == "" {
-				// Not on PyPI, or no release: skip it.
 				return nil
 			}
 			results[i] = []pythonFound{{project: project, repo: repo, name: name}}
@@ -159,8 +175,6 @@ func searchPythonProjects(ctx context.Context, query string, limit int) ([]pytho
 	return out, nil
 }
 
-// pyPIProjectPath reads https://pypi.org/project/<name>/[<version>/] and
-// returns the project name.
 func pyPIProjectPath(q string) (string, bool) {
 	q = strings.TrimSpace(q)
 	for _, prefix := range []string{"https://pypi.org/project/", "http://pypi.org/project/", "pypi.org/project/"} {
@@ -181,13 +195,10 @@ func pyPIProjectPath(q string) (string, bool) {
 	return "", false
 }
 
-// searchPythonRepos asks GitHub for Python repositories matching query.
 func searchPythonRepos(ctx context.Context, query string, n int) ([]githubRepository, error) {
 	return searchGitHubReposLang(ctx, query, "python", n)
 }
 
-// repoPyPIName reads the project name a repository publishes under. A repo
-// without a name in its packaging files falls back to its own name.
 func repoPyPIName(ctx context.Context, repo string) (string, error) {
 	files := []struct {
 		name  string
@@ -241,7 +252,6 @@ func parsePyProjectName(data string) string {
 	return ""
 }
 
-// tomlString reads a quoted or bare TOML value, ignoring a trailing comment.
 func tomlString(v string) string {
 	if v == "" {
 		return ""

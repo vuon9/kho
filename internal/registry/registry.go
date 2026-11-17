@@ -1,6 +1,5 @@
-// Package registry asks a container registry what a tag resolves to and what
-// an image says about itself. It reads manifests and config blobs, never a
-// layer, so it never downloads or runs an image.
+// Package registry reads manifests and config blobs, never a layer, so it never
+// downloads or runs an image.
 package registry
 
 import (
@@ -20,33 +19,24 @@ import (
 )
 
 const (
-	// HubURL is Docker Hub's site. Its web API lists tags with their digests
-	// and push dates, which the distribution API leaves out.
-	HubURL = "https://hub.docker.com"
-	// LifeURL is endoflife.date, which knows when a release line closes.
+	// Docker Hub's web API lists tags with their digests and push dates, which the
+	// distribution API leaves out.
+	HubURL  = "https://hub.docker.com"
 	LifeURL = "https://endoflife.date"
 	// dockerHubAPI is the host that serves Docker Hub's distribution API.
 	dockerHubAPI = "registry-1.docker.io"
 	userAgent    = "kho"
-	// cacheFor is how long a registry's answer is reused.
-	cacheFor = 6 * time.Hour
+	cacheFor     = 6 * time.Hour
 )
 
-// Client is an anonymous registry reader. Private images answer 401 and are
-// reported as such, never guessed at.
+// Anonymous: private images answer 401 and are reported as such, never guessed at.
 type Client struct {
-	HTTP *http.Client
-	// Cache holds answers for a while, so a second run is quiet.
-	Cache *Cache
-	// Base turns a registry host into the URL to ask. Tests point it at a
-	// local server.
-	Base func(host string) string
-	// LifeBase is where endoflife.date lives, and HubBase where its web API
-	// lives, for tests.
+	HTTP     *http.Client
+	Cache    *Cache
+	Base     func(host string) string
 	LifeBase string
 	HubBase  string
-	// NoCache asks the registries again, for --refresh.
-	NoCache bool
+	NoCache  bool
 
 	mu      sync.Mutex
 	tokens  map[string]string
@@ -60,7 +50,6 @@ func (c *Client) base(host string) string {
 	return "https://" + host
 }
 
-// New is a client with a timeout and a cache at path, which may be "".
 func New(cachePath string) *Client {
 	// Images are asked about in parallel, so the pool has to be wider than the
 	// two connections net/http keeps per host by default, or every lookup pays
@@ -79,9 +68,8 @@ func New(cachePath string) *Client {
 const manifestAccept = "application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json," +
 	"application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
 
-// Remote answers what the tag resolves to and what the image declares about
-// itself. A tag the registry does not publish comes back Gone, not as an
-// error, because that is a fact worth showing.
+// A tag the registry does not publish comes back Gone, not as an error, because that
+// is a fact worth showing.
 func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) {
 	if r.Repo == image.Scratch || r.Registry == "" || r.Repo == "" {
 		return image.Remote{}, nil
@@ -103,17 +91,13 @@ func (c *Client) Remote(ctx context.Context, r image.Ref) (image.Remote, error) 
 	return remote, nil
 }
 
-// source is where a reference is asked about: a registry host, and the prefix
-// its repository path carries there.
 type source struct {
 	host   string
 	prefix string
 }
 
-// sources lists where a reference is asked, in order. A docker.io reference
-// goes to a pull-through mirror first, because Docker Hub rate limits
-// anonymous pulls hard enough to fail a whole project; every other registry is
-// asked directly, since a mirror only carries Docker Hub's images.
+// Docker Hub rate limits anonymous pulls hard enough to fail a whole project, so a
+// docker.io reference tries a pull-through mirror first. Mirrors only carry Hub images.
 func sources(r image.Ref) []source {
 	if r.Registry != image.DockerHub {
 		return []source{{host: r.Registry}}
@@ -153,8 +137,7 @@ func (c *Client) fetch(ctx context.Context, r image.Ref) (image.Remote, error) {
 	return image.Remote{}, lastErr
 }
 
-// fetchFrom asks one source. found is false when that source says the tag does
-// not exist, which is not an error: the next source may have it.
+// A missing tag is found=false, not an error: the next source may have it.
 func (c *Client) fetchFrom(ctx context.Context, r image.Ref, s source, ref string) (image.Remote, bool, error) {
 	repo, base := s.prefix+r.RemoteRepo(), c.base(s.host)
 	body, media, status, err := c.get(ctx, fmt.Sprintf("%s/v2/%s/manifests/%s", base, repo, ref), s.host, repo)
@@ -226,8 +209,6 @@ func pickPlatform(manifests []struct {
 	return manifests[0].Digest
 }
 
-// readConfig pulls the facts an image declares: when it was built, which
-// upstream version it carries, and which distribution it sits on.
 func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base, baseVersion string) {
 	var doc struct {
 		Created time.Time `json:"created"`
@@ -264,9 +245,7 @@ func readConfig(body []byte, r image.Ref) (pushed time.Time, upstream, base, bas
 	return pushed, upstream, base, baseVersion
 }
 
-// imageVersion picks the version of the thing the image is for, not the one of
-// the image it is built on: composer:2 carries both PHP_VERSION and
-// COMPOSER_VERSION, and only the second is Composer.
+// composer:2 carries both PHP_VERSION and COMPOSER_VERSION, and only the second is Composer.
 func imageVersion(versions map[string]string, r image.Ref, base string) (upstream, baseVersion, runtime string) {
 	product := versionToken(r.Repo)
 	if product != "" {
@@ -280,7 +259,6 @@ func imageVersion(versions map[string]string, r image.Ref, base string) (upstrea
 			}
 		}
 	}
-	// Whichever known runtime is not the product is the base the image sits on.
 	baseToken := versionToken(base)
 	for _, name := range []string{"NODE_VERSION", "PYTHON_VERSION", "RUBY_VERSION", "GO_VERSION", "PHP_VERSION",
 		"JAVA_VERSION", "NGINX_VERSION", "REDIS_VERSION", "PG_VERSION", "MARIADB_VERSION", "MYSQL_VERSION"} {
@@ -292,8 +270,7 @@ func imageVersion(versions map[string]string, r image.Ref, base string) (upstrea
 			continue
 		}
 		if baseToken != "" && strings.Contains(name, baseToken) {
-			// The base is known by name, so this version is the base's, never
-			// the version of the thing the image is for.
+			// The base is known by name, so this version is the base's, never the product's.
 			baseVersion = v
 			break
 		}
@@ -311,8 +288,6 @@ func imageVersion(versions map[string]string, r image.Ref, base string) (upstrea
 	return upstream, baseVersion, runtime
 }
 
-// shortBase turns an OCI base label into the word a person reads: the
-// repository's last path segment, without a tag.
 func shortBase(name string) string {
 	name = strings.TrimSpace(name)
 	if i := strings.LastIndex(name, "/"); i >= 0 {
@@ -324,8 +299,6 @@ func shortBase(name string) string {
 	return name
 }
 
-// versionToken turns a repository or base name into the word its version
-// variable is built from: library/composer becomes COMPOSER.
 func versionToken(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if i := strings.LastIndex(name, "/"); i >= 0 {
@@ -343,8 +316,7 @@ func versionToken(name string) string {
 	return b.String()
 }
 
-// baseFromTag names the distribution an official image sits on, which its
-// tag says and its config does not.
+// An official image's tag names its distribution; its config does not.
 func baseFromTag(tag string) string {
 	switch {
 	case strings.Contains(tag, "alpine"):
@@ -360,7 +332,6 @@ func baseFromTag(tag string) string {
 	return ""
 }
 
-// get asks for a URL, taking a bearer token when the registry asks for one.
 func (c *Client) get(ctx context.Context, raw, host, repo string) (body []byte, media string, status int, err error) {
 	// A registry that asked for a token once will ask again, and every probe
 	// costs a round trip: remember the challenge and skip it.
@@ -383,7 +354,6 @@ func (c *Client) get(ctx context.Context, raw, host, repo string) (body []byte, 
 	return body, media, status, err
 }
 
-// remembered is the challenge a host gave last time, or "".
 func (c *Client) remembered(host string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -422,8 +392,7 @@ func (c *Client) do(ctx context.Context, raw, token string) (body []byte, media 
 	return data, resp.Header.Get("Content-Type"), resp.StatusCode, resp.Header.Get("Www-Authenticate"), nil
 }
 
-// token follows a registry's bearer challenge, which is how public images on
-// Docker Hub and ghcr are read without an account.
+// The bearer challenge is how public images on Docker Hub and ghcr are read without an account.
 func (c *Client) token(ctx context.Context, challenge, repo string) (string, error) {
 	realm, service, scope := challengeScope(challenge, repo)
 	if realm == "" {
@@ -449,8 +418,6 @@ func (c *Client) token(ctx context.Context, challenge, repo string) (string, err
 	return tok, nil
 }
 
-// challengeScope reads the token endpoint, the service and the scope a registry
-// asked for, falling back to the repository being pulled.
 func challengeScope(challenge, repo string) (realm, service, scope string) {
 	params := map[string]string{}
 	for _, part := range strings.Split(strings.TrimPrefix(challenge, "Bearer "), ",") {

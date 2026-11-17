@@ -18,10 +18,9 @@ type composerPkg struct {
 	Require map[string]string
 }
 
-// readComposer reads composer.lock. Versions stay as written, often with a
-// leading v: OSV lists Packagist versions that way and matches both forms.
-// Platform requirements such as php and ext-json never match a locked
-// package, so they drop out of the graph on their own.
+// Versions stay as written, often with a leading v: OSV lists Packagist versions that
+// way and matches both forms. Platform requirements such as php and ext-json never
+// match a locked package, so they drop out of the graph on their own.
 func readComposer(dir, name string) ([]provider.Package, error) {
 	var lock struct {
 		Packages    []composerPkg

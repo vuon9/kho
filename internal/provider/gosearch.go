@@ -27,7 +27,6 @@ const (
 	goSearchWorkers = 4
 )
 
-// githubRepository is one repository from GitHub's search API.
 type githubRepository struct {
 	FullName    string `json:"full_name"`
 	Description string `json:"description"`
@@ -37,7 +36,6 @@ type githubRepository struct {
 	Archived    bool   `json:"archived"`
 }
 
-// goModuleInfo is what the module proxy says about a module.
 type goModuleInfo struct {
 	Version string
 	RepoURL string
@@ -51,9 +49,8 @@ var (
 	goModuleLatest = lookupGoModule
 )
 
-// Search finds Go packages by keyword through GitHub. A query that names a
-// package or module path is resolved exactly instead, so a pasted pkg.go.dev
-// URL works in the same box.
+// A query that names a package or module path is resolved exactly instead,
+// so a pasted pkg.go.dev URL works in the same box.
 func (GoBin) Search(ctx context.Context, query string, limit int) ([]Package, error) {
 	if target, ok := goPathQuery(query); ok {
 		p, err := GoBin{}.Find(ctx, "go", target)
@@ -109,8 +106,6 @@ func (GoBin) Search(ctx context.Context, query string, limit int) ([]Package, er
 	return out, nil
 }
 
-// goPathQuery reads a pasted pkg.go.dev URL or a bare package path. A keyword
-// is not a path.
 func goPathQuery(q string) (string, bool) {
 	q = strings.TrimSpace(q)
 	for _, prefix := range []string{"https://pkg.go.dev/", "http://pkg.go.dev/", "pkg.go.dev/"} {
@@ -136,8 +131,7 @@ func goPathQuery(q string) (string, bool) {
 	return q, true
 }
 
-// resolveGoModule finds the module that holds target by trying target and then
-// each parent path, so a package inside a module installs from its module.
+// Parent paths are tried so a package inside a module installs from its module.
 func resolveGoModule(ctx context.Context, target string) (module, version, repoURL string, err error) {
 	parts := strings.Split(target, "/")
 	for i := len(parts); i >= 2; i-- {
@@ -150,8 +144,6 @@ func resolveGoModule(ctx context.Context, target string) (module, version, repoU
 	return "", "", "", fmt.Errorf("no Go module at %s", target)
 }
 
-// searchGitHubRepos asks GitHub for Go repositories matching query, most
-// starred first.
 func searchGitHubRepos(ctx context.Context, query string, n int) ([]githubRepository, error) {
 	return searchGitHubReposLang(ctx, query, "go", n)
 }
@@ -179,7 +171,6 @@ func parseGitHubRepos(data []byte, limit int) ([]githubRepository, error) {
 	return out.Items, nil
 }
 
-// githubRateHint names the one error people can act on.
 func githubRateHint(err error) error {
 	s := err.Error()
 	lower := strings.ToLower(s)
@@ -189,8 +180,6 @@ func githubRateHint(err error) error {
 	return err
 }
 
-// lookupGoModule asks the Go module proxy for a module's newest version and
-// its source repository.
 func lookupGoModule(ctx context.Context, module string) (goModuleInfo, error) {
 	var r struct {
 		Version string `json:"Version"`
@@ -207,11 +196,9 @@ func lookupGoModule(ctx context.Context, module string) (goModuleInfo, error) {
 	return goModuleInfo{Version: r.Version, RepoURL: r.Origin.URL}, nil
 }
 
-// errRepoFileNotFound says a repository has no such file, which is not an
-// error for a best-effort search.
+// A missing file is not an error for a best-effort search.
 var errRepoFileNotFound = errors.New("no such repo file")
 
-// fetchRepoFile reads one file from a repository's default branch.
 func fetchRepoFile(ctx context.Context, repo, file string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://raw.githubusercontent.com/"+repo+"/HEAD/"+file, nil)
@@ -238,8 +225,6 @@ func fetchRepoFile(ctx context.Context, repo, file string) (string, error) {
 	return string(body), nil
 }
 
-// fetchGoModFile reads a repository's module path from its root go.mod. A
-// repository without one is skipped with no error.
 func fetchGoModFile(ctx context.Context, repo string) (string, error) {
 	data, err := fetchRepoFile(ctx, repo, "go.mod")
 	if errors.Is(err, errRepoFileNotFound) {
@@ -261,7 +246,6 @@ func parseGoModModule(data string) string {
 	return ""
 }
 
-// fetchGitTreePaths lists a repository's files at its default branch.
 func fetchGitTreePaths(ctx context.Context, repo string) ([]string, error) {
 	var raw json.RawMessage
 	if err := githubGet(ctx, "repos/"+repo+"/git/trees/HEAD?recursive=1", &raw); err != nil {
@@ -289,8 +273,7 @@ func parseGitTreePaths(data []byte) ([]string, error) {
 	return paths, nil
 }
 
-// goMainDirs names the directories under paths that hold a main package. A
-// root main.go wins; otherwise every cmd/<tool> directory holding Go files
+// A root main.go wins; otherwise every cmd/<tool> directory holding Go files
 // counts, because tools often name their main file after the tool
 // (cmd/staticcheck/staticcheck.go). Root level directories need a main.go.
 // Vendor, test and internal trees do not count.
@@ -365,8 +348,6 @@ func skipGoMainDir(dir string) bool {
 	return false
 }
 
-// goRepoPackages turns one repository into the packages it can install. A
-// repository with no go.mod, no main package, or no proxy version is skipped.
 func goRepoPackages(ctx context.Context, repo githubRepository, query string) ([]Package, error) {
 	module, err := goModFile(ctx, repo.FullName)
 	if err != nil {
@@ -389,7 +370,11 @@ func goRepoPackages(ctx context.Context, repo githubRepository, query string) ([
 	}
 	mod, err := goModuleLatest(ctx, module)
 	if err != nil {
-		// Not a module the proxy serves; nothing installable here.
+		return nil, nil
+	}
+	// go.mod can name any module. When the proxy says the module comes from
+	// another repo, installing it would bring that repo's code.
+	if from := githubRepo(mod.RepoURL); from != "" && !strings.EqualFold(from, repo.FullName) {
 		return nil, nil
 	}
 	out := make([]Package, 0, len(dirs))

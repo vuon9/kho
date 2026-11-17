@@ -22,8 +22,6 @@ import (
 // version is set by release builds with -ldflags "-X main.version=...".
 var version string
 
-// appVersion falls back to the module version that `go install ...@v1.2.3`
-// records, and to "dev" for a local build.
 func appVersion() string {
 	if version != "" {
 		return version
@@ -92,8 +90,6 @@ func main() {
 	os.Exit(code)
 }
 
-// tuiFolder is the folder the TUI opens on: the working folder with no
-// arguments, or the only argument when it is a folder and not a command.
 func tuiFolder(args []string) (string, bool) {
 	switch {
 	case len(args) == 0:

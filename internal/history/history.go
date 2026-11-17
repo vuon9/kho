@@ -1,5 +1,3 @@
-// Package history keeps a log of every command kho runs, so what it did to
-// the machine can be read back later.
 package history
 
 import (
@@ -30,8 +28,6 @@ type Entry struct {
 // enough to read why it failed without the file growing without end.
 const MaxOutput = 64 << 10
 
-// keep is how many entries survive in the file. Older ones are dropped when
-// the file grows past twice that.
 const keep = 500
 
 // Log is safe to add to from several goroutines, since providers run their
@@ -52,7 +48,7 @@ func Path() string {
 	return filepath.Join(dir, "kho", "history.jsonl")
 }
 
-// Open reads the log at path. An empty path keeps the log in memory only.
+// An empty path keeps the log in memory only.
 func Open(path string) *Log {
 	l := &Log{path: path}
 	if f, err := os.Open(path); err == nil {
@@ -115,7 +111,6 @@ func (l *Log) rewrite() {
 	l.written = len(l.entries)
 }
 
-// Entries returns the log newest first.
 func (l *Log) Entries() []Entry {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -78,8 +78,8 @@ func (Uv) Latest(ctx context.Context, pkgs []Package) ([]Package, error) {
 	return fillLatest(ctx, pkgs, func(ctx context.Context, p Package) (string, error) { return pypiLatest(ctx, p.Name) }), nil
 }
 
-// parseUvList reads `uv tool list`, where each tool is a "name vX.Y" line
-// followed by "- app" lines for its executables.
+// `uv tool list` prints each tool as a "name vX.Y" line followed by "- app"
+// lines for its executables.
 func parseUvList(out string) []Package {
 	var pkgs []Package
 	for line := range strings.Lines(out) {
@@ -121,8 +121,8 @@ func (Uv) Versions(ctx context.Context, p Package) ([]Release, error) {
 	return pypiVersions(ctx, p.Name)
 }
 
-// parsePipList reads everything installed in a tool's own environment, which
-// is the tool's full dependency tree. pip itself is tooling, not a dependency.
+// A tool's own environment is its full dependency tree. pip itself is
+// tooling, not a dependency.
 func parsePipList(self string, data []byte) ([]Dep, error) {
 	var list []struct {
 		Name    string `json:"name"`
@@ -179,8 +179,7 @@ func (r pypiProject) releases(name string) ([]Release, string) {
 	return rels, githubRepo(urls...)
 }
 
-// Find looks a Python tool up on PyPI by its exact name. pipx and uv share the
-// index; only the source label differs.
+// pipx and uv share the index; only the source label differs.
 func (Pipx) Find(ctx context.Context, source, name string) (Package, error) {
 	if source != "" && source != "pipx" {
 		return Package{}, fmt.Errorf("pipx doesn't serve the %s source", source)
@@ -210,7 +209,6 @@ func pypiFind(ctx context.Context, source, name string) (Package, error) {
 	return pypiCandidate(r, source, name), nil
 }
 
-// pypiCandidate builds a candidate from a PyPI project document.
 func pypiCandidate(r pypiProject, source, fallback string) Package {
 	display := r.Info.Name
 	if display == "" {

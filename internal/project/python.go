@@ -29,9 +29,8 @@ type uvPkg struct {
 	DevDependencies      map[string][]uvDep `toml:"dev-dependencies"`
 }
 
-// readUv reads uv.lock. The project and workspace members have a virtual or
-// editable source: what they depend on is direct, and their dependency
-// groups are direct and dev.
+// The project and workspace members have a virtual or editable source: what they
+// depend on is direct, and their dependency groups are direct and dev.
 func readUv(dir, name string) ([]provider.Package, error) {
 	var lock struct{ Package []uvPkg }
 	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
@@ -116,11 +115,9 @@ type poetryPkg struct {
 	Source       struct{ Type string }
 }
 
-// marked says the lockfile tells dev itself. Poetry 1.5 to 1.8 write neither
-// groups nor the older category.
+// Poetry 1.5 to 1.8 write neither groups nor the older category.
 func (p poetryPkg) marked() bool { return len(p.Groups) > 0 || p.Category != "" }
 
-// dev reads the newer groups list, or the older category.
 func (p poetryPkg) dev() bool {
 	if len(p.Groups) > 0 {
 		return !slices.Contains(p.Groups, "main")
@@ -128,11 +125,9 @@ func (p poetryPkg) dev() bool {
 	return p.Category == "dev"
 }
 
-// readPoetry reads poetry.lock, with direct dependencies from pyproject.toml
-// beside it. Dependency keys are written as the package spells its name
-// ("MarkupSafe" for markupsafe), so names are matched normalized. When the
-// lockfile doesn't mark dev, a package is dev when only the pyproject's dev
-// groups pull it in, as for uv.
+// Dependency keys are written as the package spells its name ("MarkupSafe"), so names
+// are matched normalized. When the lockfile doesn't mark dev, a package is dev when only
+// the pyproject's dev groups pull it in, as for uv.
 func readPoetry(dir, name string) ([]provider.Package, error) {
 	var lock struct{ Package []poetryPkg }
 	if _, err := decodeTOML(filepath.Join(dir, name), &lock); err != nil {
@@ -212,7 +207,6 @@ type pyproject struct {
 	}
 }
 
-// readPyproject reads pyproject.toml, or returns nil when there is none.
 func readPyproject(dir string) (*pyproject, error) {
 	var p pyproject
 	if _, err := decodeTOML(filepath.Join(dir, "pyproject.toml"), &p); err != nil {
@@ -224,10 +218,8 @@ func readPyproject(dir string) (*pyproject, error) {
 	return &p, nil
 }
 
-// names are the normalized names of every dependency the project declares,
-// in the PEP 621 and PEP 735 tables and in Poetry's own. Extras ship with
-// the package, so they are prod; dependency groups and Poetry's groups other
-// than main are dev.
+// Covers PEP 621, PEP 735 and Poetry's tables. Extras ship with the package, so they are
+// prod; dependency groups and Poetry's groups other than main are dev.
 func (p *pyproject) names() (prod, dev map[string]bool) {
 	prod, dev = map[string]bool{}, map[string]bool{}
 	for _, s := range p.Project.Dependencies {
@@ -266,8 +258,7 @@ func (p *pyproject) names() (prod, dev map[string]bool) {
 	return prod, dev
 }
 
-// requirementName is the name at the start of a PEP 508 requirement such as
-// "flask[async]>=3" or "requests (==2.31.0)".
+// PEP 508 allows "flask[async]>=3" and "requests (==2.31.0)".
 func requirementName(s string) string {
 	s = strings.TrimSpace(s)
 	end := strings.IndexFunc(s, func(r rune) bool {
@@ -279,8 +270,7 @@ func requirementName(s string) string {
 	return s[:end]
 }
 
-// pyprojectManager names the tool to lock a pyproject.toml with, or "" when
-// it declares no dependencies. Many hold only tool settings, such as ruff's.
+// Many pyproject.toml files hold only tool settings, such as ruff's.
 func pyprojectManager(dir string) string {
 	p, err := readPyproject(dir)
 	if err != nil {
@@ -299,9 +289,7 @@ func pyprojectManager(dir string) string {
 	return "uv"
 }
 
-// readRequirements reads the lines of a requirements file pinned with ==.
-// Ranges, editable installs and included files are left out, since they name
-// no single version.
+// Ranges, editable installs and included files are left out, since they name no single version.
 func readRequirements(dir, name string) ([]provider.Package, error) {
 	data, err := readFile(filepath.Join(dir, name))
 	if err != nil {

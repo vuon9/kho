@@ -12,38 +12,30 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Tunables, package vars so tests can shrink them.
+// Package vars so tests can shrink them.
 var (
 	MaxDepth = 4
 	MaxFiles = 100
 	Budget   = 3 * time.Second
 )
 
-// walkWidth is how many folders the walk reads at once. Reading a folder is a
-// disk wait, so a level with many siblings would otherwise spend its time
-// waiting for each one in turn.
+// Reading a folder is a disk wait, so a level with many siblings reads them in parallel.
 const walkWidth = 16
 
-// folder is what reading one folder found: the folders to read next, and the
-// files to read.
 type folder struct {
 	next  []string
 	files []string
 }
 
-// Scan is what a folder holds: every image its Dockerfiles and compose files
-// name, and the files that were read to find them.
 type Scan struct {
 	Root string `json:"root"`
 	Refs []Ref  `json:"refs,omitempty"`
-	// Files are the files read, relative to Root and slash separated.
-	Files []string `json:"files,omitempty"`
-	// Capped says why the walk stopped early, or is "".
-	Capped string `json:"capped,omitempty"`
+	// Relative to Root and slash separated.
+	Files  []string `json:"files,omitempty"`
+	Capped string   `json:"capped,omitempty"`
 }
 
-// Find walks down from start for Dockerfiles and compose files. It only reads
-// files, and it never asks docker anything.
+// It only reads files, and it never asks docker anything.
 func Find(ctx context.Context, start string) (Scan, error) {
 	root, err := filepath.Abs(start)
 	if err != nil {
@@ -115,11 +107,8 @@ func Find(ctx context.Context, start string) (Scan, error) {
 	return s, nil
 }
 
-// readFolders reads a whole level of the walk at once. Each folder's answer
-// lands in its own slot, so merging them back in order keeps the walk reading
-// files in the same order as one folder at a time. A folder the walk could not
-// read leaves an empty slot, as it would leave nothing behind. timedOut says
-// the budget ran out before every folder was read.
+// Each folder's answer lands in its own slot, so merging them in order reads files in
+// the same order as one folder at a time.
 func readFolders(ctx context.Context, root string, dirs []string) (folders []folder, timedOut bool) {
 	out := make([]folder, len(dirs))
 	var skipped atomic.Bool
@@ -131,7 +120,8 @@ func readFolders(ctx context.Context, root string, dirs []string) (folders []fol
 				skipped.Store(true)
 				return nil
 			}
-			entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(rel)))
+			dir := filepath.Join(root, filepath.FromSlash(rel))
+			entries, err := os.ReadDir(dir)
 			if err != nil {
 				return nil
 			}
@@ -139,7 +129,7 @@ func readFolders(ctx context.Context, root string, dirs []string) (folders []fol
 			for _, e := range entries {
 				name := e.Name()
 				if e.IsDir() {
-					if !skipDir[name] && !strings.HasPrefix(name, ".") {
+					if !skipDir[name] && !strings.HasPrefix(name, ".") && !osLibrary(dir, name) {
 						f.next = append(f.next, join(rel, name))
 					}
 					continue
@@ -156,13 +146,11 @@ func readFolders(ctx context.Context, root string, dirs []string) (folders []fol
 	return out, skipped.Load()
 }
 
-// cappedBudget names the cap a walk that ran out of time hits.
 func cappedBudget() string {
 	return "stopped after " + Budget.String()
 }
 
-// dedupe drops the second reference to the same image from the same file,
-// which a multi stage build often writes twice.
+// A multi stage build often names the same image twice in one file.
 func dedupe(refs []Ref) []Ref {
 	seen := map[string]bool{}
 	out := refs[:0]
@@ -180,9 +168,6 @@ func dedupe(refs []Ref) []Ref {
 var skipDir = map[string]bool{
 	"node_modules": true, "vendor": true, ".venv": true, "venv": true, "target": true,
 	"dist": true, "build": true, "__pycache__": true, ".terraform": true, ".next": true,
-	// The OS keeps its own data here: caches, app support, containers, never a
-	// project. Reading it costs more than the rest of a home folder together.
-	"Library": true,
 }
 
 func isImageFile(name string) bool {
@@ -226,4 +211,11 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// macOS keeps caches and app support in ~/Library, never a project, and reading it
+// costs more than the rest of home. A Library folder anywhere else is read.
+func osLibrary(dir, name string) bool {
+	home, err := os.UserHomeDir()
+	return err == nil && name == "Library" && dir == filepath.Clean(home)
 }

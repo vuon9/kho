@@ -8,10 +8,9 @@ import (
 	"github.com/vuon9/kho/internal/provider"
 )
 
-// readGoMod reads the require lines of go.mod. A module replaced by another
-// version is reported at the version that gets built, since a replace is how
-// projects pin a fixed release. One replaced by a local folder is left out.
-// As in Go, a replace of the required version wins over one of every version.
+// A replaced module is reported at the version that gets built, since a replace is how
+// projects pin a fixed release. One replaced by a local folder is left out. As in Go, a
+// replace of the required version wins over one of every version.
 func readGoMod(dir, name string) ([]provider.Package, error) {
 	file := filepath.Join(dir, name)
 	data, err := readFile(file)

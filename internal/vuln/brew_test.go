@@ -114,6 +114,29 @@ func TestMergeBrewKeepsOSVRecordsApart(t *testing.T) {
 	}
 }
 
+func TestMergeBrewKeepsFormulaeApart(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	const id = "CVE-0000-0010"
+	anvil := Query{Ecosystem: Homebrew, Name: "anvil", Version: "3.0.1"}
+	anvilOld := Query{Ecosystem: Homebrew, Name: "anvil@1", Version: "1.1.1"}
+	db := NewDB()
+	db.MergeBrew(BrewResult{Checked: 2, Complete: true, Findings: []BrewFinding{
+		{Formula: "anvil", Version: "3.0.1", Advisories: []Advisory{{ID: id, Package: "anvil", Versions: []string{"3.0.1"},
+			Ranges: []Range{{Introduced: "0"}, {Fixed: "3.0.2"}}}}},
+		{Formula: "anvil@1", Version: "1.1.1", Advisories: []Advisory{{ID: id, Package: "anvil@1", Versions: []string{"1.1.1"},
+			Ranges: []Range{{Introduced: "0"}, {Fixed: "1.1.2"}}}}},
+	}}, []Query{anvil, anvilOld}, now)
+	for _, tt := range []struct {
+		q     Query
+		fixed string
+	}{{anvil, "3.0.2"}, {anvilOld, "1.1.2"}} {
+		got := db.For(tt.q)
+		if len(got) != 1 || got[0].Package != tt.q.Name || got[0].FixedAfter(tt.q.Version) != tt.fixed {
+			t.Errorf("%s: %+v, want its own record fixed in %s", tt.q.Name, got, tt.fixed)
+		}
+	}
+}
+
 func TestSetBrewUnsupported(t *testing.T) {
 	db := NewDB()
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)

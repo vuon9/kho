@@ -24,7 +24,7 @@ type npmEntry struct {
 	Workspaces any
 }
 
-// npmV1 is a lockfileVersion 1 entry, which nests its dependencies.
+// lockfileVersion 1 nests dependencies.
 type npmV1 struct {
 	Version      string
 	Dev          bool
@@ -32,14 +32,10 @@ type npmV1 struct {
 	Dependencies map[string]npmV1
 }
 
-// readNpm reads package-lock.json. Keys of "packages" are install paths:
-// "" is the project, "packages/web" a workspace member, and anything under
-// node_modules an installed package.
-//
-// Two Package fields that project packages don't otherwise use carry what
-// FixCommand needs: Path is the workspace member that declares a direct
-// package, relative to the lockfile's folder, and Entry is the alias a
-// package is installed under, as in "lod": "npm:lodash@4.17.15".
+// Keys of "packages" are install paths: "" is the project, "packages/web" a workspace
+// member, anything under node_modules an installed package. For FixCommand, Path is
+// the workspace member declaring a direct package and Entry the alias it is installed
+// under, as in "lod": "npm:lodash@4.17.15".
 func readNpm(dir, name string) ([]provider.Package, error) {
 	var lock struct {
 		Packages     map[string]npmEntry
@@ -173,8 +169,7 @@ func flattenV1(prefix string, deps map[string]npmV1, out map[string]npmEntry) {
 	}
 }
 
-// npmDeclares says whether package.json lists a dependency. Many hold only
-// scripts or settings, and a missing lockfile note there would be noise.
+// Many package.json files hold only scripts or settings, and a missing lockfile note there would be noise.
 func npmDeclares(dir string) bool {
 	var m npmEntry
 	if readJSON(filepath.Join(dir, "package.json"), &m) != nil {

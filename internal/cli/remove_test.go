@@ -17,9 +17,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// removeFakes is the machine every remove row starts from: one package per
-// source, a project package, Go binaries with and without a path, a Homebrew
-// formula that another formula needs, and the packages kho refuses to remove.
 func removeFakes() []provider.Provider {
 	return []provider.Provider{
 		fake{name: "pipx", pkgs: []provider.Package{{Source: "pipx", Name: "bramble", Version: "22.12.0"}}},
@@ -49,9 +46,6 @@ func removeFakes() []provider.Provider {
 	}
 }
 
-// runRemove runs one remove command against fakes and records what reached
-// exec. A nil providers means removeFakes, and a nil runErr means the package
-// manager succeeds.
 func runRemove(t *testing.T, providers []provider.Provider, skipped map[string]string, runErr error, args ...string) run {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -234,8 +228,7 @@ func TestRemoveRecordsFailuresOnly(t *testing.T) {
 	}
 }
 
-// shrinking is a provider that stops listing a package once it is uninstalled,
-// the way a real manager's List does.
+// shrinking stops listing a package once it is uninstalled, as a real manager does.
 type shrinking struct {
 	fake
 	gone map[string]bool

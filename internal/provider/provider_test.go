@@ -379,15 +379,17 @@ func TestLinksOnly(t *testing.T) {
 	tests := []struct {
 		id    string
 		files []string
-		// dir is what is asked about, ".x" when empty.
-		dir  string
-		want bool
+		dir   string
+		want  bool
 	}{
 		{id: "an empty folder is someone's, not the CLI's", files: []string{".x/"}},
 		{id: "a folder holding only a skills folder is the CLI's", files: []string{".x/skills/"}, want: true},
 		{id: "a chain of one folder each down to skills is too", files: []string{".x/a/b/skills/"}, want: true},
 		{id: "the skills folder itself is the CLI's too", files: []string{".x/skills/"}, dir: ".x/skills", want: true},
 		{id: "a second folder beside the chain is someone's", files: []string{".x/skills/", ".x/notes/"}},
+		{id: "two chains sharing a parent are both the CLI's", files: []string{".x/antigravity/skills/", ".x/antigravity-cli/skills/"}, want: true},
+		{id: "a skills folder beside another agent's chain is the CLI's", files: []string{".x/skills/", ".x/antigravity/skills/"}, want: true},
+		{id: "a file beside two chains is someone's", files: []string{".x/a/skills/", ".x/b/skills/", ".x/settings.json"}},
 		{id: "a file where the chain would go is someone's", files: []string{".x/a"}},
 		{id: "a link named skills is the CLI's, wherever it points", files: []string{".real/skills/", ".x/skills -> ../.real/skills"}, want: true},
 		{id: "a chain through a linked folder is still the CLI's", files: []string{".real/skills/", ".x/data -> ../.real"}, want: true},
@@ -754,7 +756,6 @@ func build(t *testing.T, home string, entries ...string) {
 	}
 }
 
-// tree lists what is under home, the way build takes it.
 func tree(home string) []string {
 	var out []string
 	filepath.WalkDir(home, func(p string, d fs.DirEntry, _ error) error {
@@ -998,11 +999,10 @@ func TestLinkSkill(t *testing.T) {
 	skill := []string{".agents/skills/workflow/SKILL.md", ".config/goose/", ".config/opencode/", ".codex/", ".cursor/skills/workflow/SKILL.md"}
 	tests := []struct {
 		id, agent string
-		// skill is the listed skill's path, ~/.agents/skills/workflow if empty.
-		skill string
-		files []string
-		added []string
-		err   string
+		skill     string
+		files     []string
+		added     []string
+		err       string
 	}{
 		{id: "an agent that sees the skill through ~/.agents/skills gets no link of its own", agent: "opencode", files: skill,
 			err: "opencode already sees workflow through ~/.agents/skills"},
@@ -1061,12 +1061,10 @@ func TestUnlinkSkill(t *testing.T) {
 		".claude/skills/workflow -> ../../.agents/skills/workflow", ".cursor/skills/workflow/SKILL.md", ".cursor/notes.txt"}
 	tests := []struct {
 		id, agent string
-		// files is the home, base if empty.
-		files []string
-		// since replaces what is at a path after kho read the links.
-		since   []string
-		removed []string
-		err     string
+		files     []string
+		since     []string
+		removed   []string
+		err       string
 	}{
 		{id: "the shared entry survives an agent whose folder is a link to ~/.agents/skills", agent: "claude-code",
 			files: []string{".agents/skills/workflow -> ../../dev/workflow", "dev/workflow/SKILL.md", ".claude/settings.json",

@@ -20,10 +20,9 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// scanImage runs the scanner over one image. Tests swap it.
+// Tests swap it.
 var scanImage = trivy.Scan
 
-// trivyAvailable says whether a scan can run at all.
 var trivyAvailable = trivy.Available
 
 type imageTagsMsg struct {
@@ -32,31 +31,23 @@ type imageTagsMsg struct {
 	err  error
 }
 
-// imageUsersMsg is the containers docker says are made from an image, for the
-// Info tab, so the question "what would removing this break" has an answer
-// before anyone presses D.
 type imageUsersMsg struct {
 	key   string
 	users []image.Container
 	err   error
 }
 
-// imageRemoveMsg is what docker said about the containers using an image, on
-// the way to asking whether to remove it.
 type imageRemoveMsg struct {
 	ref   image.Ref
 	users []image.Container
 	err   error
 }
 
-// imageTagsRetryMsg comes back once after a failed ask, so a hiccup heals
-// itself instead of waiting for someone to press v.
 type imageTagsRetryMsg struct {
 	key string
 }
 
-// removeImage asks whether to remove the selected image, and what would break
-// if it went: kho never removes an image without a person saying yes.
+// kho never removes an image without a person saying yes.
 func (m *model) removeImage() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok {
@@ -77,8 +68,6 @@ func (m *model) removeImage() tea.Cmd {
 	}
 }
 
-// askImageRemove builds the dialog: what the image is, what uses it, and what
-// docker will do.
 func (m *model) askImageRemove(msg imageRemoveMsg) {
 	lines := []string{bold().Render(msg.ref.Image), ""}
 	switch {
@@ -112,7 +101,6 @@ func (m *model) askImageRemove(msg imageRemoveMsg) {
 			installedMsg{provider: "docker", name: msg.ref.Image, removed: true})}
 }
 
-// usersCmd asks docker which containers are made from the selected image.
 func (m *model) usersCmd() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok {
@@ -126,7 +114,6 @@ func (m *model) usersCmd() tea.Cmd {
 	}
 }
 
-// wantUsers asks once per image, when the Info tab is the one showing.
 func (m *model) wantUsers() tea.Cmd {
 	if m.imageTab() != tabInfo || !isImageRow(m.curRow().kind) {
 		return nil
@@ -142,8 +129,6 @@ func (m *model) wantUsers() tea.Cmd {
 	return m.usersCmd()
 }
 
-// wantTags asks for the selected image's tags when the Versions tab is the one
-// showing, the image has none yet, and it has not already failed its retry.
 func (m *model) wantTags() tea.Cmd {
 	if m.imageTab() != tabVersions || !isImageRow(m.curRow().kind) {
 		return nil
@@ -159,9 +144,8 @@ func (m *model) wantTags() tea.Cmd {
 	return m.tagsCmd()
 }
 
-// tabTo switches the sidebar tab, and asks for an image's tags when the tab
-// that needs them opens, however it was opened: the v key, a numbered tab, or
-// a click on the tab bar.
+// Every way of opening a tab comes through here: the v key, a numbered tab,
+// or a click on the tab bar.
 func (m *model) tabTo(tab int) tea.Cmd {
 	m.setTab(tab)
 	if tab != tabVersions {
@@ -178,8 +162,6 @@ func (m *model) tabTo(tab int) tea.Cmd {
 	return m.tagsCmd()
 }
 
-// tagsCmd asks a repository what it publishes, when a person opens Versions
-// on an image kho has not asked about yet.
 func (m model) tagsCmd() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok {
@@ -199,7 +181,6 @@ type imageScanMsg struct {
 	err   error
 }
 
-// isImageRow says the selected rail row is one of the image lists.
 func isImageRow(kind int) bool { return kind == rowImages || kind == rowMachineImages }
 
 // Anything that reaches the network or the machine goes through a package
@@ -239,8 +220,7 @@ type imagesMsg struct {
 	err     error
 }
 
-// imageFactMsg is one answer from a registry, so a row appears the moment its
-// own status is known instead of waiting for the slowest one.
+// One message per answer, so a row appears without waiting for the slowest registry.
 type imageFactMsg struct {
 	gen     int
 	index   int
@@ -248,11 +228,9 @@ type imageFactMsg struct {
 	machine bool
 }
 
-// imageFactsDoneMsg says every answer has arrived.
 type imageFactsDoneMsg struct{ gen int }
 
-// imagesCmd reads the project's images and asks about each one, off the UI
-// goroutine. It never pulls, builds or runs anything.
+// It never pulls, builds or runs anything.
 func (m model) imagesCmd() tea.Cmd {
 	gen, dir := m.imgGen, m.dir
 	return func() tea.Msg {
@@ -278,8 +256,6 @@ func (m model) imagesCmd() tea.Cmd {
 	}
 }
 
-// factsCmd asks the registries about each row and hands each answer back as it
-// lands, so the table fills in while the registries are still answering.
 func (m *model) factsCmd() tea.Cmd {
 	gen, ask, refs, local := m.imgGen, m.imgAsk, m.images, m.localImgs
 	if ask == nil || local == nil {
@@ -316,7 +292,6 @@ func (m *model) factsCmd() tea.Cmd {
 	return readFact(ch, gen)
 }
 
-// readFact waits for one answer; the model asks for the next when it has it.
 func readFact(ch <-chan imageFactMsg, gen int) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
@@ -341,8 +316,6 @@ func (m *model) gotImages(msg imagesMsg) {
 	m.reindex()
 }
 
-// applyFact puts one answered row in place. A row whose registry has not
-// answered is unknown, and the table leaves it out until it is not.
 func (m *model) applyFact(msg imageFactMsg) {
 	if msg.gen != m.imgGen {
 		return
@@ -356,8 +329,6 @@ func (m *model) applyFact(msg imageFactMsg) {
 	m.reindex()
 }
 
-// imageStatusNames are the filters the images table steps through with f.
-// untracked is the only one that shows what kho could not identify.
 const (
 	imgStatusAll = iota
 	imgStatusEOL
@@ -381,16 +352,12 @@ func (m *model) cycleImgStatus() {
 	m.stepImgStatus(1)
 }
 
-// stepImgStatus moves the image filter one chip along, forwards or back.
 func (m *model) stepImgStatus(by int) {
 	key := m.curRow().key
 	m.imgStatuses[key] = (m.imgStatuses[key] + by + len(imageStatusNames)) % len(imageStatusNames)
 	m.cursor, m.offset = 0, 0
 }
 
-// hasUpstream says kho could identify what an image is built from: a
-// registry answered for it, so its tag, its upstream version and its release
-// line can be followed.
 func hasUpstream(r image.Ref) bool {
 	if r.Unresolved {
 		return false
@@ -402,8 +369,6 @@ func hasUpstream(r image.Ref) bool {
 	return false
 }
 
-// imgList is the images the selected row stands for: the machine's own, or
-// the ones the project names.
 func (m model) imgList() []image.Ref {
 	if m.curRow().kind == rowMachineImages {
 		return m.machineImgs
@@ -411,15 +376,12 @@ func (m model) imgList() []image.Ref {
 	return m.images
 }
 
-// unverified says kho could not identify what an image is built from: it was
-// chosen at build time, or no registry answers for the name. They are kept
-// out of the table unless the untracked filter asks for them, and counted
-// under it so the list never looks like everything there is.
+// Unverified images are kept out of the table unless the untracked filter
+// asks for them, and counted so the list never looks like everything there is.
 func unverified(r image.Ref) bool {
 	return r.Unresolved || r.State == image.Unknown
 }
 
-// hiddenUnverified is how many the table is leaving out.
 func (m model) hiddenUnverified() int {
 	if m.imgBusy {
 		return 0
@@ -441,12 +403,9 @@ const (
 	imgColState
 )
 
-// imageColumns are what s cycles on an image row, the natural order first so
-// a table reads in the order its files name the images.
+// The natural order first, so a table reads in the order its files name the images.
 var imageColumns = []string{"", "IMAGE", "FROM", "UPSTREAM", "STATE"}
 
-// sortImg orders the rows by the column s selected, the same way the package
-// table sorts.
 func (m model) sortImg(rows []image.Ref) {
 	if m.imgSort <= 0 || m.imgSort >= len(imageColumns) {
 		return
@@ -476,7 +435,6 @@ func (m model) sortImg(rows []image.Ref) {
 	})
 }
 
-// imgRows is the images table after the keyword and status filters.
 func (m model) imgRows() []image.Ref {
 	var out []image.Ref
 	only := m.imgStatus() == imgStatusUntracked
@@ -518,8 +476,6 @@ func (m model) imgMatchStatus(r image.Ref, s int) bool {
 	return true
 }
 
-// imgCounts tallies the row by state after the keyword filter, so each chip
-// says how many it would show.
 func (m model) imgCounts() []int {
 	n := make([]int, len(imageStatusNames))
 	for _, r := range m.imgList() {
@@ -538,8 +494,6 @@ func (m model) imgCounts() []int {
 	return n
 }
 
-// rowLen is how many rows the table holds: images on the images row,
-// packages everywhere else.
 func (m model) rowLen() int {
 	if isImageRow(m.curRow().kind) {
 		return len(m.imgRows())
@@ -551,7 +505,6 @@ func (m model) currentImg() (image.Ref, bool) {
 	return at(m.imgRows(), m.cursor)
 }
 
-// imageTitle is the table's header: the project, the filter, and the count.
 func (m model) imageTitle() string {
 	title := icon("project") + " " + m.projName() + " · docker"
 	if m.curRow().kind == rowMachineImages {
@@ -577,8 +530,6 @@ func presenceMark(r image.Ref) string {
 	return faint().Render(r.Presence.Mark())
 }
 
-// imageState paints the state the way the package table paints a status. The
-// table gets a short word; the sidebar spells it out.
 func imageState(r image.Ref) string {
 	switch r.State {
 	case image.EOL, image.Gone:
@@ -637,7 +588,6 @@ func stateWord(r image.Ref) string {
 	return r.State.Mark() + " " + word
 }
 
-// imageWhere names the line the reference was read from.
 func imageWhere(r image.Ref) string {
 	if r.File == "" {
 		return ""
@@ -645,9 +595,7 @@ func imageWhere(r image.Ref) string {
 	return fmt.Sprintf("%s:%d", r.File, r.Line)
 }
 
-// imageColWidths fits the image table's columns: the state always stays, then
-// the upstream version, then where the reference was read. The name never
-// takes more than it needs, because the sidebar spells the whole reference.
+// The name never takes more than it needs, because the sidebar spells the whole reference.
 func imageColWidths(inner int) (nameW, whereW, upstreamW, stateW int) {
 	const nameMax = 26
 	stateW, upstreamW, whereW = 10, 10, 16
@@ -661,8 +609,6 @@ func imageColWidths(inner int) (nameW, whereW, upstreamW, stateW int) {
 	return nameW, whereW, upstreamW, stateW
 }
 
-// imageColumnAt maps an x offset within the image table's header to the column
-// under it, so a click sorts the way it does on a package table.
 func (m model) imageColumnAt(x int) int {
 	nameW, whereW, upstreamW, _ := imageColWidths(m.layout().tableW - 4)
 	// the row starts with the presence mark and a space
@@ -682,7 +628,6 @@ func (m model) imageColumnAt(x int) int {
 	return -1
 }
 
-// setImgStatus shows one image state, or everything when it is already on.
 func (m *model) setImgStatus(s int) {
 	key := m.curRow().key
 	if s == m.imgStatuses[key] {
@@ -692,8 +637,6 @@ func (m *model) setImgStatus(s int) {
 	m.cursor, m.offset = 0, 0
 }
 
-// sortImgBy sets the image table's sort column, or reverses it when it is
-// already the one showing.
 func (m *model) sortImgBy(col int) {
 	if col < 0 || col >= len(imageColumns) {
 		return
@@ -709,10 +652,6 @@ func (m *model) sortImgBy(col int) {
 func (m model) imageTableLines() []string {
 	inner := m.layout().tableW - 4
 	rows := m.imgRows()
-	// Columns drop as the table narrows: the state always stays, then the
-	// upstream version, then where the reference was read.
-	// The name never takes more than it needs: a long reference would push
-	// the state off the table, and the sidebar spells the whole name anyway.
 	nameW, whereW, upstreamW, stateW := imageColWidths(inner)
 	arrow := "▲"
 	if m.sortDesc {
@@ -746,14 +685,12 @@ func (m model) imageTableLines() []string {
 		case m.imgBusy:
 			why = m.spin() + " reading Dockerfiles and compose files"
 		case len(m.imgList()) > 0:
-			// there are images, the filter is hiding them
 			why = "nothing matches"
 			if m.imgStatus() != imgStatusAll && m.filter() == "" {
 				why = "✨ all clear here"
 			}
 		case m.hiddenUnverified() > 0:
-			// Every row kho could not identify is hidden, and saying the
-			// project has none would be a lie.
+			// Every row is hidden as unverified, and saying the project has none would be a lie.
 			why = fmt.Sprintf("%d images kho could not identify; f shows them", m.hiddenUnverified())
 		}
 		lines = append(lines, faint().Render(" "+why))
@@ -780,7 +717,6 @@ func (m model) imageTableLines() []string {
 	return bar()
 }
 
-// sideBoxFor picks the sidebar the selected row needs: images have their own.
 func (m model) sideBoxFor(w, h int, focused bool) string {
 	if isImageRow(m.curRow().kind) {
 		return m.imageSideBox(w, h, focused)
@@ -788,8 +724,6 @@ func (m model) sideBoxFor(w, h int, focused bool) string {
 	return m.sideBox(w, h, focused)
 }
 
-// imageStatusBar counts the project's images by what matters: past the line,
-// stale, and held on the machine.
 func (m model) imageStatusBar() string {
 	var eol, gone, stale, disk int
 	list := m.imgList()
@@ -822,9 +756,6 @@ func (m model) imageStatusBar() string {
 	return left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-ansi.StringWidth(right), 1)) + right
 }
 
-// imageSideBox is the sidebar for an image: the same tabs as a package, with
-// the fields, the tags the repository publishes, and what a scan found. The
-// Security tab splits like a package's, list above and the finding below.
 func (m model) imageSideBox(w, h int, focused bool) string {
 	inner := w - 2
 	e := edge(focused)
@@ -869,8 +800,6 @@ func (m model) imageSideBox(w, h int, focused bool) string {
 	return strings.Join(out, "\n")
 }
 
-// imageHasBottom says the image sidebar splits: only a scan result has a
-// detail worth reading under the list.
 func (m model) imageHasBottom() bool {
 	r, ok := m.currentImg()
 	return ok && m.imageTab() == tabSecurity && len(m.imgVulns[r.Canonical()]) > 0
@@ -920,8 +849,6 @@ func (m model) imageBottomLines(inner int) []line {
 	return lines
 }
 
-// imageTab is the tab the image sidebar shows; the tabs an image has no use
-// for fall back to Info.
 func (m model) imageTab() int {
 	switch m.activeTab() {
 	case tabVersions, tabSecurity:
@@ -932,9 +859,7 @@ func (m model) imageTab() int {
 
 func (m model) imageTabs() string { return m.tabBar() }
 
-// autoScan starts the scan when an image's Security tab opens, so the tab
-// answers by itself. A finished scan is kept. A failed one waits on screen
-// and runs again the next time the tab opens.
+// A failed scan waits on screen and runs again the next time the tab opens.
 func (m *model) autoScan() tea.Cmd {
 	r, ok := m.currentImg()
 	if !ok || m.imageTab() != tabSecurity {
@@ -958,11 +883,9 @@ func (m *model) autoScan() tea.Cmd {
 	}
 }
 
-// pullCmd is the command that fetches one tag. Tests swap it.
+// Tests swap it.
 var pullCmd = func(ref string) *exec.Cmd { return exec.Command("docker", "pull", ref) }
 
-// askPull is enter on a version: the confirmation a package install gets,
-// for the one change kho makes to an image, which is fetching it.
 func (m *model) askPull() {
 	r, ok := m.currentImg()
 	if !ok || m.imageTab() != tabVersions {
@@ -987,21 +910,16 @@ func (m *model) askPull() {
 		run: startInstall(title, pullCmd(target), m.log, installedMsg{provider: "docker", name: r.Image, version: t.Name})}
 }
 
-// sortedTags is the tags of an image in the order the panel shows them, with
-// the tag in use kept in front when the repository did not list it.
 func (m model) sortedTags(r image.Ref) []image.Tag {
 	tags := slices.Clone(m.imgTags[r.Canonical()])
 	if r.Tag != "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
-		// The tag in use always shows, in its own place in the order, even
-		// when the repository lists more than kho asked for.
+		// The tag in use always shows, even when the repository lists more than kho asked for.
 		tags = append(tags, image.Tag{Name: r.Tag})
 	}
 	tagOrder(tags)
 	return tags
 }
 
-// tagURL is where a person reads one tag, for the registries that publish a
-// page for it.
 func tagURL(r image.Ref, tag string) string {
 	if r.Registry == image.DockerHub {
 		return registry.HubURL + "/r/" + r.RemoteRepo() + "/tags?name=" + url.QueryEscape(tag)
@@ -1009,9 +927,6 @@ func tagURL(r image.Ref, tag string) string {
 	return ""
 }
 
-// moveImageSide scrolls the image sidebar. The tabs that list things move
-// through them; there is nothing to install or open, so enter only moves
-// focus back to the list.
 func (m *model) moveImageSide(key string, step int) {
 	n := m.imageListLen()
 	switch {
@@ -1025,8 +940,6 @@ func (m *model) moveImageSide(key string, step int) {
 	}
 }
 
-// imageTabStatus is the fixed line at the foot of the panel, which says what
-// the tab is looking at without taking a row from the list.
 func (m model) imageTabStatus() string {
 	r, ok := m.currentImg()
 	if !ok {
@@ -1053,8 +966,7 @@ func (m model) imageTabStatus() string {
 	return ""
 }
 
-// imageListLen is the length of the tab's list, or -1 for the tabs that show
-// fields.
+// -1 for the tabs that show fields.
 func (m model) imageListLen() int {
 	r, ok := m.currentImg()
 	if !ok {
@@ -1141,8 +1053,6 @@ func (m model) imageLines(r image.Ref) []line {
 	return lines
 }
 
-// containerLines says which containers are made from this image, since that is
-// what stands between it and a removal.
 func (m model) containerLines(r image.Ref) []line {
 	key := r.Canonical()
 	switch {
@@ -1168,9 +1078,6 @@ func (m model) containerLines(r image.Ref) []line {
 	return out
 }
 
-// tagOrder sorts tags the way a person reads them: the highest version first,
-// then the most recently published within one version, then by name. Tags
-// with no version, like latest or trixie, come after the numbered ones.
 func tagOrder(tags []image.Tag) {
 	sort.SliceStable(tags, func(i, j int) bool {
 		vi, vj := versionOf(tags[i].Name), versionOf(tags[j].Name)
@@ -1191,8 +1098,6 @@ func tagOrder(tags []image.Tag) {
 
 var versionPrefix = regexp.MustCompile(`^v?(\d+(?:\.\d+)*)`)
 
-// versionOf is the numbers a tag starts with, as in 3.12.16 from
-// 3.12.16-alpine, or "" when the tag is a word.
 func versionOf(name string) string {
 	if m := versionPrefix.FindStringSubmatch(name); m != nil {
 		return m[1]
@@ -1200,8 +1105,6 @@ func versionOf(name string) string {
 	return ""
 }
 
-// imageVersionLines lists the tags the repository publishes, newest first,
-// with the one in use marked.
 func (m model) imageVersionLines(r image.Ref) []line {
 	// The tag in use is always shown, so ask what the registry said before
 	// that: an empty answer must read as empty, not as one version.
@@ -1234,9 +1137,6 @@ func (m model) imageVersionLines(r image.Ref) []line {
 	return lines
 }
 
-// imageSecurityLines says what is known about an image's security. kho does
-// not read inside an image, so a package level CVE list needs a scanner,
-// which runs when the tab opens and trivy is installed.
 func (m model) imageSecurityLines(r image.Ref, inner int) []line {
 	key := r.Canonical()
 	if m.imgScanning[key] {
@@ -1278,7 +1178,6 @@ func presenceWord(r image.Ref) string {
 	return "docker was not asked"
 }
 
-// shortDigest trims a digest to what a person reads.
 func shortDigest(d string) string {
 	if len(d) > 19 {
 		return d[:19]

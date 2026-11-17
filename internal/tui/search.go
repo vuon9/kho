@@ -16,48 +16,38 @@ import (
 	"github.com/vuon9/kho/internal/provider"
 )
 
-// The transient modes of a machine package panel. The default, installed, is
-// no search at all: prompt and results live in m.search, and neither touches
-// the installed list's counts, filters or security index.
+// Prompt and results live in m.search and never touch the installed list's
+// counts, filters or security index.
 const (
 	modePrompt = iota
 	modeResults
 )
 
 const (
-	// searchLimit caps what one source returns, so one busy registry can't
-	// bury the others. The help screen says the limit.
-	searchLimit = provider.DefaultSearchLimit
-	// searchMinLen is the shortest query a search runs on.
-	searchMinLen = 2
-	// searchTimeout keeps one unreachable registry from holding its answer.
+	// One busy registry can't bury the others. The help screen states the limit.
+	searchLimit   = provider.DefaultSearchLimit
+	searchMinLen  = 2
 	searchTimeout = 20 * time.Second
 )
 
-// searchState is the selected panel's transient search. The prompt lives over
-// the installed table; results replace it. Nothing fetches until enter.
+// Nothing fetches until enter.
 type searchState struct {
 	mode int
 	// scope is the rail row's key, so a search never follows a row switch.
 	scope string
 	// draft is what typing edits; query is what results were asked for.
-	draft string
-	query string
-	// editing says results mode has the query box open for an edit in place.
+	draft   string
+	query   string
 	editing bool
 	// gen names one search, so an answer for an older one is dropped.
-	gen int
-	// busy is true from enter until every asked source has answered.
-	busy    bool
-	finding bool
-	// asks and answered name the managers, so the status bar can say which
-	// answer is still out and what a failure was.
+	gen      int
+	busy     bool
+	finding  bool
 	asks     []string
 	answered map[string]bool
 	errs     map[string]string
-	// rows are the results, each with Version empty until the row is installed:
-	// a search never turns an installed package into a candidate or the other
-	// way round by itself.
+	// Version stays empty until the row is installed: a search never turns an
+	// installed package into a candidate or the other way round by itself.
 	rows              []provider.Package
 	installed         map[string]string
 	started           time.Time
@@ -68,18 +58,16 @@ type searchState struct {
 	installedProvider string
 }
 
-// searchMsg is one manager's answer to a keyword search.
 type searchMsg struct {
 	gen     int
 	manager string
 	pkgs    []provider.Package
 	err     error
-	// exact is a name lookup for a manager that has no keyword search, where
-	// "not found" reads as no match rather than as a failed source.
+	// A name lookup for a manager without keyword search, where "not found"
+	// reads as no match rather than as a failed source.
 	exact bool
 }
 
-// findMsg is a candidate's newest version, resolved when opening the row.
 type findMsg struct {
 	gen     int
 	manager string
@@ -92,14 +80,11 @@ type findMsg struct {
 func (m model) inPrompt() bool  { return m.search != nil && m.search.mode == modePrompt }
 func (m model) inResults() bool { return m.search != nil && m.search.mode == modeResults }
 
-// searchWorking says the spinner has to run: a search or a version lookup is
-// still on its way.
 func (m model) searchWorking() bool {
 	return m.search != nil && (m.search.busy || m.search.finding)
 }
 
-// providerCanSearch says a manager's panel has a search at all. pipx and uv
-// have only an exact-name lookup; mise is deferred.
+// pipx and uv have only an exact-name lookup; mise is deferred.
 func (m model) providerCanSearch(name string) bool {
 	p := m.provider(name)
 	if p == nil {
@@ -112,8 +97,6 @@ func (m model) providerCanSearch(name string) bool {
 	return ok
 }
 
-// providerHasKeywordSearch says a manager can be asked a query, as the All
-// panel asks every source that can.
 func (m model) providerHasKeywordSearch(name string) bool {
 	p := m.provider(name)
 	if p == nil {
@@ -123,9 +106,8 @@ func (m model) providerHasKeywordSearch(name string) bool {
 	return ok
 }
 
-// openSearch opens the prompt on a machine package panel. It is silently
-// ignored elsewhere: kho never changes a project, and an image is not a
-// package.
+// Ignored off machine package panels: kho never changes a project, and an
+// image is not a package.
 func (m *model) openSearch() {
 	r := m.curRow()
 	if r.kind != rowAll && r.kind != rowProvider {
@@ -143,7 +125,6 @@ func (m *model) openSearch() {
 	m.notice = ""
 }
 
-// searchScopeLabel names the scope on the status bar's left side.
 func (m model) searchScopeLabel() string {
 	if m.curRow().kind == rowAll {
 		return "every package manager"
@@ -151,10 +132,6 @@ func (m model) searchScopeLabel() string {
 	return m.curRow().name
 }
 
-// searchBar is the bottom bar in prompt and results: the word search, then the
-// draft or the query. The search tone on its glyph, cursor and the rule above
-// it says which input this is; the manager's name is already in the title and
-// the status bar. A long query keeps its tail on screen.
 func (m model) searchBar() string {
 	st := m.search
 	w := max(m.layout().tableW-2, 12)
@@ -164,7 +141,10 @@ func (m model) searchBar() string {
 	switch {
 	case st.mode == modePrompt:
 		cursor = searchTone().Render("▏")
-		if utf8.RuneCountInString(strings.TrimSpace(st.draft)) == 1 {
+		switch utf8.RuneCountInString(strings.TrimSpace(st.draft)) {
+		case 0:
+			hint = faint().Render("a name or keyword")
+		case 1:
 			hint = faint().Render("  type one more character")
 		}
 	case st.editing:
@@ -173,8 +153,6 @@ func (m model) searchBar() string {
 	return fitBar(prefix, st.draftOrQuery(), cursor, hint, w)
 }
 
-// draftOrQuery is what the bar shows: the draft while typing, the query in
-// results.
 func (st *searchState) draftOrQuery() string {
 	if st.mode == modePrompt || st.editing {
 		return st.draft
@@ -182,8 +160,7 @@ func (st *searchState) draftOrQuery() string {
 	return st.query
 }
 
-// fitBar keeps the tail of a long text on screen and cuts its head instead, so
-// the characters just typed stay visible.
+// Cuts the head, not the tail, so the characters just typed stay visible.
 func fitBar(prefix, text, cursor, hint string, w int) string {
 	width := lipgloss.Width(prefix) + lipgloss.Width(cursor) + lipgloss.Width(hint)
 	room := w - width
@@ -201,8 +178,6 @@ func fitBar(prefix, text, cursor, hint string, w int) string {
 	return prefix + text + cursor + hint
 }
 
-// submitSearch turns the draft into a search. A query shorter than two
-// characters says what is missing and fetches nothing.
 func (m *model) submitSearch() tea.Cmd {
 	st := m.search
 	q := strings.TrimSpace(st.draft)
@@ -230,9 +205,6 @@ func (m *model) submitSearch() tea.Cmd {
 	return m.searchRun(st.gen, q)
 }
 
-// searchRun asks the panel's scope: the All row asks every keyword source, a
-// manager's row asks that manager, and a manager with only an exact-name
-// lookup resolves the query as a name or path.
 func (m *model) searchRun(gen int, q string) tea.Cmd {
 	st := m.search
 	r := m.curRow()
@@ -287,8 +259,6 @@ func (m model) exactCmd(p provider.Provider, source string, gen int, q string) t
 	}
 }
 
-// gotSearch files one answer. An answer for an older search is dropped, and a
-// row keeps the manager's own order.
 func (m *model) gotSearch(msg searchMsg) {
 	st := m.search
 	if st == nil || st.mode != modeResults || msg.gen != st.gen {
@@ -324,8 +294,7 @@ func (m *model) gotSearch(msg searchMsg) {
 	}
 }
 
-// rowsWithoutManager drops a manager's rows before its new answer replaces
-// them. A manager can serve more than one source, as brew does for casks.
+// A manager can serve more than one source, as brew does for casks.
 func rowsWithoutManager(rows []provider.Package, manager string) []provider.Package {
 	out := rows[:0]
 	for _, p := range rows {
@@ -336,8 +305,6 @@ func rowsWithoutManager(rows []provider.Package, manager string) []provider.Pack
 	return out
 }
 
-// providerIndex is the provider's place in the rail order, for a stable result
-// order across answers that arrive at different times.
 func (m model) providerIndex(name string) int {
 	for i, p := range m.providers {
 		if p.Name() == name {
@@ -347,8 +314,7 @@ func (m model) providerIndex(name string) int {
 	return len(m.providers)
 }
 
-// gotFind fills the opened candidate's newest version, which some managers'
-// search does not return.
+// Some managers' search does not return the newest version.
 func (m *model) gotFind(msg findMsg) {
 	st := m.search
 	if st == nil || st.mode != modeResults || msg.gen != st.gen {
@@ -378,7 +344,6 @@ func (m *model) gotFind(msg findMsg) {
 	}
 }
 
-// searchPending lists the managers whose answer is still out, in ask order.
 func (m model) searchPending() []string {
 	st := m.search
 	if st == nil {
@@ -393,7 +358,6 @@ func (m model) searchPending() []string {
 	return out
 }
 
-// searchAnswers is how many asked managers have answered.
 func (m model) searchAnswers() int {
 	st := m.search
 	if st == nil {
@@ -408,7 +372,6 @@ func (m model) searchAnswers() int {
 	return n
 }
 
-// searchTitle names the mode: the panel, then search, then the count.
 func (m model) searchTitle() string {
 	st := m.search
 	r := m.curRow()
@@ -421,21 +384,24 @@ func (m model) searchTitle() string {
 	case st.busy:
 		return title + m.spin() + " searching…"
 	}
-	return fmt.Sprintf("%s%d results", title, len(st.rows))
+	return title + resultCount(len(st.rows))
 }
 
-// searchStatusBar counts the results and carries the spinner and any source
-// failure on its right side.
+func resultCount(n int) string {
+	if n == 1 {
+		return "1 result"
+	}
+	return fmt.Sprintf("%d results", n)
+}
+
 func (m model) searchStatusBar() string {
 	st := m.search
-	left := " " + pillOn(fmt.Sprintf("%d results · %s", len(st.rows), m.searchScopeLabel()), th.subtle, th.selFg)
+	left := " " + pillOn(resultCount(len(st.rows))+" · "+m.searchScopeLabel(), th.subtle, th.selFg)
 	var right []string
 	switch {
 	case st.busy:
 		right = append(right, m.spin()+faint().Render(" searching "+strings.Join(m.searchPending(), ", ")+" "))
 	case st.finding:
-		// Opening a result reads its newest version when the search did not
-		// carry one; the title still says the result count.
 		right = append(right, m.spin()+faint().Render(" resolving the newest version "))
 	case len(st.errs) > 0:
 		for _, name := range sortedErrKeys(st.errs) {
@@ -447,7 +413,6 @@ func (m model) searchStatusBar() string {
 	return left + strings.Repeat(" ", max(m.width-lipgloss.Width(left)-lipgloss.Width(tail), 1)) + tail
 }
 
-// shortReason keeps a source's error to one short line on the status bar.
 func shortReason(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
@@ -455,7 +420,6 @@ func shortReason(s string) string {
 	return ansi.Truncate(s, 40, "…")
 }
 
-// sortedErrKeys names failed managers in a stable order.
 func sortedErrKeys(errs map[string]string) []string {
 	out := make([]string, 0, len(errs))
 	for name := range errs {
@@ -465,8 +429,6 @@ func sortedErrKeys(errs map[string]string) []string {
 	return out
 }
 
-// resultColumns fits NAME, LATEST and STATUS to the package panel. Names give
-// room first, and the source tag goes before a name is cut short.
 func (m model) resultColumns() []column {
 	inner := m.layout().tableW - 4
 	if m.skillScope() {
@@ -495,8 +457,6 @@ func resultRow(cols []column, cells [5]string) string {
 	return strings.Join(parts, " ")
 }
 
-// searchLines draws the results table with its states, the body hints the
-// prompt and results add, and the query on the bottom bar.
 func (m model) searchLines() []string {
 	cols := m.resultColumns()
 	var head [5]string
@@ -535,8 +495,6 @@ func (m model) searchLines() []string {
 	return append(m.fitBody(lines), m.barRule(inner), m.searchBar())
 }
 
-// searchHints is the table body when it has no rows: what is still on its way,
-// what failed, or that nothing matched.
 func (m model) searchHints(n int) []string {
 	st := m.search
 	if n > 0 {
@@ -572,7 +530,6 @@ func (m model) searchHints(n int) []string {
 	return out
 }
 
-// nameOnlyManagers are the ready managers that install by exact name only.
 func (m model) nameOnlyManagers() []string {
 	var out []string
 	for _, p := range m.providers {
@@ -586,7 +543,6 @@ func (m model) nameOnlyManagers() []string {
 	return out
 }
 
-// joinWords reads a list as a sentence: "a, b and c".
 func joinWords(words []string) string {
 	switch len(words) {
 	case 0:
@@ -597,7 +553,6 @@ func joinWords(words []string) string {
 	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
 
-// exactNameWhere names the registry a name was looked up in.
 func exactNameWhere(manager string) string {
 	switch manager {
 	case "pipx", "uv":
@@ -608,13 +563,12 @@ func exactNameWhere(manager string) string {
 	return "its registry"
 }
 
-// tookText writes a search's time the way the no-match line reads.
 func tookText(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// searchRows are the result rows as the table sees them: an installed hit
-// resolves to the installed package, so its sidebar and status are today's.
+// An installed hit resolves to the installed package, so its sidebar and
+// status are today's.
 func (m model) searchRows() []provider.Package {
 	st := m.search
 	if st == nil {
@@ -646,10 +600,10 @@ func (m model) searchRows() []provider.Package {
 	return out
 }
 
-// installedFor finds the installed package a result names under its own source.
 func (m model) installedFor(p provider.Package) (provider.Package, bool) {
 	for _, q := range m.pkgs[providerOfSource(p.Source)] {
-		if q.Name != p.Name || q.Source != p.Source {
+		// A Homebrew tap result is named tap/name; the installed list says name.
+		if q.Source != p.Source || (q.Name != p.Name && q.Origin+"/"+q.Name != p.Name) {
 			continue
 		}
 		// Two repositories can publish a skill with the same display name, so
@@ -662,8 +616,8 @@ func (m model) installedFor(p provider.Package) (provider.Package, bool) {
 	return provider.Package{}, false
 }
 
-// searchInstalled resolves a result to its installed package, or to the
-// version kho just installed while the relist is still on its way.
+// Falls back to the version kho just installed while the relist is still on
+// its way.
 func (m model) searchInstalled(p provider.Package) (provider.Package, bool) {
 	if q, ok := m.installedFor(p); ok {
 		return q, true
@@ -678,7 +632,6 @@ func (m model) searchInstalled(p provider.Package) (provider.Package, bool) {
 	return provider.Package{}, false
 }
 
-// isCandidate says the selected row is a package the machine does not have.
 func (m model) isCandidate(p provider.Package) bool {
 	if !m.inResults() {
 		return false
@@ -687,8 +640,6 @@ func (m model) isCandidate(p provider.Package) bool {
 	return !installed
 }
 
-// otherInstall finds the same name installed through another manager, which
-// the candidate's status and confirm dialog warn about.
 func (m model) otherInstall(p provider.Package) (provider.Package, bool) {
 	for _, prov := range m.providers {
 		for _, q := range m.pkgs[prov.Name()] {
@@ -700,9 +651,6 @@ func (m model) otherInstall(p provider.Package) (provider.Package, bool) {
 	return provider.Package{}, false
 }
 
-// searchSourcePrefix names the row's source in the name column when it is not
-// the panel's own, so a cask in the brew panel and every row in All keep it
-// even when the name has to be cut short.
 func (m model) searchSourcePrefix(p provider.Package) string {
 	r := m.curRow()
 	if r.kind == rowProvider && p.Source == r.name {
@@ -711,8 +659,6 @@ func (m model) searchSourcePrefix(p provider.Package) string {
 	return p.Source
 }
 
-// searchStatusCell is the results table's status: not installed, installed, or
-// installed with a newer version waiting.
 func (m model) searchStatusCell(p provider.Package) string {
 	if m.isCandidate(p) {
 		return faint().Render("· not installed")
@@ -726,8 +672,7 @@ func (m model) searchStatusCell(p provider.Package) string {
 	return green().Render("✓ installed " + printable(p.Version))
 }
 
-// closeSearch drops the search and goes back to the installed list. A row
-// installed during the search is the one selected when results close.
+// A row installed during the search is the one selected when results close.
 func (m *model) closeSearch() {
 	st := m.search
 	if st == nil {
@@ -752,9 +697,7 @@ func (m *model) closeSearch() {
 	m.cursor, m.offset = st.savedCursor, st.savedOffset
 }
 
-// openResult opens the selected result in the sidebar. A candidate whose
-// search returned no newest version has it resolved there first: this is the
-// first network step for the row.
+// Resolving a missing newest version here is the row's first network step.
 func (m *model) openResult() tea.Cmd {
 	st := m.search
 	p, ok := m.current()
@@ -787,8 +730,6 @@ func (m *model) openResult() tea.Cmd {
 	}
 }
 
-// openCandidateHome opens the selected candidate's homepage. Home returns the
-// repo, and a registry page when kho knows one.
 func (m *model) openCandidateHome() tea.Cmd {
 	p, ok := m.current()
 	if !ok {
@@ -801,9 +742,8 @@ func (m *model) openCandidateHome() tea.Cmd {
 	return nil
 }
 
-// pressSearch takes every key while a prompt or results are showing, so the
-// machine actions stay off: kho changes the machine only from the installed
-// list, or after the install dialog says yes.
+// Takes every key so machine actions stay off: kho changes the machine only
+// from the installed list, or after the install dialog says yes.
 func (m *model) pressSearch(key string, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	st := m.search
 	if st == nil {
@@ -925,8 +865,6 @@ func indexOf(s []int, v int) int {
 	return -1
 }
 
-// printableKey is the text a key adds to a draft: nothing for a control key or
-// a move.
 func printableKey(msg tea.KeyPressMsg) string {
 	if msg.Text == "" {
 		return ""
@@ -947,10 +885,8 @@ func dropLastRune(s string) string {
 	return string(runes[:len(runes)-1])
 }
 
-// candidateInfoLines is the Info tab for a package the machine does not have:
-// what it is, where it comes from, what would run, and whether the machine
-// already has it another way. Nothing here is read; the fields came with the
-// search or the lookup that opened it.
+// Nothing here is read; the fields came with the search or the lookup that
+// opened it.
 func (m model) candidateInfoLines(p provider.Package, inner int) []line {
 	lines := plain(" "+icon(providerOfSource(p.Source))+" "+accent().Render(printable(p.Name))+faint().Render(" · "+printable(p.Source)), "")
 	add := func(label, value string) {
@@ -993,8 +929,6 @@ func (m model) candidateInfoLines(p provider.Package, inner int) []line {
 	return lines
 }
 
-// candidateSecurity is the sentence the confirm would show about the newest
-// version, or why there is none yet.
 func (m model) candidateSecurity(p provider.Package) string {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	if p.Source == "skills" {
@@ -1029,7 +963,6 @@ func (m model) candidateSecurity(p provider.Package) string {
 	return green().Render("✓ no known advisories in " + version)
 }
 
-// candidateRuns is the exact command installing the newest version would run.
 func (m model) candidateRuns(p provider.Package) string {
 	version := p.Latest
 	if version == "" {
@@ -1042,8 +975,6 @@ func (m model) candidateRuns(p provider.Package) string {
 	return printable(strings.Join(cmd.Args, " "))
 }
 
-// askInstallNew offers to install a candidate at version. The dialog is the
-// installed one with the new verb, the source in a word, and the newest nudge.
 func (m *model) askInstallNew(p provider.Package, version string) {
 	cmd, err := provider.InstallNewCmd(p, version)
 	if err != nil {
@@ -1088,8 +1019,6 @@ func (m *model) askInstallNew(p provider.Package, version string) {
 		run: startInstall(title, cmd, m.log, installedMsg{provider: providerOfSource(p.Source), name: p.Name, version: version})}
 }
 
-// sourceLine names the manager's install shape, so a person can see which
-// registry the name came from before saying yes.
 func (m model) sourceLine(p provider.Package) string {
 	word := map[string]string{
 		"brew": "brew formula", "cask": "brew cask", "npm": "npm global",
@@ -1105,8 +1034,6 @@ func (m model) sourceLine(p provider.Package) string {
 	return faint().Render(word)
 }
 
-// confirmAdvisory is the advisory sentence the installed confirm shows, for a
-// version a candidate would install. It is absent until the history is known.
 func (m model) confirmAdvisory(p provider.Package, version string) string {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	if eco == "" || !m.db.HistoryFresh(eco, name, now()) {
@@ -1127,16 +1054,12 @@ func (m model) confirmAdvisory(p provider.Package, version string) string {
 	return green().Render("✓ no known advisories in " + version)
 }
 
-// printablePaste is pasted text as a draft holds it: one line, no control
-// characters.
 func printablePaste(s string) string {
 	return printable(strings.ReplaceAll(strings.TrimSpace(s), "\n", " "))
 }
 
-// loadCandidate reads what a candidate's visible tab needs: its published
-// versions on Versions, and its advisory history on Versions or Security, as an
-// installed package's tabs do. Info stays quiet until the row is opened.
-// Dependencies are not read: a package without an installation has none.
+// Info stays quiet until the row is opened. Dependencies are not read: a
+// package without an installation has none.
 func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	prov, key := m.provider(providerOfSource(p.Source)), cacheKey(p)
 	tab := m.activeTab()
@@ -1183,9 +1106,6 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// gotInstalled patches the results row kho just installed, so it reads as
-// installed while the machine list is relisted underneath it. The sidebar and
-// the installed list follow the relist, as they do for any change.
 func (m *model) gotInstalled(msg installedMsg) {
 	st := m.search
 	if st == nil || st.mode != modeResults {
@@ -1203,8 +1123,6 @@ func (m *model) gotInstalled(msg installedMsg) {
 	}
 }
 
-// providerOfSource names the provider a source label belongs to: a cask is
-// brew's, as provider.ProviderOf says for a package.
 func providerOfSource(source string) string {
 	if source == "cask" {
 		return "brew"

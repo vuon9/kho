@@ -19,8 +19,8 @@ type palette struct {
 
 var hex = lipgloss.Color
 
-// themes are what t and T cycle through. The first dark one and the first
-// light one are the defaults for a terminal of that kind.
+// The first dark one and the first light one are the defaults for a terminal
+// of that kind.
 var themes = []palette{
 	{name: "Ocean", dark: true, accent: hex("#60A5FA"), accent2: hex("#A78BFA"), cyan: hex("#22D3EE"), green: hex("#34D399"), yellow: hex("#FBBF24"),
 		orange: hex("#FB923C"), red: hex("#F87171"), muted: hex("#7D8BA3"), subtle: hex("#2B3547"),
@@ -39,7 +39,6 @@ var themes = []palette{
 		selBg: hex("#C2410C"), selFg: hex("#FFF7ED"), dimSelBg: hex("#2E221C"), pillFg: hex("#1C1210"), markdown: "dark"},
 }
 
-// th is the active palette.
 var th = themes[0]
 
 func themeNamed(name string) (palette, bool) {
@@ -59,7 +58,6 @@ func themeNames() string {
 	return strings.Join(names, ", ")
 }
 
-// defaultTheme fits the terminal's background when no theme was picked.
 func defaultTheme(dark bool) palette {
 	for _, t := range themes {
 		if t.dark == dark {
@@ -84,8 +82,6 @@ func faint() lipgloss.Style  { return fg(th.muted) }
 func bold() lipgloss.Style   { return lipgloss.NewStyle().Bold(true) }
 func accent() lipgloss.Style { return fg(th.accent).Bold(true) }
 
-// searchTone marks the search input, so a search bar reads differently from the
-// installed filter without a sentence saying which manager it asks.
 func searchTone() lipgloss.Style { return fg(th.accent2).Bold(true) }
 func green() lipgloss.Style      { return fg(th.green) }
 func yellow() lipgloss.Style     { return fg(th.yellow) }
@@ -101,8 +97,6 @@ func pill(text string, bg color.Color) string {
 	return lipgloss.NewStyle().Background(bg).Foreground(th.pillFg).Bold(true).Padding(0, 1).Render(text)
 }
 
-// selected paints a highlighted row: vivid while its panel has focus, quiet
-// otherwise. Rails and tables share it so selection looks the same everywhere.
 func selected(line string, width int, focused bool) string {
 	style := lipgloss.NewStyle().Background(th.dimSelBg).Bold(true)
 	if focused {
@@ -126,15 +120,12 @@ func icon(name string) string {
 	return "• "
 }
 
-// logo draws "kho" one letter per accent color.
 func logo() string {
 	return "🏮 " + accent().Render("kho")
 }
 
 var spinner = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
 
-// spin is the frame every in-progress line starts with, so waiting reads as
-// working instead of as a sentence that never changes.
 func (m model) spin() string {
 	return accent().Render(spinner[m.frame%len(spinner)])
 }

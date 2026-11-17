@@ -1,7 +1,5 @@
 // genagents writes skill_agents.go from the skills CLI's own agent table, so
 // kho links skills into exactly the agents `npx skills` supports.
-//
-//	go run ./genagents v1.7.6
 package main
 
 import (
@@ -125,9 +123,7 @@ func generate(src, version string) ([]byte, error) {
 	return format.Source(b.Bytes())
 }
 
-// paths lists the folders whose existence shows an agent is installed, from
-// the existsSync and pathExists calls in code and the is*Installed helpers it
-// calls. It leaves out project folders under process.cwd() and the bases left
+// It leaves out project folders under process.cwd() and the bases left
 // out on purpose, and fails on any other call, so a new way of finding an
 // agent can't be dropped without notice.
 func paths(code string, bases map[string]string, helpers map[string][]string) ([]string, error) {

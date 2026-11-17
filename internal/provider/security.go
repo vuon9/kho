@@ -7,8 +7,7 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Ecosystem names the OSV database that covers the package, or "" when OSV
-// has none, as for Homebrew formulae, mise tools and skills.
+// OSV has no database for Homebrew formulae, mise tools or skills.
 func Ecosystem(p Package) string {
 	switch p.Source {
 	case "npm":
@@ -25,8 +24,7 @@ func Ecosystem(p Package) string {
 	return ""
 }
 
-// OSVName is the package's name in its OSV ecosystem. Go binaries are known
-// by their module path.
+// OSV knows Go binaries by their module path.
 func OSVName(p Package) string {
 	switch Ecosystem(p) {
 	case vuln.Go:
@@ -47,7 +45,6 @@ func BrewVersion(v string) string {
 	return brewRevision.ReplaceAllString(v, "")
 }
 
-// BrewQuery is the cache key for the formula Homebrew's own scan assessed.
 // OSV has no ecosystem for brew, so this query stays away from vuln.Scan.
 func BrewQuery(p Package) (vuln.Query, bool) {
 	if p.Source != "brew" {
@@ -56,7 +53,6 @@ func BrewQuery(p Package) (vuln.Query, bool) {
 	return vuln.Query{Ecosystem: vuln.Homebrew, Name: p.Name, Version: BrewVersion(p.Version)}, true
 }
 
-// BrewQueries are the cache keys for the installed Homebrew formulae.
 func BrewQueries(pkgs []Package) []vuln.Query {
 	var qs []vuln.Query
 	for _, p := range pkgs {
@@ -67,8 +63,6 @@ func BrewQueries(pkgs []Package) []vuln.Query {
 	return qs
 }
 
-// Coverage says why kho has no advisories for p when a source does not cover
-// it at all, or "" when it does.
 func Coverage(p Package) string {
 	if p.Source == "cask" {
 		return "Homebrew scans formulae, not casks"
@@ -82,13 +76,11 @@ func NormalizePyPI(name string) string {
 	return pypiSeparators.ReplaceAllString(strings.ToLower(name), "-")
 }
 
-// Released says whether v is a published version OSV can know about. A Go
-// module built from a local checkout has "(devel)" or no version at all.
+// A Go module built from a local checkout has "(devel)" or no version at all.
 func Released(v string) bool {
 	return v != "" && v != "(devel)"
 }
 
-// Query is the OSV query for the installed version, if there is one to ask.
 func Query(p Package) (vuln.Query, bool) {
 	eco := Ecosystem(p)
 	if eco == "" || !Released(p.Version) || eco == vuln.Packagist && composerBranch(p.Version) {
@@ -97,8 +89,7 @@ func Query(p Package) (vuln.Query, bool) {
 	return vuln.Query{Ecosystem: eco, Name: OSVName(p), Version: p.Version}, true
 }
 
-// DepQuery is the OSV query for one of p's dependencies, if kho asks about
-// it. kho asks about the ones known without extra work: npm's direct
+// kho asks about the dependencies known without extra work: npm's direct
 // dependencies and every module built into a Go binary. Composer lists its
 // dependencies as packages of their own, which are asked about directly.
 func DepQuery(p Package, d Dep) (vuln.Query, bool) {

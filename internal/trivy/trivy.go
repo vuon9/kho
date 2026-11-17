@@ -1,6 +1,5 @@
-// Package trivy runs the trivy scanner over one image and reads what it
-// found. kho never reads inside an image itself, so a package level CVE list
-// comes from the scanner that already does it well.
+// kho never reads inside an image itself, so a package level CVE list comes
+// from the scanner that already does it well.
 package trivy
 
 import (
@@ -18,7 +17,6 @@ import (
 	"github.com/vuon9/kho/internal/vuln"
 )
 
-// Vuln is one finding, as the Security tab lists it.
 type Vuln struct {
 	ID        string `json:"id"`
 	Severity  string `json:"severity"`
@@ -29,7 +27,6 @@ type Vuln struct {
 	URL       string `json:"url,omitempty"`
 }
 
-// Available says whether the scanner is installed.
 func Available() bool {
 	_, err := exec.LookPath("trivy")
 	return err == nil
@@ -39,9 +36,8 @@ func Available() bool {
 // scans started together make each other fail with "cache may be in use".
 var scanMu sync.Mutex
 
-// Scan reads the image trivy names, which may be a tag or a digest. It is
-// slow the first time, when trivy downloads its database, and scans run one
-// after another because they share that database.
+// ref may be a tag or a digest. The first scan is slow while trivy downloads
+// its database.
 func Scan(ctx context.Context, ref string) ([]Vuln, error) {
 	scanMu.Lock()
 	defer scanMu.Unlock()
@@ -76,7 +72,6 @@ func scanOnce(ctx context.Context, ref string) ([]Vuln, error) {
 	return Parse(stdout.Bytes())
 }
 
-// Parse reads trivy's JSON report.
 func Parse(data []byte) ([]Vuln, error) {
 	var doc struct {
 		Results []struct {
@@ -116,9 +111,6 @@ func Parse(data []byte) ([]Vuln, error) {
 	return out, nil
 }
 
-// clean turns the scanner's error report into one readable sentence: the
-// log prefix goes, the noise about its own cache becomes something a person
-// can act on, and the rest is cut at a word.
 func clean(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if strings.Contains(s, "cache may be in use") {

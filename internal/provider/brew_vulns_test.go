@@ -14,6 +14,17 @@ func TestParseBrewVulns(t *testing.T) {
 		want vuln.BrewResult
 	}{
 		{
+			id: "a tap's formula goes by the name brew info lists it under",
+			json: `{"findings":[{"formula":"acme/tools/anvil","version":"1.2.3","vulnerabilities":[
+					{"id":"CVE-0000-0006","severity":"HIGH","summary":"Anvil trusts a header","aliases":[],"fixed_versions":[]}],"patched":[]}],
+				"skipped_formulae":["acme/tools/bramble"],"checked":3,"complete":false,
+				"outdated_without_sbom":["acme/tools/cog"],"unscanned_formulae":{}}`,
+			want: vuln.BrewResult{Checked: 3, Skipped: []string{"bramble"}, OutdatedWithoutSBOM: []string{"cog"},
+				Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{
+					{ID: "CVE-0000-0006", Severity: "HIGH", Summary: "Anvil trusts a header", Package: "anvil", Versions: []string{"1.2.3"}},
+				}}}},
+		},
+		{
 			id: "a released fix becomes the fixed version",
 			json: `{"findings":[{"formula":"anvil","version":"1.2.3","tag":"v1.2.3","repo_url":"https://github.com/example/anvil",
 				"vulnerabilities":[{"id":"CVE-0000-0001","severity":"HIGH","summary":"Anvil runs a command twice",
