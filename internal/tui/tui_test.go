@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -171,7 +171,7 @@ func loaded(t *testing.T) model {
 	}
 	unlinkSkill = func(l provider.SkillLink) error { toggled = append(toggled, "unlink "+l.Agent); return nil }
 	now = func() time.Time { return clock }
-	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+	settleTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
 		return func() tea.Msg { return fn(clock) }
 	}
 	openURL = func(url string) error { opened = append(opened, url); return nil }
@@ -195,6 +195,9 @@ func loaded(t *testing.T) model {
 		return map[string]vuln.SkillAudit{"someone/skills/pathmaker": {Gen: "safe", Socket: "safe", Snyk: "medium"}}, nil
 	}
 	scanBrew = func(context.Context) (vuln.BrewResult, error) { return brewScanResult, nil }
+	scanFormula = func(context.Context, string) (vuln.BrewResult, error) {
+		return vuln.BrewResult{Checked: 1, Complete: true}, nil
+	}
 	ps := fakes(t)
 	m := update(t, newModel(ps, ""), tea.WindowSizeMsg{Width: 160, Height: 40})
 	for _, p := range ps {

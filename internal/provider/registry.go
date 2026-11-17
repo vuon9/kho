@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -170,7 +172,7 @@ func TagVersion(tag string) string {
 	if i := strings.LastIndexAny(tag, "@/"); i >= 0 {
 		tag = tag[i+1:]
 	}
-	return strings.TrimPrefix(tag, "v")
+	return vuln.Clean(tag)
 }
 
 // Notes are a bonus, so a failed lookup leaves the versions as they are.

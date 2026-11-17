@@ -1,14 +1,18 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/vuon9/kho/internal/vuln"
 )
@@ -152,54 +156,122 @@ var ErrBrewVulnsUnsupported = errors.New("brew vulns needs Homebrew 6.0.11 or la
 // asks OSV, and knows which findings its own patches already fix, so kho does
 // not have to guess an ecosystem for brew.
 func ScanBrewVulns(ctx context.Context) (vuln.BrewResult, error) {
-	out, err := run(ctx, "brew", "vulns", "--json")
+	return scanBrewVulns(ctx)
+}
+
+// ScanBrewFormula checks one formula, installed or not. Homebrew assesses the
+// version it would install.
+func ScanBrewFormula(ctx context.Context, name string) (vuln.BrewResult, error) {
+	return scanBrewVulns(ctx, "--", name)
+}
+
+func scanBrewVulns(ctx context.Context, args ...string) (vuln.BrewResult, error) {
+	out, err := run(ctx, "brew", append([]string{"vulns", "--json"}, args...)...)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unknown command") {
 			return vuln.BrewResult{}, ErrBrewVulnsUnsupported
 		}
 		return vuln.BrewResult{}, err
 	}
-	return ParseBrewVulns(out)
+	report, err := decodeBrewVulns(out)
+	if err != nil {
+		return vuln.BrewResult{}, err
+	}
+	return report.result(brewReleaseFixes(ctx, report, brewNewest(ctx, report))), nil
+}
+
+// brewNewest asks brew info, locally, for the newest version of each formula
+// whose fix Homebrew named only by commit. A release past it is one Homebrew
+// can't install, so it is never searched.
+func brewNewest(ctx context.Context, r brewVulnsReport) map[string]string {
+	var names []string
+	for _, f := range r.Findings {
+		for _, v := range f.Vulnerabilities {
+			if len(brewShas(v.FixedVersions)) > 0 {
+				names = append(names, f.Formula)
+				break
+			}
+		}
+	}
+	newest := map[string]string{}
+	if len(names) == 0 {
+		return newest
+	}
+	out, err := run(ctx, "brew", append([]string{"info", "--json=v2", "--formula"}, names...)...)
+	if err != nil {
+		return newest
+	}
+	info, err := parseBrewCatalog(out)
+	if err != nil {
+		return newest
+	}
+	for _, f := range info.Formulae {
+		newest[f.FullName] = f.Versions.Stable
+		newest[f.Name] = f.Versions.Stable
+	}
+	return newest
 }
 
 // Homebrew exits non-zero for findings, for an incomplete scan, and for a
 // failed one, so the JSON decides what happened and the exit status is not read.
 func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
-	var raw struct {
-		Findings []struct {
-			Formula         string     `json:"formula"`
-			Version         string     `json:"version"`
-			Vulnerabilities []brewVuln `json:"vulnerabilities"`
-		} `json:"findings"`
-		SkippedFormulae     []string          `json:"skipped_formulae"`
-		Checked             int               `json:"checked"`
-		Complete            bool              `json:"complete"`
-		OutdatedWithoutSBOM []string          `json:"outdated_without_sbom"`
-		Unscanned           map[string]string `json:"unscanned_formulae"`
+	report, err := decodeBrewVulns(data)
+	if err != nil {
+		return vuln.BrewResult{}, err
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return vuln.BrewResult{}, fmt.Errorf("brew vulns: %w", err)
+	return report.result(nil), nil
+}
+
+type brewVulnsReport struct {
+	Findings            []brewFinding     `json:"findings"`
+	SkippedFormulae     []string          `json:"skipped_formulae"`
+	Checked             int               `json:"checked"`
+	Complete            bool              `json:"complete"`
+	OutdatedWithoutSBOM []string          `json:"outdated_without_sbom"`
+	Unscanned           map[string]string `json:"unscanned_formulae"`
+}
+
+type brewFinding struct {
+	Formula         string     `json:"formula"`
+	Version         string     `json:"version"`
+	Tag             string     `json:"tag"`
+	RepoURL         string     `json:"repo_url"`
+	Vulnerabilities []brewVuln `json:"vulnerabilities"`
+}
+
+func decodeBrewVulns(data []byte) (brewVulnsReport, error) {
+	var r brewVulnsReport
+	if err := json.Unmarshal(data, &r); err != nil {
+		return r, fmt.Errorf("brew vulns: %w", err)
 	}
-	result := vuln.BrewResult{Checked: raw.Checked, Complete: raw.Complete}
-	for _, name := range raw.SkippedFormulae {
+	return r, nil
+}
+
+// released maps brewFixKey to the first release that holds a fix Homebrew
+// named only by commit.
+func (r brewVulnsReport) result(released map[string]string) vuln.BrewResult {
+	result := vuln.BrewResult{Checked: r.Checked, Complete: r.Complete}
+	for _, name := range r.SkippedFormulae {
 		result.Skipped = append(result.Skipped, brewShortName(name))
 	}
-	for _, name := range raw.OutdatedWithoutSBOM {
+	for _, name := range r.OutdatedWithoutSBOM {
 		result.OutdatedWithoutSBOM = append(result.OutdatedWithoutSBOM, brewShortName(name))
 	}
-	if len(raw.Unscanned) > 0 {
-		result.Unscanned = raw.Unscanned
+	if len(r.Unscanned) > 0 {
+		result.Unscanned = r.Unscanned
 	}
-	for _, f := range raw.Findings {
+	for _, f := range r.Findings {
 		name := brewShortName(f.Formula)
 		finding := vuln.BrewFinding{Formula: name, Version: f.Version}
 		for _, v := range f.Vulnerabilities {
-			finding.Advisories = append(finding.Advisories, v.advisory(name, f.Version))
+			finding.Advisories = append(finding.Advisories, v.advisory(name, f.Version, released[brewFixKey(f, v)]))
 		}
 		result.Findings = append(result.Findings, finding)
 	}
-	return result, nil
+	return result
 }
+
+func brewFixKey(f brewFinding, v brewVuln) string { return f.Formula + "\x00" + v.ID }
 
 // brewShortName turns Homebrew's full name for a tap's formula, tap/name, into
 // the name `brew info` lists it under.
@@ -213,7 +285,11 @@ type brewVuln struct {
 	FixedVersions []string `json:"fixed_versions"`
 }
 
-func (v brewVuln) advisory(formula, version string) vuln.Advisory {
+// A fixed version Homebrew names wins, then the release that holds a fix
+// commit, then the range the summary spells out; the summary still says where
+// the span starts. Without any of them the finding says only that the
+// installed version is affected.
+func (v brewVuln) advisory(formula, version, released string) vuln.Advisory {
 	a := vuln.Advisory{
 		ID:       v.ID,
 		Severity: strings.ToUpper(v.Severity),
@@ -224,19 +300,28 @@ func (v brewVuln) advisory(formula, version string) vuln.Advisory {
 	if len(v.Aliases) > 0 {
 		a.Aliases = v.Aliases
 	}
-	if fixed := brewFixed(v.FixedVersions, version); fixed != "" {
+	span := summaryRanges(v.Summary, version)
+	fixed := cmp.Or(brewFixed(v.FixedVersions, version), released)
+	switch {
+	case fixed != "" && len(span) > 0:
+		a.Ranges = []vuln.Range{{Introduced: span[0].Introduced}, {Fixed: fixed}}
+	case fixed != "":
 		a.Ranges = []vuln.Range{{Introduced: "0"}, {Fixed: fixed}}
+	default:
+		a.Ranges = span
 	}
 	return a
 }
 
-// Homebrew also lists commit SHAs for patches, and tags that carry their
-// project's name; neither can be compared with a formula version, so they are
-// left out and the finding keeps no fixed version.
+// Commit SHAs cannot be compared with a formula version, so they are left
+// out; a tag that carries its project's name is read as the version it names.
 func brewFixed(fixed []string, version string) string {
 	best := ""
 	for _, f := range fixed {
-		v := strings.TrimPrefix(f, "v")
+		if brewSHA.MatchString(f) {
+			continue
+		}
+		v := vuln.Clean(f)
 		if !brewVersion(v) || vuln.Compare(v, version) <= 0 {
 			continue
 		}
@@ -245,6 +330,144 @@ func brewFixed(fixed []string, version string) string {
 		}
 	}
 	return best
+}
+
+func brewShas(fixed []string) []string {
+	var shas []string
+	for _, f := range fixed {
+		if brewSHA.MatchString(f) {
+			shas = append(shas, f)
+		}
+	}
+	return shas
+}
+
+var (
+	summaryThrough = regexp.MustCompile(`(?i)\bv?(\d+(?:\.\d+)+)\s+(?:through|to)\s+v?(\d+(?:\.\d+)+)`)
+	summaryBefore  = regexp.MustCompile(`(?i)\b(?:before|prior to|<)\s*v?(\d+(?:\.\d+)+)`)
+)
+
+// OSV summaries often spell out the span ("fzf 0.36.0 through 0.74.5",
+// "before 2.4.1"). A span that does not hold the installed version is a misread
+// and is dropped.
+func summaryRanges(summary, version string) []vuln.Range {
+	var ranges []vuln.Range
+	if m := summaryThrough.FindStringSubmatch(summary); m != nil {
+		ranges = []vuln.Range{{Introduced: m[1]}, {LastAffected: m[2]}}
+	} else if m := summaryBefore.FindStringSubmatch(summary); m != nil {
+		ranges = []vuln.Range{{Introduced: "0"}, {Fixed: m[1]}}
+	}
+	if ranges == nil || !(vuln.Advisory{Ranges: ranges}).Affects(BrewVersion(version)) {
+		return nil
+	}
+	return ranges
+}
+
+// Tests swap both.
+var (
+	brewReleases = githubReleases
+	brewTagHas   = githubTagHas
+)
+
+// Best effort: a repo off GitHub or a failed lookup leaves no release.
+func brewReleaseFixes(ctx context.Context, r brewVulnsReport, newest map[string]string) map[string]string {
+	type job struct {
+		repo, key, version, newest string
+		shas                       []string
+	}
+	var jobs []job
+	var repos []string
+	for _, f := range r.Findings {
+		repo, version, top := githubRepo(f.RepoURL), BrewVersion(f.Version), BrewVersion(newest[f.Formula])
+		if repo == "" || top == "" || vuln.Compare(top, version) <= 0 {
+			continue
+		}
+		for _, v := range f.Vulnerabilities {
+			if shas := brewShas(v.FixedVersions); len(shas) > 0 && brewFixed(v.FixedVersions, f.Version) == "" {
+				jobs = append(jobs, job{repo, brewFixKey(f, v), version, top, shas})
+				if !slices.Contains(repos, repo) {
+					repos = append(repos, repo)
+				}
+			}
+		}
+	}
+	var mu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(brewLookups)
+	releases := map[string][]Release{}
+	for _, repo := range repos {
+		g.Go(func() error {
+			rels, _ := brewReleases(ctx, repo)
+			mu.Lock()
+			releases[repo] = rels
+			mu.Unlock()
+			return nil
+		})
+	}
+	g.Wait()
+	out := map[string]string{}
+	for _, j := range jobs {
+		g.Go(func() error {
+			if fixed := firstReleaseWith(ctx, j.repo, releases[j.repo], j.version, j.newest, j.shas); fixed != "" {
+				mu.Lock()
+				out[j.key] = fixed
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	g.Wait()
+	return out
+}
+
+const brewLookups = 8
+
+// A release that holds a commit keeps holding it in every later release, so
+// a binary search over the newer releases asks GitHub a few times, not once
+// per release.
+func firstReleaseWith(ctx context.Context, repo string, rels []Release, version, newest string, shas []string) string {
+	var newer []string
+	for _, r := range rels {
+		if v := vuln.Clean(r.Version); brewVersion(v) && vuln.Compare(v, version) > 0 && vuln.Compare(v, newest) <= 0 {
+			newer = append(newer, r.Version)
+		}
+	}
+	if len(newer) == 0 {
+		return ""
+	}
+	slices.SortFunc(newer, func(a, b string) int { return vuln.Compare(vuln.Clean(a), vuln.Clean(b)) })
+	has := func(tag string) bool {
+		for _, sha := range shas {
+			if ok, err := brewTagHas(ctx, repo, sha, tag); err == nil && ok {
+				return true
+			}
+		}
+		return false
+	}
+	lo, hi := 0, len(newer)-1
+	if !has(newer[hi]) {
+		return ""
+	}
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if has(newer[mid]) {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	return vuln.Clean(newer[lo])
+}
+
+// GitHub's compare says "ahead" or "identical" when the tag holds the commit.
+func githubTagHas(ctx context.Context, repo, sha, tag string) (bool, error) {
+	var r struct {
+		Status string `json:"status"`
+	}
+	if err := githubGet(ctx, "repos/"+repo+"/compare/"+sha+"..."+url.PathEscape(tag)+"?per_page=1", &r); err != nil {
+		return false, err
+	}
+	return r.Status == "ahead" || r.Status == "identical", nil
 }
 
 var brewSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)

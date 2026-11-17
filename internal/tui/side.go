@@ -574,6 +574,9 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	known := m.db.Known(eco, name)
 	history := eco != "" && m.db.HistoryFresh(eco, name, now())
+	if p.Source == "brew" {
+		known, history = m.brewKnown(p)
+	}
 	verW := max(min(inner-36, 22), 10)
 	lines := plain("  " + faint().Bold(true).Render(pad("VERSION", verW)+" "+pad("DATE", 10)+" NOTES  SECURITY"))
 	for _, r := range v.val {
@@ -598,7 +601,7 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 		switch {
 		case affected > 0:
 			tags = append(tags, red().Render(fmt.Sprintf("⚠ %d", affected)))
-		case history && p.Version != "" && vuln.Compare(r.Version, p.Version) > 0:
+		case history && p.Version != "" && vuln.Compare(vuln.Clean(r.Version), provider.BrewVersion(vuln.Clean(p.Version))) > 0:
 			tags = append(tags, green().Render("✓ safe"))
 		}
 		if p.Version != "" && provider.TagVersion(r.Version) == provider.TagVersion(p.Version) {
@@ -612,6 +615,22 @@ func (m model) versionLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+// Homebrew reports only what affects one version. A newer release is called
+// safe only when every finding carries the span it ends at.
+func (m model) brewKnown(p provider.Package) ([]vuln.Advisory, bool) {
+	known := m.vulns[pkgKey(p)]
+	if m.isCandidate(p) {
+		known, _ = m.brewCandidate(p)
+	}
+	spanned := len(known) > 0
+	for _, a := range known {
+		if len(a.Ranges) == 0 {
+			spanned = false
+		}
+	}
+	return known, spanned
+}
+
 func (m model) changelogLines(p provider.Package, inner int) []line {
 	r, ok := at(m.currentVersions(), m.sideCursor)
 	if !ok {
@@ -619,7 +638,11 @@ func (m model) changelogLines(p provider.Package, inner int) []line {
 	}
 	var lines []line
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
-	for _, a := range m.db.Known(eco, name) {
+	known := m.db.Known(eco, name)
+	if p.Source == "brew" {
+		known, _ = m.brewKnown(p)
+	}
+	for _, a := range known {
 		if a.Affects(r.Version) {
 			lines = append(lines, line{text: " " + severityPill(a.Severity) + " " + red().Render(a.ID) + " " + faint().Render(a.Summary), url: a.URL()})
 		}
@@ -659,6 +682,13 @@ func (m model) securityEntries() []securityEntry {
 		// tab lists what affects the newest version the registry knows.
 		version := p.Latest
 		var es []securityEntry
+		if p.Source == "brew" {
+			advs, _ := m.brewCandidate(p)
+			for _, a := range advs {
+				es = append(es, securityEntry{adv: a})
+			}
+			return es
+		}
 		for _, a := range m.db.Known(provider.Ecosystem(p), provider.OSVName(p)) {
 			if version == "" || a.Affects(version) {
 				es = append(es, securityEntry{adv: a})
@@ -699,17 +729,19 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+p.Version), faint().Render(" checked "+ago(m.db.Checked[q.Key()])+by))
 	}
+	return m.fixTable(es, func(e securityEntry) string {
+		if e.dep != "" {
+			_, version, _ := strings.Cut(e.dep, "@")
+			return version
+		}
+		return p.Version
+	})
+}
+
+func (m model) fixTable(es []securityEntry, versionOf func(securityEntry) string) []line {
 	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
 	for _, e := range es {
-		fix := red().Render("no fix yet")
-		version := p.Version
-		if e.dep != "" {
-			_, version, _ = strings.Cut(e.dep, "@")
-		}
-		if f := e.adv.FixedAfter(version); f != "" {
-			fix = green().Render("≥ " + f)
-		}
-		text := "  " + severityPill(e.adv.Severity) + " " + pad(e.adv.ID, 20) + " " + fix
+		text := "  " + severityPill(e.adv.Severity) + " " + pad(e.adv.ID, 20) + " " + fixLabel(e.adv, versionOf(e))
 		if e.dep != "" {
 			text += faint().Render(" via " + e.dep)
 		}
@@ -718,9 +750,32 @@ func (m model) securityLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+// "> x" means only the last affected version is known, so anything after it is clear.
+func fixLabel(a vuln.Advisory, version string) string {
+	if f := a.FixedAfter(version); f != "" {
+		return green().Render("≥ " + f)
+	}
+	if c := a.ClearAfter(version); c != "" {
+		return green().Render("> " + c)
+	}
+	return red().Render("no fix yet")
+}
+
 func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	version := p.Latest
+	if p.Source == "brew" {
+		advs, why := m.brewCandidate(p)
+		switch {
+		case why == "checking with Homebrew…":
+			return plain(" " + m.spin() + faint().Render(" "+why))
+		case why != "":
+			return plain("", faint().Render(" 🛡  "+why))
+		case len(advs) == 0:
+			return plain("", green().Render(" ✓ No known advisories for "+printable(version)), faint().Render(" checked by Homebrew"))
+		}
+		return m.fixTable(m.securityEntries(), func(securityEntry) string { return version })
+	}
 	if eco == "" {
 		return plain("", faint().Render(" 🛡  OSV has no data for "+p.Source+","), faint().Render("    so kho can't check this one yet."))
 	}
@@ -739,15 +794,7 @@ func (m model) candidateSecurityLines(p provider.Package, inner int) []line {
 		}
 		return plain("", green().Render(" ✓ No known advisories for "+label), faint().Render(" checked "+ago(m.db.HistoryAt[hkey])+" on osv.dev"))
 	}
-	lines := plain("  " + faint().Bold(true).Render(pad("SEV", 6)+" "+pad("ID", 20)+" FIX"))
-	for _, e := range es {
-		fix := red().Render("no fix yet")
-		if f := e.adv.FixedAfter(version); f != "" {
-			fix = green().Render("≥ " + f)
-		}
-		lines = append(lines, row("  "+severityPill(e.adv.Severity)+" "+pad(e.adv.ID, 20)+" "+fix))
-	}
-	return lines
+	return m.fixTable(es, func(securityEntry) string { return version })
 }
 
 func (m model) advisoryLines(p provider.Package, inner int) []line {
@@ -782,6 +829,12 @@ func (m model) advisoryDetail(a vuln.Advisory, through, version, latest string, 
 		lines = append(lines, field("through", through, ""))
 	}
 	fix := red().Render("no fix published yet")
+	if c := a.ClearAfter(version); c != "" && a.FixedAfter(version) == "" {
+		fix = green().Render("after " + c)
+		if latest != "" && !a.Affects(latest) {
+			fix += faint().Render(" · latest " + latest + " is clear")
+		}
+	}
 	if f := a.FixedAfter(version); f != "" {
 		fix = green().Render(f)
 		if latest != "" {

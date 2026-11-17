@@ -167,10 +167,10 @@ To check versions and advisories, kho asks the services below about the packages
 
 | Where | What it learns | Asked by |
 |---|---|---|
-| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages and their dependencies, including every package in a project's lockfiles; and, through `brew vulns`, the source repository and tag of each installed Homebrew formula | kho |
+| OSV (`api.osv.dev`) | names and versions of npm, PyPI, Go, Packagist and crates.io packages and their dependencies, including every package in a project's lockfiles; and, through `brew vulns`, the source repository and tag of each installed Homebrew formula and of a formula you select in search results | kho |
 | PyPI (`pypi.org`) | names of pipx and uv packages, of Python search results and exact-name lookups, and of a project's direct Python dependencies | kho |
 | Go module proxy (`proxy.golang.org`) | module paths of `go install` binaries, and of a project's direct Go modules | kho |
-| GitHub API (`api.github.com`) | repositories of skills and of packages that link one; repositories matching a Go or Python search, their file trees, and a new skill's SKILL.md | kho |
+| GitHub API (`api.github.com`) | repositories of skills and of packages that link one; repositories matching a Go or Python search, their file trees, and a new skill's SKILL.md; for a Homebrew finding fixed by a commit, that commit and the formula's releases | kho |
 | raw.githubusercontent.com | the `go.mod`, `pyproject.toml` or `setup.cfg`/`setup.py` of repositories matching a search, and a new skill's SKILL.md | kho |
 | skills.sh | skill names and their repositories; the words you search for | kho |
 | npm registry | names of global npm packages, of a project's direct npm dependencies, and the words you search for | `npm outdated`, `npm view`, `npm search`, and kho |

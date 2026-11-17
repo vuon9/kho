@@ -541,7 +541,9 @@ type SkillDoc struct {
 
 // Tests feed both.
 var (
-	skillRepoTree = fetchGitTreePaths
+	skillRepoTree = func(ctx context.Context, repo string) ([]string, error) {
+		return fetchGitTreePaths(ctx, repo, "HEAD")
+	}
 	skillRepoFile = fetchRepoFile
 )
 

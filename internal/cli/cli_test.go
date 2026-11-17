@@ -928,6 +928,8 @@ func TestCheckBrewScan(t *testing.T) {
 		Package: "anvil", Versions: []string{"1.2.3"}, Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "1.2.4"}}}
 	unfixed := vuln.Advisory{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file",
 		Package: "anvil", Versions: []string{"1.2.3"}}
+	spanned := vuln.Advisory{ID: "CVE-0000-0003", Severity: "UNKNOWN", Summary: "anvil 1.0.0 through 1.2.3 reads past the file",
+		Package: "anvil", Versions: []string{"1.2.3"}, Ranges: []vuln.Range{{Introduced: "1.0.0"}, {LastAffected: "1.2.3"}}}
 	tests := []struct {
 		id     string
 		pkgs   []provider.Package
@@ -954,6 +956,15 @@ func TestCheckBrewScan(t *testing.T) {
 			check: func(r Report) bool {
 				f := r.Vulnerable[0]
 				return f.FixedIn == "" && f.LatestIsClear != nil && !*f.LatestIsClear && f.Fix == ""
+			},
+		},
+		{
+			id: "a span that ends before the newest formula offers the upgrade", pkgs: []provider.Package{anvil},
+			result: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{spanned}}}},
+			scanOK: true, code: ExitAtRisk,
+			check: func(r Report) bool {
+				f := r.Vulnerable[0]
+				return f.FixedIn == "" && *f.LatestIsClear && f.Fix == "kho install brew/anvil@1.2.4 --yes"
 			},
 		},
 		{

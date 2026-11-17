@@ -404,10 +404,12 @@ func (env Env) finding(p provider.Package, advs []vuln.Advisory) Finding {
 				clear = false
 			}
 		}
-		// Homebrew reports a finding without the ranges OSV uses, so a
-		// finding with no released fix cannot say the newest formula is clear.
-		if p.Source == "brew" && f.FixedIn == "" {
-			clear = false
+		// A Homebrew finding with no fix, commit or span to read has no range,
+		// so it cannot say the newest formula is clear.
+		for _, a := range advs {
+			if p.Source == "brew" && len(a.Ranges) == 0 {
+				clear = false
+			}
 		}
 		f.LatestIsClear = &clear
 		if clear && !p.Pinned {

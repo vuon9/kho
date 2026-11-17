@@ -34,7 +34,7 @@ At risk wins: exit 3 even when a gate also failed. A failed OSV, Homebrew or ski
 The report:
 
 - `safe`: false when an installed package has a known advisory or a skill failed an audit.
-- `vulnerable[]`: one entry per package, with `advisories[]` (`id`, `severity`, `summary`, `fixedIn`, `url`), `fixedIn` (the lowest version that fixes all of them), `latestIsClear`, and `fix`, a ready command when the latest version is clear. Homebrew findings set `fixedIn` only when Homebrew named a released fix.
+- `vulnerable[]`: one entry per package, with `advisories[]` (`id`, `severity`, `summary`, `fixedIn`, `url`), `fixedIn` (the lowest version that fixes all of them), `latestIsClear`, and `fix`, a ready command when the latest version is clear. For Homebrew, `fixedIn` comes from a fixed version Homebrew names, or the first release holding its fix commit; `latestIsClear` is false whenever a finding gives no fix or span to judge by.
 - `vulnerableDeps[]`: advisories in a package's dependencies. OSV matches them by module, so the code may never run. Call them "worth a look", not an emergency.
 - `riskySkills[]`: skills an auditor failed, with the `report` link.
 - `outdated[]`: packages with a newer version.

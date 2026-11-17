@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,7 @@ type githubRepository struct {
 type goModuleInfo struct {
 	Version string
 	RepoURL string
+	Commit  string
 }
 
 // The reads a Go keyword search makes, so tests can feed captured answers.
@@ -184,7 +186,8 @@ func lookupGoModule(ctx context.Context, module string) (goModuleInfo, error) {
 	var r struct {
 		Version string `json:"Version"`
 		Origin  struct {
-			URL string `json:"URL"`
+			URL  string `json:"URL"`
+			Hash string `json:"Hash"`
 		} `json:"Origin"`
 	}
 	if err := getJSON(ctx, goProxy+"/"+escapeModule(module)+"/@latest", nil, &r); err != nil {
@@ -193,7 +196,7 @@ func lookupGoModule(ctx context.Context, module string) (goModuleInfo, error) {
 	if r.Version == "" {
 		return goModuleInfo{}, fmt.Errorf("no version for %s", module)
 	}
-	return goModuleInfo{Version: r.Version, RepoURL: r.Origin.URL}, nil
+	return goModuleInfo{Version: r.Version, RepoURL: r.Origin.URL, Commit: r.Origin.Hash}, nil
 }
 
 // A missing file is not an error for a best-effort search.
@@ -246,9 +249,9 @@ func parseGoModModule(data string) string {
 	return ""
 }
 
-func fetchGitTreePaths(ctx context.Context, repo string) ([]string, error) {
+func fetchGitTreePaths(ctx context.Context, repo, ref string) ([]string, error) {
 	var raw json.RawMessage
-	if err := githubGet(ctx, "repos/"+repo+"/git/trees/HEAD?recursive=1", &raw); err != nil {
+	if err := githubGet(ctx, "repos/"+repo+"/git/trees/"+url.PathEscape(ref)+"?recursive=1", &raw); err != nil {
 		return nil, githubRateHint(err)
 	}
 	return parseGitTreePaths(raw)
@@ -356,7 +359,18 @@ func goRepoPackages(ctx context.Context, repo githubRepository, query string) ([
 	if module == "" {
 		return nil, nil
 	}
-	paths, err := gitTreePaths(ctx, repo.FullName)
+	mod, err := goModuleLatest(ctx, module)
+	if err != nil {
+		return nil, nil
+	}
+	// go.mod can name any module. When the proxy says the module comes from
+	// another repo, installing it would bring that repo's code.
+	if from := githubRepo(mod.RepoURL); from != "" && !strings.EqualFold(from, repo.FullName) {
+		return nil, nil
+	}
+	// The commands offered must exist in the version go install fetches, not
+	// only on the default branch.
+	paths, err := gitTreePaths(ctx, repo.FullName, cmp.Or(mod.Commit, mod.Version))
 	if err != nil {
 		return nil, err
 	}
@@ -366,15 +380,6 @@ func goRepoPackages(ctx context.Context, repo githubRepository, query string) ([
 		dirs = dirs[:goSearchMains]
 	}
 	if len(dirs) == 0 {
-		return nil, nil
-	}
-	mod, err := goModuleLatest(ctx, module)
-	if err != nil {
-		return nil, nil
-	}
-	// go.mod can name any module. When the proxy says the module comes from
-	// another repo, installing it would bring that repo's code.
-	if from := githubRepo(mod.RepoURL); from != "" && !strings.EqualFold(from, repo.FullName) {
 		return nil, nil
 	}
 	out := make([]Package, 0, len(dirs))

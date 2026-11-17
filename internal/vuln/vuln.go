@@ -69,6 +69,10 @@ func (a Advisory) Affects(version string) bool {
 	if slices.Contains(a.Versions, version) || slices.Contains(a.Versions, strings.TrimPrefix(version, "v")) {
 		return true
 	}
+	version = Clean(version)
+	if slices.Contains(a.Versions, version) {
+		return true
+	}
 	affected := false
 	for _, r := range a.Ranges {
 		switch {
@@ -89,7 +93,39 @@ func (a Advisory) Affects(version string) bool {
 	return affected
 }
 
+// Clean reads a release tag as the version it names. Projects prefix tags with
+// their name or a letter ("openssl-4.1.0", "n7.1", "v0.74.5") and some write
+// dots as underscores ("curl-8_11_0", "OpenSSL_1_1_1w").
+func Clean(tag string) string {
+	tag = strings.TrimSpace(tag)
+	i := strings.IndexFunc(tag, func(r rune) bool { return r < 'A' || r > 'z' || (r > 'Z' && r < 'a') })
+	if i > 0 && strings.ContainsRune("-_.", rune(tag[i])) {
+		i++
+	}
+	if i < 0 || i >= len(tag) || tag[i] < '0' || tag[i] > '9' {
+		return tag
+	}
+	tag = tag[i:]
+	if !strings.Contains(tag, ".") {
+		tag = strings.ReplaceAll(tag, "_", ".")
+	}
+	return tag
+}
+
+// For an advisory that names where the span ends but no fixed release.
+func (a Advisory) ClearAfter(version string) string {
+	version = Clean(version)
+	best := ""
+	for _, r := range a.Ranges {
+		if r.LastAffected != "" && Compare(r.LastAffected, version) >= 0 && (best == "" || Compare(r.LastAffected, best) < 0) {
+			best = r.LastAffected
+		}
+	}
+	return best
+}
+
 func (a Advisory) FixedAfter(version string) string {
+	version = Clean(version)
 	best := ""
 	for _, r := range a.Ranges {
 		if r.Fixed != "" && Compare(r.Fixed, version) > 0 && (best == "" || Compare(r.Fixed, best) < 0) {

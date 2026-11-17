@@ -1,7 +1,9 @@
 package provider
 
 import (
+	"context"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/vuon9/kho/internal/vuln"
@@ -39,7 +41,7 @@ func TestParseBrewVulns(t *testing.T) {
 			}}},
 		},
 		{
-			id: "a commit SHA or a project tag is not a fixed version",
+			id: "a commit SHA is not a fixed version, but a tag named for its project is",
 			json: `{"findings":[{"formula":"anvil","version":"1.2.3","vulnerabilities":[
 				{"id":"CVE-0000-0002","severity":"UNKNOWN","summary":"Anvil reads past the file","aliases":[],
 					"fixed_versions":["2dae3024897e1898d389835151f4e9606227721d"]},
@@ -51,8 +53,29 @@ func TestParseBrewVulns(t *testing.T) {
 			want: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{
 				Formula: "anvil", Version: "1.2.3", Advisories: []vuln.Advisory{
 					{ID: "CVE-0000-0002", Severity: "UNKNOWN", Summary: "Anvil reads past the file", Package: "anvil", Versions: []string{"1.2.3"}},
-					{ID: "CVE-0000-0003", Severity: "LOW", Summary: "Anvil logs a secret", Package: "anvil", Versions: []string{"1.2.3"}},
+					{ID: "CVE-0000-0003", Severity: "LOW", Summary: "Anvil logs a secret", Package: "anvil", Versions: []string{"1.2.3"},
+						Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "9.9.9"}}},
 					{ID: "CVE-0000-0004", Severity: "MEDIUM", Summary: "Anvil writes early", Package: "anvil", Versions: []string{"1.2.3"}},
+				},
+			}}},
+		},
+		{
+			id: "a summary that spells out the span becomes its range",
+			json: `{"findings":[{"formula":"anvil","version":"1.2.3_1","vulnerabilities":[
+				{"id":"CVE-0000-0007","severity":"HIGH","summary":"anvil 1.0.0 through 1.2.3 runs a hook","aliases":[],"fixed_versions":[]},
+				{"id":"CVE-0000-0008","severity":"LOW","summary":"Anvil before 1.3.0 leaks a path","aliases":[],"fixed_versions":[]},
+				{"id":"CVE-0000-0009","severity":"LOW","summary":"Anvil 0.1 through 0.9 misreads a file","aliases":[],"fixed_versions":[]},
+				{"id":"CVE-0000-0010","severity":"LOW","summary":"anvil 1.1.0 through 1.2.3 drops a header","aliases":[],"fixed_versions":["v1.2.4"]}],"patched":[]}],
+				"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`,
+			want: vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{
+				Formula: "anvil", Version: "1.2.3_1", Advisories: []vuln.Advisory{
+					{ID: "CVE-0000-0007", Severity: "HIGH", Summary: "anvil 1.0.0 through 1.2.3 runs a hook", Package: "anvil", Versions: []string{"1.2.3_1"},
+						Ranges: []vuln.Range{{Introduced: "1.0.0"}, {LastAffected: "1.2.3"}}},
+					{ID: "CVE-0000-0008", Severity: "LOW", Summary: "Anvil before 1.3.0 leaks a path", Package: "anvil", Versions: []string{"1.2.3_1"},
+						Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "1.3.0"}}},
+					{ID: "CVE-0000-0009", Severity: "LOW", Summary: "Anvil 0.1 through 0.9 misreads a file", Package: "anvil", Versions: []string{"1.2.3_1"}},
+					{ID: "CVE-0000-0010", Severity: "LOW", Summary: "anvil 1.1.0 through 1.2.3 drops a header", Package: "anvil", Versions: []string{"1.2.3_1"},
+						Ranges: []vuln.Range{{Introduced: "1.1.0"}, {Fixed: "1.2.4"}}},
 				},
 			}}},
 		},
@@ -81,6 +104,62 @@ func TestParseBrewVulns(t *testing.T) {
 				t.Errorf("got  %+v\nwant %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFirstReleaseWith(t *testing.T) {
+	rels := []Release{{Version: "anvil-1.4.0"}, {Version: "anvil-1.2.4"}, {Version: "anvil-1.3.0"}, {Version: "anvil-1.2.3"}, {Version: "nightly"}}
+	// holds says which tags hold which commits, the way GitHub's compare would.
+	holds := map[string][]string{"anvil-1.3.0": {"aaaaaaa"}, "anvil-1.4.0": {"aaaaaaa", "bbbbbbb"}}
+	tests := []struct {
+		id     string
+		shas   []string
+		newest string
+		want   string
+	}{
+		{"the first newer release that holds the commit", []string{"aaaaaaa"}, "1.4.0", "1.3.0"},
+		{"any of several commits, as with a backport", []string{"ccccccc", "bbbbbbb"}, "1.4.0", "1.4.0"},
+		{"no newer release holds it yet", []string{"ddddddd"}, "1.4.0", ""},
+		{"a release past Homebrew's newest is not one it can install", []string{"bbbbbbb"}, "1.3.0", ""},
+	}
+	old := brewTagHas
+	t.Cleanup(func() { brewTagHas = old })
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			asked := 0
+			brewTagHas = func(_ context.Context, repo, sha, tag string) (bool, error) {
+				asked++
+				return slices.Contains(holds[tag], sha), nil
+			}
+			if got := firstReleaseWith(context.Background(), "acme/anvil", rels, "1.2.3", tt.newest, tt.shas); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+			if asked > 3*len(tt.shas) {
+				t.Errorf("asked GitHub %d times for %d commits", asked, len(tt.shas))
+			}
+		})
+	}
+}
+
+func TestBrewReleaseFixesFillsTheFix(t *testing.T) {
+	oldRels, oldHas := brewReleases, brewTagHas
+	t.Cleanup(func() { brewReleases, brewTagHas = oldRels, oldHas })
+	brewReleases = func(_ context.Context, repo string) ([]Release, error) {
+		return []Release{{Version: "v0.75.0"}, {Version: "v0.74.5"}}, nil
+	}
+	brewTagHas = func(_ context.Context, repo, sha, tag string) (bool, error) {
+		return repo == "acme/finder" && tag == "v0.75.0", nil
+	}
+	report, err := decodeBrewVulns([]byte(`{"findings":[{"formula":"finder","version":"0.74.5","tag":"v0.74.5",
+		"repo_url":"https://github.com/acme/finder","vulnerabilities":[{"id":"CVE-0000-0011","severity":"HIGH",
+		"summary":"finder hangs","aliases":[],"fixed_versions":["b412a450538e5f4a1d7057732e75d945dafa18a6"]}],"patched":[]}],
+		"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := report.result(brewReleaseFixes(context.Background(), report, map[string]string{"finder": "0.75.0"})).Findings[0].Advisories[0]
+	if got.FixedAfter("0.74.5") != "0.75.0" || got.Affects("v0.75.0") || !got.Affects("v0.74.5") {
+		t.Errorf("advisory %+v, want it fixed in 0.75.0", got)
 	}
 }
 

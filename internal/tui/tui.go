@@ -148,10 +148,21 @@ type skillDocDueMsg struct {
 }
 
 // Swapped in tests.
-var skillDocTick = tea.Tick
+var settleTick = tea.Tick
 
-// So arrowing through results does not ask GitHub for each row.
-const skillDocDelay = 300 * time.Millisecond
+// So arrowing through results does not ask GitHub, or Homebrew, for each row.
+const settleDelay = 300 * time.Millisecond
+
+type brewCheckDueMsg struct {
+	gen  int
+	name string
+}
+
+type brewCheckMsg struct {
+	name  string
+	check brewCheck
+	err   error
+}
 
 type scanMsg struct {
 	hits       map[string][]string
@@ -198,13 +209,16 @@ type depAdvisory struct {
 }
 
 type model struct {
-	providers []provider.Provider
-	pkgs      map[string][]provider.Package
-	busy      map[string]string
-	errs      map[string]error
-	deps      map[string]*lazy[[]provider.Dep]
-	versions  map[string]*lazy[[]provider.Release]
-	docs      map[string]*lazy[provider.SkillDoc]
+	providers    []provider.Provider
+	pkgs         map[string][]provider.Package
+	busy         map[string]string
+	errs         map[string]error
+	deps         map[string]*lazy[[]provider.Dep]
+	versions     map[string]*lazy[[]provider.Release]
+	docs         map[string]*lazy[provider.SkillDoc]
+	brewChecks   map[string]*lazy[brewCheck]
+	brewCheckFor string
+	brewCheckGen int
 	// Read again by readLinks when linksOf stops naming the selection.
 	links   []provider.SkillLink
 	linksOf string
@@ -326,6 +340,7 @@ var now = time.Now
 var (
 	scanOSV      = vuln.Scan
 	scanBrew     = provider.ScanBrewVulns
+	scanFormula  = provider.ScanBrewFormula
 	fetchHistory = vuln.History
 	fetchAudits  = vuln.SkillAudits
 )
@@ -364,6 +379,7 @@ func (m *model) reset() {
 	m.deps = map[string]*lazy[[]provider.Dep]{}
 	m.versions = map[string]*lazy[[]provider.Release]{}
 	m.docs = map[string]*lazy[provider.SkillDoc]{}
+	m.brewChecks = map[string]*lazy[brewCheck]{}
 	m.advising = map[string]bool{}
 	m.picked = false
 	for _, p := range m.providers {
@@ -599,6 +615,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gotFind(msg)
 	case docMsg:
 		m.docs[msg.key] = &lazy[provider.SkillDoc]{msg.doc, msg.err, true}
+	case brewCheckDueMsg:
+		p, ok := m.current()
+		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "brew" ||
+			msg.gen != m.brewCheckGen || msg.name != p.Name || m.brewChecks[p.Name] != nil {
+			break
+		}
+		cmds = append(cmds, m.startBrewCheck(p.Name))
+	case brewCheckMsg:
+		m.brewChecks[msg.name] = &lazy[brewCheck]{msg.check, msg.err, true}
 	case skillDocDueMsg:
 		p, ok := m.current()
 		if !ok || !m.inResults() || !m.isCandidate(p) || p.Source != "skills" ||

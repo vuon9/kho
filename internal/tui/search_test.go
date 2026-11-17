@@ -409,6 +409,21 @@ func TestSearchRuns(t *testing.T) {
 	}
 }
 
+func TestSearchFindFailureStaysOnTheRow(t *testing.T) {
+	m, s := searchable(t)
+	s.composer.findErr = errors.New("rate limited")
+	m = openCandidate(t, m, "composer", "yaml", 0)
+	if len(m.search.errs) != 0 {
+		t.Errorf("errs %v, want the manager's search untouched", m.search.errs)
+	}
+	if got := ansi.Strip(m.searchStatusBar()); strings.Contains(got, "⚠ composer") {
+		t.Errorf("status bar marks composer failed: %q", got)
+	}
+	if !strings.Contains(screen(m), "no newest version for yaml-lint: rate limited") {
+		t.Errorf("screen does not say the lookup failed:\n%s", screen(m))
+	}
+}
+
 func TestSearchFailures(t *testing.T) {
 	down := errors.New("rate limited")
 	tests := []struct {
@@ -500,7 +515,7 @@ func TestCandidateSidebar(t *testing.T) {
 	}{
 		{id: "Info shows what a candidate is and what would run", rail: "brew", query: "yq", shows: []string{
 			"🍺 yq · brew", "about     A lightweight and portable YAML", "latest    0.2.94", "status    not installed",
-			"not covered: OSV has no data for brew", "from      homebrew/core", "home      https://yq.example",
+			"✓ no known advisories in 0.2.94", "from      homebrew/core", "home      https://yq.example",
 			"repo      github.com/example/yq", "runs      brew install --formula yq"},
 			lacks: []string{"🔗 Dependencies"}, tabs: []int{tabInfo, tabVersions, tabSecurity}},
 		{id: "a name installed another way says so", rail: "brew", query: "focus",
@@ -1146,9 +1161,9 @@ func TestSkillsSearchAndInstall(t *testing.T) {
 func TestSkillDocDebounceDropsAStaleSelection(t *testing.T) {
 	m, _ := searchable(t)
 	var ticks []func(time.Time) tea.Msg
-	old := skillDocTick
-	t.Cleanup(func() { skillDocTick = old })
-	skillDocTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+	old := settleTick
+	t.Cleanup(func() { settleTick = old })
+	settleTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
 		ticks = append(ticks, fn)
 		return nil
 	}
@@ -1202,5 +1217,85 @@ func TestSkillResultColumnsRebalance(t *testing.T) {
 	}
 	if total := w[colName] + w[colSource] + w[colStatus] + 2; total > m.layout().tableW-2 {
 		t.Errorf("narrow columns take %d, want at most %d", total, m.layout().tableW-2)
+	}
+}
+
+func TestBrewCandidateScan(t *testing.T) {
+	m, s := searchable(t)
+	s.brew.versions["yq"] = []provider.Release{{Version: "v0.2.95"}, {Version: "v0.2.94"}}
+	adv := vuln.Advisory{ID: "CVE-0000-0020", Severity: "HIGH", Summary: "yq reads past the file", Package: "yq",
+		Versions: []string{"0.2.94"}, Ranges: []vuln.Range{{Introduced: "0"}, {Fixed: "0.2.95"}}}
+	var asked []string
+	scanFormula = func(_ context.Context, name string) (vuln.BrewResult, error) {
+		asked = append(asked, name)
+		return vuln.BrewResult{Checked: 1, Complete: true, Findings: []vuln.BrewFinding{{Formula: name, Version: "0.2.94", Advisories: []vuln.Advisory{adv}}}}, nil
+	}
+	m = openCandidate(t, m, "brew", "yq", 0)
+	if !slices.Equal(asked, []string{"yq"}) {
+		t.Errorf("asked Homebrew about %v, want yq once", asked)
+	}
+	tests := []struct {
+		id    string
+		key   string
+		shows []string
+	}{
+		{"Info counts what affects the version brew would install", "i", []string{"⚠ 1 known advisory affects 0.2.94"}},
+		{"Security names the release that fixes it", "a", []string{"CVE-0000-0020", "≥ 0.2.95"}},
+		{"Versions marks the affected release", "v", []string{"v0.2.95", "v0.2.94", "⚠ 1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			sc := screen(press(t, m, tt.key))
+			for _, want := range tt.shows {
+				if !strings.Contains(sc, want) {
+					t.Errorf("screen lacks %q:\n%s", want, sc)
+				}
+			}
+		})
+	}
+}
+
+func TestBrewCandidateScanWaitsForTheCursorToSettle(t *testing.T) {
+	m, s := searchable(t)
+	s.brew.results = append(s.brew.results, provider.Package{Source: "brew", Name: "yqq", Latest: "1.0.0"})
+	var ticks []func(time.Time) tea.Msg
+	settleTick = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		ticks = append(ticks, fn)
+		return nil
+	}
+	var asked []string
+	scanFormula = func(_ context.Context, name string) (vuln.BrewResult, error) {
+		asked = append(asked, name)
+		return vuln.BrewResult{Checked: 1, Complete: true}, nil
+	}
+	m = runSearch(t, m, "brew", "yq")
+	m = press(t, m, "j")
+	if len(ticks) != 2 {
+		t.Fatalf("scheduled %d scans, want one per selection", len(ticks))
+	}
+	m = update(t, m, ticks[0](clock))
+	m = update(t, m, ticks[1](clock))
+	if !slices.Equal(asked, []string{"yqq"}) {
+		t.Errorf("asked Homebrew about %v, want only the row the cursor stayed on", asked)
+	}
+}
+
+func TestBrewVersionsWithASpannedFinding(t *testing.T) {
+	old := brewScanResult
+	t.Cleanup(func() { brewScanResult = old })
+	brewScanResult = vuln.BrewResult{Checked: 3, Complete: true, Findings: []vuln.BrewFinding{{Formula: "anvil", Version: "0.2.89",
+		Advisories: []vuln.Advisory{{ID: "CVE-0000-0021", Severity: "HIGH", Package: "anvil", Versions: []string{"0.2.89"},
+			Ranges: []vuln.Range{{Introduced: "0.2.0"}, {LastAffected: "0.2.89"}}}}}}}
+	m, s := searchable(t)
+	s.brew.versions["anvil"] = []provider.Release{{Version: "anvil-0.2.94"}, {Version: "anvil-0.2.89"}}
+	m = searchRail(t, m, "brew")
+	sc := screen(press(t, m, "v"))
+	for _, want := range []string{"anvil-0.2.94", "✓ safe", "anvil-0.2.89", "⚠ 1", "installed"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("screen lacks %q:\n%s", want, sc)
+		}
+	}
+	if sc := screen(press(t, m, "a")); !strings.Contains(sc, "> 0.2.89") {
+		t.Errorf("Security does not say what follows the span:\n%s", sc)
 	}
 }

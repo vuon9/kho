@@ -41,6 +41,8 @@ func TestAffects(t *testing.T) {
 		{"after last_affected", lastAffected, "1.10", false, ""},
 		{"before introduced", lastAffected, "0.9", false, ""},
 		{"explicit version list", listed, "2.0.1", true, ""},
+		{"a tag named for its project", redos, "openssl-22.12.0", true, "24.3.0"},
+		{"a listed version under a project tag", listed, "anvil-2.0.1", true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
@@ -49,6 +51,27 @@ func TestAffects(t *testing.T) {
 			}
 			if got := tt.adv.FixedAfter(tt.version); got != tt.fixed {
 				t.Errorf("FixedAfter(%s) = %q, want %q", tt.version, got, tt.fixed)
+			}
+		})
+	}
+}
+
+func TestClean(t *testing.T) {
+	tests := []struct{ tag, want string }{
+		{"openssl-4.1.0", "4.1.0"},
+		{"v0.74.5", "0.74.5"},
+		{"n7.1", "7.1"},
+		{"curl-8_11_0", "8.11.0"},
+		{"OpenSSL_1_1_1w", "1.1.1w"},
+		{"9.0.2_1", "9.0.2_1"},
+		{"1.2.3", "1.2.3"},
+		{"release-candidate", "release-candidate"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			if got := Clean(tt.tag); got != tt.want {
+				t.Errorf("Clean(%q) = %q, want %q", tt.tag, got, tt.want)
 			}
 		})
 	}

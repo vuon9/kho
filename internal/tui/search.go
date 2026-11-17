@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/vuln"
 )
 
 // Prompt and results live in m.search and never touch the installed list's
@@ -322,7 +324,8 @@ func (m *model) gotFind(msg findMsg) {
 	}
 	st.finding = false
 	if msg.err != nil {
-		st.errs[msg.manager] = msg.err.Error()
+		// One row's lookup failing says nothing about the manager's search.
+		m.notice = "no newest version for " + printable(msg.name) + ": " + shortReason(msg.err.Error())
 		return
 	}
 	for i := range st.rows {
@@ -929,10 +932,60 @@ func (m model) candidateInfoLines(p provider.Package, inner int) []line {
 	return lines
 }
 
+type brewCheck struct {
+	advs []vuln.Advisory
+	note string
+}
+
+func (m *model) startBrewCheck(name string) tea.Cmd {
+	m.brewChecks[name] = &lazy[brewCheck]{}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+		defer cancel()
+		res, err := scanFormula(ctx, name)
+		return brewCheckMsg{name: name, check: brewCheckOf(res, name), err: err}
+	}
+}
+
+func brewCheckOf(res vuln.BrewResult, name string) brewCheck {
+	short := name[strings.LastIndex(name, "/")+1:]
+	var c brewCheck
+	for _, f := range res.Findings {
+		if f.Formula == short {
+			c.advs = append(c.advs, f.Advisories...)
+		}
+	}
+	_, unscanned := res.Unscanned[short]
+	if res.Checked == 0 || unscanned || slices.Contains(res.Skipped, short) || slices.Contains(res.OutdatedWithoutSBOM, short) {
+		c.note = "Homebrew could not match it to a source"
+	}
+	return c
+}
+
+func (m model) brewCandidate(p provider.Package) ([]vuln.Advisory, string) {
+	c := m.brewChecks[p.Name]
+	switch {
+	case c == nil || !c.done:
+		return nil, "checking with Homebrew…"
+	case c.err != nil:
+		return nil, "Homebrew could not check it: " + shortReason(c.err.Error())
+	case c.val.note != "":
+		return nil, c.val.note
+	}
+	return c.val.advs, ""
+}
+
 func (m model) candidateSecurity(p provider.Package) string {
 	eco, name := provider.Ecosystem(p), provider.OSVName(p)
 	if p.Source == "skills" {
 		return faint().Render("skills.sh audits after install")
+	}
+	if p.Source == "brew" {
+		advs, why := m.brewCandidate(p)
+		if why != "" {
+			return faint().Render(why)
+		}
+		return affectsLine(len(advs), printable(p.Latest))
 	}
 	if eco == "" {
 		return faint().Render("not covered: OSV has no data for " + p.Source)
@@ -954,6 +1007,10 @@ func (m model) candidateSecurity(p provider.Package) string {
 			affected++
 		}
 	}
+	return affectsLine(affected, version)
+}
+
+func affectsLine(affected int, version string) string {
 	switch {
 	case affected == 1:
 		return red().Render("⚠ 1 known advisory affects " + version)
@@ -1045,13 +1102,7 @@ func (m model) confirmAdvisory(p provider.Package, version string) string {
 			affected++
 		}
 	}
-	switch {
-	case affected == 1:
-		return red().Render("⚠ 1 known advisory affects " + version)
-	case affected > 1:
-		return red().Render(fmt.Sprintf("⚠ %d known advisories affect %s", affected, version))
-	}
-	return green().Render("✓ no known advisories in " + version)
+	return affectsLine(affected, version)
 }
 
 func printablePaste(s string) string {
@@ -1082,8 +1133,24 @@ func (m *model) loadCandidate(p provider.Package) tea.Cmd {
 			m.skillDocFor = key
 			m.skillDocGen++
 			gen := m.skillDocGen
-			cmds = append(cmds, skillDocTick(skillDocDelay, func(time.Time) tea.Msg {
+			cmds = append(cmds, settleTick(settleDelay, func(time.Time) tea.Msg {
 				return skillDocDueMsg{gen: gen, key: key}
+			}))
+		}
+	}
+	if p.Source != "brew" {
+		m.brewCheckFor = ""
+	} else if m.brewChecks[p.Name] == nil {
+		switch {
+		case m.focus == focusSide:
+			m.brewCheckFor = ""
+			cmds = append(cmds, m.startBrewCheck(p.Name))
+		case m.brewCheckFor != p.Name:
+			m.brewCheckFor = p.Name
+			m.brewCheckGen++
+			gen, name := m.brewCheckGen, p.Name
+			cmds = append(cmds, settleTick(settleDelay, func(time.Time) tea.Msg {
+				return brewCheckDueMsg{gen: gen, name: name}
 			}))
 		}
 	}
