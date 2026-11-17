@@ -14,9 +14,11 @@
 <details>
 <summary>See it run</summary>
 
-Recorded on an earlier version; the layout has changed since.
+Recorded on 17 Nov 2026 with made up data
 
-https://github.com/user-attachments/assets/43589fd4-a4dc-4db9-9995-a347629e7f47
+https://github.com/user-attachments/assets/ddc277ea-5c91-493d-a01d-da8debc8c9b9
+
+
 
 </details>
 
