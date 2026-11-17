@@ -276,11 +276,14 @@ type model struct {
 	imgScanErr   map[string]string
 	// scanShown is the image whose Security tab is on screen, so a failed
 	// scan is asked again when the tab opens, not on every redraw.
-	scanShown   string
-	imgErr      error
-	imgBusy     bool
-	imgGen      int
-	imgAsk      image.Asker
+	scanShown string
+	imgErr    error
+	imgBusy   bool
+	imgGen    int
+	imgAsk    image.Asker
+	pulling   *pullPlan
+	// pulledImg is the image a Docker Hub pull just fetched, selected once it lists.
+	pulledImg   string
 	imgStatuses map[string]int
 	filtering   bool
 	// Nil in the installed mode. It never joins pkgs.
@@ -486,6 +489,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ask := mm.wantUsers(); ask != nil {
 			cmd = tea.Batch(cmd, ask)
 		}
+		if ask := mm.wantMirror(); ask != nil {
+			cmd = tea.Batch(cmd, ask)
+		}
 	}
 	return next, cmd
 }
@@ -548,8 +554,15 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		}
 		delete(m.imgTagErr, msg.key)
-		if len(msg.tags) > 0 {
+		switch {
+		case len(msg.tags) > 0:
 			m.imgTags[msg.key] = msg.tags
+		case m.imgTags[msg.key] == nil:
+			// An empty answer is still an answer, or the tab would ask again forever.
+			m.imgTags[msg.key] = []image.Tag{}
+		}
+		if r, ok := m.currentImg(); ok && r.Canonical() == msg.key {
+			m.pointAtSuggested()
 		}
 		return m, nil
 	case imageUsersMsg:
@@ -583,12 +596,14 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case imagesMsg:
 		m.gotImages(msg)
+		m.selectPulled()
 		if msg.local != nil && msg.err == nil {
 			return m, m.factsCmd()
 		}
 		return m, nil
 	case imageFactMsg:
 		m.applyFact(msg)
+		m.selectPulled()
 		if msg.gen != m.imgGen {
 			return m, nil
 		}
@@ -671,6 +686,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.db.MergeAudits(msg.asked, msg.audits, msg.err, now())
 		m.save()
 		m.reindex()
+	case pullPlanMsg:
+		if m.pulling == msg.plan {
+			m.pulling, m.notice = nil, ""
+			m.confirmPull(msg.plan, msg.mirror, msg.stale)
+		}
 	case installStartedMsg:
 		m.inst = msg.installing
 		cmds = append(cmds, m.inst.next(), m.startTicking())
@@ -682,6 +702,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.inst != nil {
 			m.inst.done, m.inst.end, m.inst.lines = &msg, now(), m.inst.screen()
 		}
+		if msg.err == nil && msg.then != nil {
+			m.notice = "pulled " + msg.name + ", now naming it"
+			cmds = append(cmds, msg.then)
+			break
+		}
 		switch {
 		case msg.err != nil && msg.removed:
 			m.notice = fmt.Sprintf("%s was not removed: %v", msg.name, msg.err)
@@ -691,11 +716,19 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = msg.name + " is removed"
 		case msg.provider == "skills" && msg.version == provider.SkillNewest:
 			m.notice = msg.name + " is installed"
+		case msg.pulled:
+			m.notice = "pulled " + msg.name
 		default:
 			m.notice = fmt.Sprintf("%s is now %s", msg.name, msg.version)
 		}
 		if msg.err == nil && !msg.removed {
 			m.gotInstalled(msg)
+		}
+		if msg.err == nil && msg.pulled {
+			m.pulledImg = image.Parse(msg.name).Canonical()
+			if m.hubResults() {
+				m.closeSearch()
+			}
 		}
 		cmds = append(cmds, m.relist(msg.provider))
 		if msg.provider == "docker" {

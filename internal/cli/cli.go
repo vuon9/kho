@@ -25,6 +25,7 @@ import (
 	"github.com/vuon9/kho/internal/image"
 	"github.com/vuon9/kho/internal/project"
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/registry"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
@@ -60,6 +61,7 @@ type Env struct {
 	LocalImages   func(context.Context) ([]image.LocalImage, error)
 	InspectImages func(context.Context, []image.Ref, []image.LocalImage, bool) []image.Ref
 	RefreshImages func()
+	SearchHub     func(context.Context, string, int) ([]registry.HubRepo, error)
 }
 
 const Usage = `kho - one place for every package manager on your machine
@@ -76,7 +78,8 @@ usage:
   kho search <query...> [--source brew,npm] [--limit N] [--json]
                                        find packages this machine does not have;
                                        --source narrows it, --limit caps each
-                                       source
+                                       source; --source docker searches Docker
+                                       Hub for images instead
   kho show <source>/<name> [--json]    one package, with every advisory
   kho install <source>/<name>@<version> [--yes] [--json]
                                        install, upgrade or downgrade to that
@@ -1053,6 +1056,11 @@ func (env Env) search(args []string) int {
 		fmt.Fprintln(env.Err, "--limit must be at least 1")
 		return ExitUsage
 	}
+	if docker, ok := dockerSource(env.Err, *source); !ok {
+		return ExitUsage
+	} else if docker {
+		return env.searchDocker(query, min(*limit, provider.MaxSearchLimit), *asJSON)
+	}
 	labels, ok := env.searchLabels(*source)
 	if !ok {
 		return ExitUsage
@@ -1102,6 +1110,93 @@ func (env Env) search(args []string) int {
 		fmt.Fprintln(env.Err, "could not search any package manager")
 	}
 	return ExitError
+}
+
+// Docker Hub holds images, not packages, so it is searched on its own.
+func dockerSource(errOut io.Writer, list string) (docker, ok bool) {
+	var labels []string
+	for _, raw := range strings.Split(list, ",") {
+		if label := strings.TrimSpace(raw); label != "" {
+			labels = append(labels, label)
+		}
+	}
+	if !slices.Contains(labels, dockerHubSource) {
+		return false, true
+	}
+	if len(labels) > 1 {
+		fmt.Fprintln(errOut, "--source docker searches Docker Hub alone; search package sources separately")
+		return false, false
+	}
+	return true, true
+}
+
+const dockerHubSource = "docker"
+
+type ImageSearchReport struct {
+	Query   string            `json:"query"`
+	Results []ImageResult     `json:"results"`
+	Errors  map[string]string `json:"errors"`
+}
+
+// Tag is the one docker pull fetches when none is named.
+type ImageResult struct {
+	Source string `json:"source"`
+	registry.HubRepo
+	Tag string `json:"tag"`
+}
+
+func (env Env) searchDocker(query string, limit int, asJSON bool) int {
+	report := ImageSearchReport{Query: query, Results: []ImageResult{}, Errors: map[string]string{}}
+	start := env.Now()
+	var repos []registry.HubRepo
+	err := errors.New("no Docker Hub client")
+	if env.SearchHub != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), searchTimeout)
+		repos, err = env.SearchHub(ctx, query, limit)
+		cancel()
+	}
+	if err != nil {
+		report.Errors[dockerHubSource] = err.Error()
+	}
+	for _, r := range repos {
+		report.Results = append(report.Results, ImageResult{Source: dockerHubSource, HubRepo: r, Tag: "latest"})
+	}
+	switch {
+	case asJSON:
+		env.printJSON(report)
+	case err == nil && len(report.Results) == 0:
+		fmt.Fprintf(env.Out, "no images match %q on Docker Hub\n", query)
+		fmt.Fprintf(env.Out, "searched Docker Hub in %s\n", secs(env.Now().Sub(start)))
+	case err == nil:
+		env.printImageRows(report.Results)
+		fmt.Fprintf(env.Out, "\nsearched Docker Hub in %s\n", secs(env.Now().Sub(start)))
+	}
+	if err != nil {
+		fmt.Fprintf(env.Err, "Docker Hub could not search: %s\n", err)
+		return ExitError
+	}
+	return ExitOK
+}
+
+func (env Env) printImageRows(rows []ImageResult) {
+	refs, pulls := make([]string, len(rows)), make([]string, len(rows))
+	refW, pullW := 0, 0
+	for i, r := range rows {
+		refs[i] = oneLine(r.Name + ":" + r.Tag)
+		pulls[i] = registry.Count(r.Pulls) + " pulls"
+		refW = max(refW, utf8.RuneCountInString(refs[i]))
+		pullW = max(pullW, utf8.RuneCountInString(pulls[i]))
+	}
+	for i, r := range rows {
+		line := fmt.Sprintf("%-*s  %-*s", refW, refs[i], pullW, pulls[i])
+		if r.Official {
+			line += "  official"
+		}
+		if d := oneLine(r.Description); d != "" {
+			line += "  " + d
+		}
+		fmt.Fprintln(env.Out, strings.TrimRight(line, " "))
+	}
 }
 
 func (env Env) searchLabels(list string) ([]string, bool) {

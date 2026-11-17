@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -58,7 +60,22 @@ func (c *Client) hubTags(ctx context.Context, r image.Ref) ([]image.Tag, error) 
 		}
 	}
 	if len(tags) == 0 {
-		return c.hubTagPage(ctx, r, "&page_size=40")
+		newest, err := c.hubTagPage(ctx, r, "&page_size=40")
+		if err != nil {
+			return nil, err
+		}
+		tags = newest
+	}
+	// A busy repository pushes more than a page of version tags at once, so a
+	// named tag such as latest can be missing from the newest page.
+	if r.Tag != "" && releaseLine(r.Tag) == "" && !slices.ContainsFunc(tags, func(t image.Tag) bool { return t.Name == r.Tag }) {
+		if got, err := c.hubTagPage(ctx, r, "&page_size=25&name="+url.QueryEscape(r.Tag)); err == nil {
+			for _, t := range got {
+				if t.Name == r.Tag {
+					tags = append(tags, t)
+				}
+			}
+		}
 	}
 	return tags, nil
 }
@@ -144,19 +161,47 @@ func (c *Client) hubTagPage(ctx context.Context, r image.Ref, query string) ([]i
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("docker hub answered %d for %s", resp.StatusCode, r.RemoteRepo())
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	return parseHubTags(body)
+}
+
+func parseHubTags(body []byte) ([]image.Tag, error) {
 	var doc struct {
 		Results []struct {
 			Name        string `json:"name"`
 			LastUpdated string `json:"last_updated"`
 			Digest      string `json:"digest"`
+			Size        int64  `json:"full_size"`
+			Images      []struct {
+				OS      string `json:"os"`
+				Arch    string `json:"architecture"`
+				Variant string `json:"variant"`
+			} `json:"images"`
 		} `json:"results"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, err
 	}
 	tags := make([]image.Tag, 0, len(doc.Results))
 	for _, t := range doc.Results {
-		tags = append(tags, image.Tag{Name: t.Name, Pushed: parseStamp(t.LastUpdated), Digest: t.Digest})
+		tag := image.Tag{Name: t.Name, Pushed: parseStamp(t.LastUpdated), Digest: t.Digest, Size: t.Size}
+		for _, i := range t.Images {
+			// An attestation manifest is listed as an image of unknown platform.
+			if i.OS == "" || i.OS == "unknown" || i.Arch == "" || i.Arch == "unknown" {
+				continue
+			}
+			p := i.OS + "/" + i.Arch
+			if i.Variant != "" {
+				p += "/" + i.Variant
+			}
+			if !slices.Contains(tag.Platforms, p) {
+				tag.Platforms = append(tag.Platforms, p)
+			}
+		}
+		tags = append(tags, tag)
 	}
 	return tags, nil
 }

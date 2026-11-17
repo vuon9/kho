@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/vuon9/kho/internal/history"
 	"github.com/vuon9/kho/internal/provider"
+	"github.com/vuon9/kho/internal/registry"
 	"github.com/vuon9/kho/internal/vuln"
 )
 
@@ -693,6 +695,72 @@ func TestInstallNew(t *testing.T) {
 			}
 			if tt.log > 0 && got.log[0].Kind != history.Change {
 				t.Errorf("history entry is %q, not a change", got.log[0].Kind)
+			}
+		})
+	}
+}
+
+func TestSearchDocker(t *testing.T) {
+	kettle := []registry.HubRepo{
+		{Name: "kettle", Description: "Kettle boils water\x1b[31m for every build.", Stars: 1204, Pulls: 51200000, Official: true},
+		{Name: "acme/kettle-tools", Description: "Extra tools for kettle", Stars: 12, Pulls: 4300},
+	}
+	brew := &fakeSearchable{fakeProvider: fakeProvider{name: "brew"}}
+	tests := []struct {
+		id    string
+		args  []string
+		repos []registry.HubRepo
+		hErr  error
+		code  int
+		out   string
+		err   string
+		asked []string
+	}{
+		{id: "results print one pullable row each", args: []string{"search", "kettle", "--source", "docker"}, repos: kettle, code: ExitOK,
+			out: "kettle:latest             51.2M pulls  official  Kettle boils water for every build.\n" +
+				"acme/kettle-tools:latest  4.3k pulls   Extra tools for kettle\n\nsearched Docker Hub in 0.0s\n",
+			asked: []string{"kettle 20"}},
+		{id: "JSON names the source, repository, tag and pulls", args: []string{"search", "kettle", "--source", "docker", "--json", "--limit", "500"},
+			repos: kettle[1:], code: ExitOK,
+			out:   `{"query":"kettle","results":[{"source":"docker","repository":"acme/kettle-tools","desc":"Extra tools for kettle","stars":12,"pulls":4300,"tag":"latest"}],"errors":{}}`,
+			asked: []string{"kettle 100"}},
+		{id: "no match answers 0", args: []string{"search", "kettle", "--source", "docker"}, code: ExitOK,
+			out: "no images match \"kettle\" on Docker Hub\nsearched Docker Hub in 0.0s\n", asked: []string{"kettle 20"}},
+		{id: "a rate limit is a failed source", args: []string{"search", "kettle", "--source", "docker", "--json"}, hErr: registry.ErrHubRateLimited, code: ExitError,
+			out:   `{"query":"kettle","results":[],"errors":{"docker":"docker hub is rate limiting searches, try again in a minute"}}`,
+			err:   "Docker Hub could not search: docker hub is rate limiting searches, try again in a minute\n",
+			asked: []string{"kettle 20"}},
+		{id: "docker with a package source is a usage error", args: []string{"search", "kettle", "--source", "docker,brew"}, code: ExitUsage,
+			err: "--source docker searches Docker Hub alone; search package sources separately\n"},
+		{id: "a registry that is not Docker Hub is a usage error", args: []string{"search", "kettle", "--source", "quay"}, code: ExitUsage,
+			err: "unknown source in --source: quay\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			var asked []string
+			var out, errOut bytes.Buffer
+			env := Env{Providers: []provider.Provider{brew}, DB: vuln.NewDB(), Log: history.Open(""), Out: &out, Err: &errOut,
+				Now: func() time.Time { return clock },
+				SearchHub: func(ctx context.Context, q string, limit int) ([]registry.HubRepo, error) {
+					if _, ok := ctx.Deadline(); !ok {
+						t.Error("a Docker Hub search without a deadline")
+					}
+					asked = append(asked, fmt.Sprint(q, " ", limit))
+					return tt.repos, tt.hErr
+				}}
+			code := Main(env, tt.args)
+			got := out.String()
+			if strings.HasPrefix(tt.out, "{") {
+				var compact bytes.Buffer
+				json.Compact(&compact, out.Bytes())
+				got = compact.String()
+			}
+			if code != tt.code || got != tt.out || errOut.String() != tt.err || !reflect.DeepEqual(asked, tt.asked) {
+				t.Errorf("code %d, asked %v\nout %q\nerr %q\nwant code %d, asked %v\nout %q\nerr %q",
+					code, asked, got, errOut.String(), tt.code, tt.asked, tt.out, tt.err)
+			}
+			if len(brew.calls) > 0 {
+				t.Errorf("a Docker Hub search asked brew %v", brew.calls)
 			}
 		})
 	}

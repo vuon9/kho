@@ -1,0 +1,11 @@
+{
+  "user": "acme",
+  "name": "kettle-tools",
+  "namespace": "acme",
+  "repository_type": "image",
+  "description": "Extra tools for kettle",
+  "is_private": false,
+  "star_count": 12,
+  "pull_count": 4300,
+  "last_updated": "2031-04-02T08:15:00.123456Z"
+}

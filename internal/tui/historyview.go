@@ -86,11 +86,13 @@ func (m *model) clampHistory() {
 	m.hOffset = scroll(m.hOffset, m.hCursor, m.layout().rows)
 }
 
-func (m *model) clickHistory(x, r int) {
+func (m *model) clickHistory(x, y int) {
 	l := m.layout()
+	r := l.row(y)
 	switch {
-	case x >= l.sideX:
-	case r == l.bodyH-3:
+	case l.stacked && y >= l.sideY:
+	case !l.stacked && x >= l.sideX:
+	case r == l.tableH-3:
 		if k := m.kindAt(x - 1); k >= 0 {
 			m.hKind, m.hCursor = k, 0
 		} else if k == -2 {
@@ -103,6 +105,12 @@ func (m *model) clickHistory(x, r int) {
 
 func (m model) historyBody() string {
 	l := m.layout()
+	if l.stacked {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			box(m.historyTitle(), m.historyLines(m.width-2), m.width, l.tableH, true),
+			box(m.historyDetailTitle(), m.historyDetail(m.width-2), m.width, l.sideH, false),
+		)
+	}
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		box(m.historyTitle(), m.historyLines(l.sideX-2), l.sideX, l.bodyH, true),
 		box(m.historyDetailTitle(), m.historyDetail(l.sideW-2), l.sideW, l.bodyH, false),

@@ -108,7 +108,7 @@ func update(t *testing.T, m model, msg tea.Msg) model {
 			for _, c := range msg {
 				drain(c)
 			}
-		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg:
+		case depsMsg, versionsMsg, docMsg, skillDocDueMsg, brewCheckDueMsg, brewCheckMsg, openedMsg, scanMsg, brewScanMsg, historyMsg, auditMsg, installStartedMsg, outputMsg, installedMsg, linkedMsg, projectMsg, projectLatestMsg, imagesMsg, imageFactMsg, imageFactsDoneMsg, imageScanMsg, imageTagsMsg, imageRemoveMsg, imageUsersMsg, searchMsg, findMsg, pullPlanMsg:
 			tm, cmd = tm.Update(msg)
 			drain(cmd)
 		}
@@ -563,11 +563,12 @@ func TestKeepSelection(t *testing.T) {
 }
 
 func TestDefaultRail(t *testing.T) {
-	tests := []struct{ width, rail int }{
-		{222, 42}, {160, 42}, {130, 42}, {120, 34}, {110, 24}, {100, 24},
+	tests := []struct{ width, height, rail int }{
+		{222, 40, 42}, {160, 40, 42}, {130, 40, 42}, {120, 40, 34}, {110, 40, 24}, {100, 16, 24},
+		{100, 40, 25}, {80, 30, 20},
 	}
 	for _, tt := range tests {
-		m := update(t, loaded(t), tea.WindowSizeMsg{Width: tt.width, Height: 40})
+		m := update(t, loaded(t), tea.WindowSizeMsg{Width: tt.width, Height: tt.height})
 		if l := m.layout(); l.railW != tt.rail || l.tableW < minTable {
 			t.Errorf("at %d wide the rail is %d and the list %d, want rail %d", tt.width, l.railW, l.tableW, tt.rail)
 		}
@@ -591,11 +592,11 @@ func TestResize(t *testing.T) {
 				m = withDeps(t, "")
 			}
 			m = press(t, m, tt.keys...)
-			for _, size := range [][2]int{{1, 1}, {10, 10}, {80, 20}, {100, 16}, {110, 30}, {220, 50}} {
+			for _, size := range [][2]int{{1, 1}, {10, 10}, {80, 20}, {79, 40}, {100, 16}, {80, 30}, {109, 40}, {110, 30}, {220, 50}} {
 				m = update(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				s := screen(m)
-				if size[0] < minWidth {
-					if want := fmt.Sprintf("kho needs at least 100x16, this terminal is %dx%d.", size[0], size[1]); !strings.Contains(s, want) {
+				if m.tooSmall() {
+					if want := fmt.Sprintf("kho needs at least 100x16, or 80x30, this terminal is %dx%d.", size[0], size[1]); !strings.Contains(s, want) {
 						t.Errorf("small screen:\n%s", s)
 					}
 					continue
@@ -914,6 +915,80 @@ func TestSkillLayout(t *testing.T) {
 	if l.topRows > 6 || l.bottomRows < 25 {
 		t.Errorf("SKILL.md front matter takes %d rows and the body %d", l.topRows, l.bottomRows)
 	}
+}
+
+func TestStackedLayout(t *testing.T) {
+	sized := func(t *testing.T) (model, layout) {
+		m := update(t, loaded(t), tea.WindowSizeMsg{Width: 90, Height: 40})
+		return m, m.layout()
+	}
+	t.Run("the sidebar sits under the table, right of the rail", func(t *testing.T) {
+		m, l := sized(t)
+		if !l.stacked || l.sideX != l.tableX || l.sideW != l.tableW || l.sideY != l.top+l.tableH || l.tableH+l.sideH != l.bodyH {
+			t.Fatalf("layout %+v", l)
+		}
+		lines := strings.Split(screen(m), "\n")
+		for _, y := range []int{l.top, l.sideY} {
+			if cell := ansi.Cut(lines[y], l.railW, l.railW+2); cell != "╭─" {
+				t.Errorf("line %d starts a box at %q, want ╭─:\n%s", y, cell, screen(m))
+			}
+		}
+		if !strings.Contains(lines[l.sideY], "Info") {
+			t.Errorf("the sidebar's tabs are not on line %d:\n%s", l.sideY, screen(m))
+		}
+	})
+	t.Run("a click under the table lands in the sidebar", func(t *testing.T) {
+		m, l := sized(t)
+		m = update(t, m, tea.MouseClickMsg{X: l.tableX + 5, Y: l.sideY + 3, Button: tea.MouseLeft})
+		if m.focus != focusSide {
+			t.Errorf("focus %d, want the sidebar", m.focus)
+		}
+	})
+	t.Run("a click in the table still picks a row", func(t *testing.T) {
+		m, l := sized(t)
+		m = update(t, m, tea.MouseClickMsg{X: l.tableX + 5, Y: l.top + 3, Button: tea.MouseLeft})
+		if m.focus != focusTable || m.cursor != 1 {
+			t.Errorf("focus %d cursor %d, want the table on row 1", m.focus, m.cursor)
+		}
+	})
+	t.Run("a drag in the sidebar copies its text", func(t *testing.T) {
+		m, l := sized(t)
+		y := l.sideY + 1 + l.topRows + 1
+		m = update(t, m, tea.MouseClickMsg{X: l.sideX + 2, Y: y, Button: tea.MouseLeft})
+		m = update(t, m, tea.MouseMotionMsg{X: l.sideX + 12, Y: y, Button: tea.MouseLeft})
+		update(t, m, tea.MouseReleaseMsg{X: l.sideX + 12, Y: y, Button: tea.MouseLeft})
+		if !reflect.DeepEqual(copied, []string{"• openssl@4"}) {
+			t.Errorf("drag copied %q", copied)
+		}
+	})
+	t.Run("a narrow rail keeps names and signs, and drops counts", func(t *testing.T) {
+		m, l := sized(t)
+		rail := ""
+		for _, line := range strings.Split(screen(m), "\n")[l.top : l.top+l.bodyH] {
+			rail += ansi.Cut(line, 0, l.railW) + "\n"
+		}
+		if !strings.Contains(rail, "brew") || strings.Contains(rail, "…") {
+			t.Errorf("a rail name was cut:\n%s", rail)
+		}
+		if !strings.Contains(rail, "⚠") || regexp.MustCompile(`[⚠↑]\d`).MatchString(rail) {
+			t.Errorf("the rail should show signs without counts:\n%s", rail)
+		}
+	})
+	t.Run("a narrow status bar drops words, not counts", func(t *testing.T) {
+		m, _ := sized(t)
+		bar := ansi.Strip(m.statusBar())
+		if strings.Contains(bar, "outdated") || !regexp.MustCompile(`↑ \d+`).MatchString(bar) || strings.Contains(bar, "…") {
+			t.Errorf("status bar %q", bar)
+		}
+	})
+	t.Run("a side size picked while stacked does not stick", func(t *testing.T) {
+		m, _ := sized(t)
+		m.focus = focusSide
+		m = press(t, m, ">")
+		if m.sideW != 0 {
+			t.Errorf("sideW %d kept from a stacked layout", m.sideW)
+		}
+	})
 }
 
 func TestCopy(t *testing.T) {

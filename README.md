@@ -67,7 +67,7 @@ cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
 
 ## Use it
 
-Run `kho` for the terminal app, or `kho <folder>` to read another folder's project. Press `?` for every key. On a package manager's panel, `n` searches for a package to install.
+Run `kho` for the terminal app, or `kho <folder>` to read another folder's project. Press `?` for every key. On a package manager's panel, `n` searches for a package to install, and on the machine's docker panel it searches Docker Hub for an image to pull.
 
 The CLI does the same from a script. JSON goes to stdout, everything else to stderr, and `install` and `remove` only print what they would run until you add `--yes`.
 
@@ -75,7 +75,7 @@ The CLI does the same from a script. JSON goes to stdout, everything else to std
 |---|---|
 | `kho check [--json] [--refresh] [--require-complete] [--require uv,npm]` | the machine's packages and their advisories |
 | `kho check --project [folder] [--prod-only] [--json] [--refresh] [--require-images]` | the same for a folder's lockfiles and images |
-| `kho search <query...> [--source brew,npm] [--limit N] [--json]` | find packages this machine does not have |
+| `kho search <query...> [--source brew,npm] [--limit N] [--json]` | find packages this machine does not have; `--source docker` finds images on Docker Hub |
 | `kho show <source>/<name> [--json]` | one package, with every advisory |
 | `kho install <source>/<name>@<version\|latest> [--yes] [--json]` | install, upgrade or downgrade one package |
 | `kho remove <source>/<name> [--yes] [--force] [--json]` | uninstall one package |
@@ -124,14 +124,14 @@ The CLI does the same from a script. JSON goes to stdout, everything else to std
 | Composer | ✓ | ✓ | ✓ | OSV, plus every dependency |
 | Go | ✓ | ✓ | ✓ | OSV, plus every module built in |
 | uv | ✓ | ✓ | ✓ | OSV |
+| Docker images | ✓ | ✓ | ✓ | trivy, on request |
 | Homebrew | ✓ |  | ✓ | Homebrew's own scan, formulae only |
 | pipx | ✓ |  | ✓ | OSV |
 | Agent skills | ✓ |  | ✓ | skills.sh audits (Gen, Socket, Snyk) |
-| Docker images | ✓ | ✓ |  | trivy, on request |
 | Cargo, pip, Poetry |  | ✓ |  | OSV |
 | mise | ✓ |  |  | not covered yet |
 
-Rows go from the most supported to the least. kho reads the managers' own JSON output for the machine, and parses a project's lockfiles itself so it never runs a project's code. Go and Python keyword searches go through GitHub's repository search, so they are best effort. A Go query can also be a module path or a pkg.go.dev URL, a Python query a pypi.org page, and a skill an `owner/repo/skill` path.
+Rows go from the most supported to the least. kho reads the managers' own JSON output for the machine, and parses a project's lockfiles itself so it never runs a project's code. Go and Python keyword searches go through GitHub's repository search, so they are best effort. A Go query can also be a module path or a pkg.go.dev URL, a Python query a pypi.org page, a skill an `owner/repo/skill` path, and an image a hub.docker.com page. Image search covers public Docker Hub images only.
 
 ## For agents
 
@@ -179,8 +179,8 @@ To check versions and advisories, kho asks the services below about the packages
 | Packagist (`repo.packagist.org`) | names of global Composer packages, and of a project's direct Composer dependencies | `composer global outdated`, and kho |
 | crates.io | names of a project's direct Rust crates | kho |
 | mise's sources | names of mise tools | `mise outdated`, `mise ls-remote` |
-| Docker Hub API (`hub.docker.com`) | tag names, digests and push dates of an image's release line | kho |
-| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or the registry a reference names) | which image a reference points to: its manifest and config, never a layer | kho |
+| Docker Hub API (`hub.docker.com`) | tag names, digests and push dates of an image's release line; the words you search for on the docker panel or with `--source docker`, and the tags of a result you open | kho |
+| Docker registries (`mirror.gcr.io`, then `public.ecr.aws`, then `registry-1.docker.io`, or the registry a reference names) | which image a reference points to: its manifest and config, never a layer; and before a pull, whether a mirror has the tag, so docker pulls it from there instead of Docker Hub | kho, and `docker pull` |
 | endoflife.date | the product and release line of an image | kho |
 | trivy's sources | the image it scans, and its own vulnerability database | trivy, when you open an image's Security tab |
 

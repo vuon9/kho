@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/vuon9/kho/internal/image"
@@ -117,12 +118,20 @@ func (m model) railAll() (lines []string, rowOf []int, block int) {
 	inner := m.layout().railW - 2
 	rule := projRule(inner)
 	block = -1
-	for i, r := range m.railRows() {
+	rows := m.railRows()
+	signsOnly := false
+	for _, r := range rows {
+		// A folder name can be any length, so the project row is cut instead.
+		if r.kind != rowProject {
+			signsOnly = signsOnly || lipgloss.Width(r.name) > inner-15-railIndent(r)
+		}
+	}
+	for i, r := range rows {
 		if r.kind == rowProject {
 			block = len(lines)
 			lines, rowOf = append(lines, rule), append(rowOf, -1)
 		}
-		lines, rowOf = append(lines, m.railLine(r, i == m.rail, inner)), append(rowOf, i)
+		lines, rowOf = append(lines, m.railLine(r, i == m.rail, inner, signsOnly)), append(rowOf, i)
 	}
 	if m.dir != "" && !m.projReady() {
 		block = len(lines)
@@ -192,9 +201,16 @@ func (m model) railLineOf(i int) int {
 	return 0
 }
 
-func (m model) railLine(r railRow, selectedRow bool, inner int) string {
+func railIndent(r railRow) int {
+	if r.kind == rowPart {
+		return 4
+	}
+	return 2
+}
+
+func (m model) railLine(r railRow, selectedRow bool, inner int, signsOnly bool) string {
 	if r.kind == rowProject {
-		return m.projHeader(selectedRow, inner)
+		return m.projHeader(selectedRow, inner, signsOnly)
 	}
 	var mark string
 	switch r.kind {
@@ -219,18 +235,26 @@ func (m model) railLine(r railRow, selectedRow bool, inner int) string {
 			}
 		}
 	}
-	indent := "  "
-	if r.kind == rowPart {
-		indent = "    "
-	}
-	line := indent + icon(r.icon) + " " + pad(r.name, max(inner-15-len(indent), 3)) + m.badges(r) + " " + mark
+	indent := strings.Repeat(" ", railIndent(r))
+	nameW, badges := m.railFit(r, inner-15-len(indent), inner-len(indent)-3, signsOnly)
+	line := indent + icon(r.icon) + " " + pad(r.name, nameW) + badges + " " + mark
 	if selectedRow {
 		line = selected(line, inner, m.focus == focusRail)
 	}
 	return line
 }
 
-func (m model) badges(r railRow) string {
+// A narrow rail keeps every row's whole name and its signs, and drops the
+// counts, since a cut name can't be read and the table shows the counts.
+func (m model) railFit(r railRow, nameW, room int, signsOnly bool) (int, string) {
+	if !signsOnly {
+		return nameW, m.badges(r, false)
+	}
+	signs := pad(m.badges(r, true), 3)
+	return max(room-lipgloss.Width(signs)-2, 3), signs
+}
+
+func (m model) badges(r railRow, signsOnly bool) string {
 	if r.kind == rowImages || r.kind == rowMachineImages {
 		list := m.images
 		if r.kind == rowMachineImages {
@@ -247,33 +271,45 @@ func (m model) badges(r railRow) string {
 				stale++
 			}
 		}
-		var badges []string
-		if eol > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("%s%d", image.EOL.Mark(), eol)))
-		}
-		if gone > 0 {
-			badges = append(badges, red().Render(fmt.Sprintf("%s%d", image.Gone.Mark(), gone)))
-		}
-		if stale > 0 {
-			badges = append(badges, yellow().Render(fmt.Sprintf("%s%d", image.Stale.Mark(), stale)))
-		}
-		return fmt.Sprintf("%4d", len(list)) + " " + strings.Join(badges, " ")
+		b := railBadges{signsOnly: signsOnly}
+		b.add(red(), image.EOL.Mark(), eol)
+		b.add(red(), image.Gone.Mark(), gone)
+		b.add(yellow(), image.Stale.Mark(), stale)
+		return b.render(len(list))
 	}
 	t := m.count(m.rowPkgs(r))
-	var badges []string
+	b := railBadges{signsOnly: signsOnly}
 	if m.filters[r.key] != "" || m.statuses[r.key] != statusAll {
-		badges = append(badges, accent().Render("⌕"))
+		b.parts = append(b.parts, accent().Render("⌕"))
 	}
-	if t.vulnerable > 0 {
-		badges = append(badges, red().Render(fmt.Sprintf("⚠%d", t.vulnerable)))
-	}
-	if t.outdated > 0 {
-		badges = append(badges, yellow().Render(fmt.Sprintf("↑%d", t.outdated)))
-	}
-	return fmt.Sprintf("%4d", t.total) + " " + strings.Join(badges, " ")
+	b.add(red(), "⚠", t.vulnerable)
+	b.add(yellow(), "↑", t.outdated)
+	return b.render(t.total)
 }
 
-func (m model) projHeader(selectedRow bool, inner int) string {
+type railBadges struct {
+	signsOnly bool
+	parts     []string
+}
+
+func (b *railBadges) add(style lipgloss.Style, mark string, n int) {
+	switch {
+	case n == 0:
+	case b.signsOnly:
+		b.parts = append(b.parts, style.Render(mark))
+	default:
+		b.parts = append(b.parts, style.Render(fmt.Sprintf("%s%d", mark, n)))
+	}
+}
+
+func (b railBadges) render(total int) string {
+	if b.signsOnly {
+		return strings.Join(b.parts, "")
+	}
+	return fmt.Sprintf("%4d", total) + " " + strings.Join(b.parts, " ")
+}
+
+func (m model) projHeader(selectedRow bool, inner int, signsOnly bool) string {
 	arrow := "▸"
 	if m.projOpen {
 		arrow = "▾"
@@ -287,7 +323,8 @@ func (m model) projHeader(selectedRow bool, inner int) string {
 	if m.projBusy != "" {
 		mark = m.spin()
 	}
-	line := arrow + " " + icon("project") + " " + pad(name, nameW) + m.badges(railRow{kind: rowProject, key: "project"}) + " " + mark
+	nameW, badges := m.railFit(railRow{kind: rowProject, key: "project"}, nameW, inner-5, signsOnly)
+	line := arrow + " " + icon("project") + " " + pad(name, nameW) + badges + " " + mark
 	if selectedRow {
 		line = selected(line, inner, m.focus == focusRail)
 	}

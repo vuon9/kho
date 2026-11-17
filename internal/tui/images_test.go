@@ -535,7 +535,7 @@ func TestVersionsSaysWhyItIsEmpty(t *testing.T) {
 
 	r, _ := m.currentImg()
 	var text []string
-	for _, l := range m.imageVersionLines(r) {
+	for _, l := range m.imageVersionLines(r, 60) {
 		text = append(text, l.text)
 	}
 	joined := ansi.Strip(strings.Join(text, "\n"))
