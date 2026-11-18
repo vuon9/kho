@@ -11,16 +11,12 @@
 
 *Kho* is Vietnamese for storehouse. It lists what your machine and your project have installed, the advisories that affect them, and the command that fixes each one. It runs as a terminal app, and as a JSON CLI for agents.
 
-<details>
-<summary>See it run</summary>
+
+## Demo
 
 Recorded on 17 Nov 2026 with made up data
 
 https://github.com/user-attachments/assets/ddc277ea-5c91-493d-a01d-da8debc8c9b9
-
-
-
-</details>
 
 ## What it does
 
