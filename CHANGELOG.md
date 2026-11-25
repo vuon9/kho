@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.19](https://github.com/vuon9/kho/compare/v0.1.18...v0.1.19) (2026-11-25)
+
+
+### Bug Fixes
+
+* **brew:** clear a commit-only fix the installed version already carries ([#77](https://github.com/vuon9/kho/issues/77)) ([3d397bc](https://github.com/vuon9/kho/commit/3d397bc41ddf6cb5c42e37728f550b1d7aba1275))
+
 ## [0.1.18](https://github.com/vuon9/kho/compare/v0.1.17...v0.1.18) (2026-11-17)
 
 
