@@ -177,7 +177,8 @@ func scanBrewVulns(ctx context.Context, args ...string) (vuln.BrewResult, error)
 	if err != nil {
 		return vuln.BrewResult{}, err
 	}
-	return report.result(brewReleaseFixes(ctx, report, brewNewest(ctx, report))), nil
+	newest := brewNewest(ctx, report)
+	return report.result(brewReleaseFixes(ctx, report, newest), brewAlreadyFixed(ctx, report)), nil
 }
 
 // brewNewest asks brew info, locally, for the newest version of each formula
@@ -219,7 +220,7 @@ func ParseBrewVulns(data []byte) (vuln.BrewResult, error) {
 	if err != nil {
 		return vuln.BrewResult{}, err
 	}
-	return report.result(nil), nil
+	return report.result(nil, nil), nil
 }
 
 type brewVulnsReport struct {
@@ -249,7 +250,7 @@ func decodeBrewVulns(data []byte) (brewVulnsReport, error) {
 
 // released maps brewFixKey to the first release that holds a fix Homebrew
 // named only by commit.
-func (r brewVulnsReport) result(released map[string]string) vuln.BrewResult {
+func (r brewVulnsReport) result(released map[string]string, alreadyFixed map[string]bool) vuln.BrewResult {
 	result := vuln.BrewResult{Checked: r.Checked, Complete: r.Complete}
 	for _, name := range r.SkippedFormulae {
 		result.Skipped = append(result.Skipped, brewShortName(name))
@@ -264,6 +265,11 @@ func (r brewVulnsReport) result(released map[string]string) vuln.BrewResult {
 		name := brewShortName(f.Formula)
 		finding := vuln.BrewFinding{Formula: name, Version: f.Version}
 		for _, v := range f.Vulnerabilities {
+			// The installed version already carries the commit-only fix Homebrew
+			// could not place in a release.
+			if alreadyFixed[brewFixKey(f, v)] {
+				continue
+			}
 			finding.Advisories = append(finding.Advisories, v.advisory(name, f.Version, released[brewFixKey(f, v)]))
 		}
 		result.Findings = append(result.Findings, finding)
@@ -421,6 +427,101 @@ func brewReleaseFixes(ctx context.Context, r brewVulnsReport, newest map[string]
 }
 
 const brewLookups = 8
+
+// Homebrew names a fix only by commit when no release carries it, and then looks
+// for a release newer than the installed one to place it. A fix that shipped in
+// the installed version itself therefore never clears, so a CVE disclosed after
+// the release it was fixed in stays on every scan. The finding's own tag answers
+// for itself here.
+func brewAlreadyFixed(ctx context.Context, r brewVulnsReport) map[string]bool {
+	type installed struct{ repo, version, hint, probe string }
+	type job struct {
+		key  string
+		at   int
+		shas []string
+	}
+	var seen []installed
+	var jobs []job
+	for _, f := range r.Findings {
+		repo, version := githubRepo(f.RepoURL), BrewVersion(f.Version)
+		if repo == "" || version == "" {
+			continue
+		}
+		at := -1
+		for _, v := range f.Vulnerabilities {
+			shas := brewShas(v.FixedVersions)
+			// A version Homebrew named is already handled by the newer-release walk.
+			if len(shas) == 0 || brewFixed(v.FixedVersions, f.Version) != "" {
+				continue
+			}
+			if at < 0 {
+				at = len(seen)
+				seen = append(seen, installed{repo, version, f.Tag, shas[0]})
+			}
+			jobs = append(jobs, job{brewFixKey(f, v), at, shas})
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	var mu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(brewLookups)
+	tags := make([]string, len(seen))
+	for i, in := range seen {
+		g.Go(func() error {
+			tags[i] = installedTag(ctx, in.repo, in.version, in.hint, in.probe)
+			return nil
+		})
+	}
+	g.Wait()
+	fixed := map[string]bool{}
+	for _, j := range jobs {
+		g.Go(func() error {
+			tag, repo := tags[j.at], seen[j.at].repo
+			if tag == "" {
+				return nil
+			}
+			for _, sha := range j.shas {
+				if ok, err := brewTagHas(ctx, repo, sha, tag); err == nil && ok {
+					mu.Lock()
+					fixed[j.key] = true
+					mu.Unlock()
+					return nil
+				}
+			}
+			return nil
+		})
+	}
+	g.Wait()
+	return fixed
+}
+
+// The ref naming the installed version, spelled the way its repository spells
+// it: a formula trims what the repo keeps ("1.2.3" for a repo's "v1.2.3"). A
+// repo with releases answers outright; otherwise the spellings are tried against
+// one commit, since GitHub only says whether a ref exists when it compares it.
+func installedTag(ctx context.Context, repo, version, hint, probe string) string {
+	if rels, err := brewReleases(ctx, repo); err == nil {
+		for _, rel := range rels {
+			if vuln.Clean(rel.Version) == version {
+				return rel.Version
+			}
+		}
+	}
+	var candidates []string
+	for _, c := range []string{hint, version, "v" + version, "n" + version, "release-" + version} {
+		if c != "" && vuln.Clean(c) == version && !slices.Contains(candidates, c) {
+			candidates = append(candidates, c)
+		}
+	}
+	for _, c := range candidates {
+		if _, err := brewTagHas(ctx, repo, probe, c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
 
 // A release that holds a commit keeps holding it in every later release, so
 // a binary search over the newer releases asks GitHub a few times, not once

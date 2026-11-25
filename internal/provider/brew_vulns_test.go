@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
@@ -157,9 +158,66 @@ func TestBrewReleaseFixesFillsTheFix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := report.result(brewReleaseFixes(context.Background(), report, map[string]string{"finder": "0.75.0"})).Findings[0].Advisories[0]
+	got := report.result(brewReleaseFixes(context.Background(), report, map[string]string{"finder": "0.75.0"}), nil).Findings[0].Advisories[0]
 	if got.FixedAfter("0.74.5") != "0.75.0" || got.Affects("v0.75.0") || !got.Affects("v0.74.5") {
 		t.Errorf("advisory %+v, want it fixed in 0.75.0", got)
+	}
+}
+
+// Homebrew only looks for a newer release that carries a fix it could name only
+// by commit. A fix that already reached the installed version itself has no
+// newer release to carry it, so the finding would never clear.
+func TestBrewVulnsClearsAFixTheInstalledTagHolds(t *testing.T) {
+	oldRels, oldHas := brewReleases, brewTagHas
+	t.Cleanup(func() { brewReleases, brewTagHas = oldRels, oldHas })
+	// A repo with no releases: the installed ref has to be found by trying it.
+	brewReleases = func(_ context.Context, _ string) ([]Release, error) {
+		return nil, nil
+	}
+	const held, missing = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	brewTagHas = func(_ context.Context, _, sha, tag string) (bool, error) {
+		if tag != "v1.2.3" {
+			return false, errors.New("compare: 404 Not Found")
+		}
+		return sha == held, nil
+	}
+	report, err := decodeBrewVulns([]byte(`{"findings":[{"formula":"anvil","version":"1.2.3","tag":"1.2.3",` +
+		`"repo_url":"https://github.com/example/anvil","vulnerabilities":[` +
+		`{"id":"CVE-0000-0021","severity":"UNKNOWN","summary":"Anvil reads past the plane","aliases":[],"fixed_versions":["` + held + `"]},` +
+		`{"id":"CVE-0000-0022","severity":"UNKNOWN","summary":"Anvil writes early","aliases":[],"fixed_versions":["` + missing + `"]}],"patched":[]}],` +
+		`"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := report.result(nil, brewAlreadyFixed(context.Background(), report)).Findings
+	if len(got) != 1 {
+		t.Fatalf("got %d findings, want the one formula still carrying a live advisory", len(got))
+	}
+	advs := got[0].Advisories
+	if len(advs) != 1 || advs[0].ID != "CVE-0000-0022" {
+		t.Errorf("advisories %+v, want only CVE-0000-0022 (1.2.3 holds the fix for 0021)", advs)
+	}
+}
+
+// Without a ref to ask about, the finding stands: a lookup kho cannot finish
+// never clears an advisory.
+func TestBrewVulnsKeepsAFindingWhenTheInstalledRefIsUnknown(t *testing.T) {
+	oldRels, oldHas := brewReleases, brewTagHas
+	t.Cleanup(func() { brewReleases, brewTagHas = oldRels, oldHas })
+	brewReleases = func(_ context.Context, _ string) ([]Release, error) { return nil, nil }
+	brewTagHas = func(_ context.Context, _, _, _ string) (bool, error) {
+		return false, errors.New("compare: 404 Not Found")
+	}
+	report, err := decodeBrewVulns([]byte(`{"findings":[{"formula":"anvil","version":"1.2.3","tag":"1.2.3",` +
+		`"repo_url":"https://github.com/example/anvil","vulnerabilities":[` +
+		`{"id":"CVE-0000-0031","severity":"HIGH","summary":"Anvil trusts a header","aliases":[],"fixed_versions":["3333333333333333333333333333333333333333"]}],"patched":[]}],` +
+		`"skipped_formulae":[],"checked":1,"complete":true,"outdated_without_sbom":[],"unscanned_formulae":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := report.result(nil, brewAlreadyFixed(context.Background(), report)).Findings[0].Advisories
+	if len(got) != 1 || got[0].ID != "CVE-0000-0031" {
+		t.Errorf("advisories %+v, want the finding kept", got)
 	}
 }
 
